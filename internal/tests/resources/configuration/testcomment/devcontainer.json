@@ -1,0 +1,24 @@
+// comments allow only on empty lines
+{
+  "name": "test-container",
+  "image": "dockerhub.rnd.fix.me/dummy/image:0.1.0",
+  "appPort": [
+    "22"
+  ],
+  // options passed to container engine
+  "runArgs": [
+    "-dt",
+    "--init",
+    "--userns=keep-id"
+  ],
+  "mounts": null,
+  "remoteUser": "${localEnv:USER}",
+  "containerUser": "root",
+  "overrideCommand": true,
+  "features": {
+    "ssh-daemon": "1.0.0",
+    "userns-keepid": "1.0.0"
+  },
+  "initializeCommand": "",
+  "postCreateCommand": "dnf in -y openssh-server"
+}

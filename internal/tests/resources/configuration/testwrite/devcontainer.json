@@ -1,0 +1,21 @@
+{
+  "appport": [
+    "22"
+  ],
+  "containeruser": "root",
+  "features": {
+    "ssh-daemon": "1.0.0",
+    "userns-keepid": "1.0.0"
+  },
+  "image": "dockerhub.rnd.fix.me/dummy/image:0.1.1",
+  "initializecommand": "",
+  "name": "test-container",
+  "overridecommand": true,
+  "postcreatecommand": "dnf in -y openssh-server",
+  "remoteuser": "${localEnv:USER}",
+  "runargs": [
+    "-dt",
+    "--init",
+    "--userns=keep-id"
+  ]
+}

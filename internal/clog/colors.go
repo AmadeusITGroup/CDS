@@ -1,0 +1,52 @@
+package clog
+
+// ANSI colors
+const (
+	ansiCodeReset      = "\x1B[0m"
+	ansiCodeBold       = "\x1B[1m"
+	ansiCodeFaint      = "\x1B[2m"
+	ansiCodeItalic     = "\x1B[3m"
+	ansiCodeUnderline  = "\x1B[4m"
+	ansiCodeBlink      = "\x1B[5m"
+	ansiCodeInverse    = "\x1B[7m"
+	ansiCodeConceal    = "\x1B[8m"
+	ansiCodeCrossedOut = "\x1B[9m"
+
+	ansiCodeFgBlack   = "\x1B[30m"
+	ansiCodeFgRed     = "\x1B[31m"
+	ansiCodeFgGreen   = "\x1B[32m"
+	ansiCodeFgYellow  = "\x1B[33m"
+	ansiCodeFgBlue    = "\x1B[34m"
+	ansiCodeFgMagenta = "\x1B[35m"
+	ansiCodeFgCyan    = "\x1B[36m"
+	ansiCodeFgWhite   = "\x1B[37m"
+	ansiCodeFgDefault = "\x1B[39m"
+
+	ansiCodeBgBlack   = "\x1B[40m"
+	ansiCodeBgRed     = "\x1B[41m"
+	ansiCodeBgGreen   = "\x1B[42m"
+	ansiCodeBgYellow  = "\x1B[43m"
+	ansiCodeBgBlue    = "\x1B[44m"
+	ansiCodeBgMagenta = "\x1B[45m"
+	ansiCodeBgCyan    = "\x1B[46m"
+	ansiCodeBgWhite   = "\x1B[47m"
+	ansiCodeBgDefault = "\x1B[49m"
+
+	ansiCodeFgBrightBlack   = "\x1B[90m"
+	ansiCodeFgBrightRed     = "\x1B[91m"
+	ansiCodeFgBrightGreen   = "\x1B[92m"
+	ansiCodeFgBrightYellow  = "\x1B[93m"
+	ansiCodeFgBrightBlue    = "\x1B[94m"
+	ansiCodeFgBrightMagenta = "\x1B[95m"
+	ansiCodeFgBrightCyan    = "\x1B[96m"
+	ansiCodeFgBrightWhite   = "\x1B[97m"
+
+	ansiCodeBgBrightBlack   = "\x1B[100m"
+	ansiCodeBgBrightRed     = "\x1B[101m"
+	ansiCodeBgBrightGreen   = "\x1B[102m"
+	ansiCodeBgBrightYellow  = "\x1B[103m"
+	ansiCodeBgBrightBlue    = "\x1B[104m"
+	ansiCodeBgBrightMagenta = "\x1B[105m"
+	ansiCodeBgBrightCyan    = "\x1B[106m"
+	ansiCodeBgBrightWhite   = "\x1B[107m"
+)
