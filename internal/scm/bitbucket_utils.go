@@ -53,6 +53,6 @@ func (bc *bitbucketClient) ListDirectory(project string, repo string, filepath s
 }
 
 // return list of files in a repository, default branch & latest commit
-func (bc *bitbucketClient) listFilesRepo(project string, repo string) ([]string, error) {
-	return bc.listFiles(project, repo, "", "")
-}
+// func (bc *bitbucketClient) listFilesRepo(project string, repo string) ([]string, error) {
+// 	return bc.listFiles(project, repo, "", "")
+// }

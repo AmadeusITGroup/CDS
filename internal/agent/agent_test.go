@@ -5,14 +5,14 @@ import (
 	"net"
 	"testing"
 
+	cdspb "github.com/amadeusitgroup/cds/internal/api/v1"
+	"github.com/amadeusitgroup/cds/internal/core"
+	cdstls "github.com/amadeusitgroup/cds/internal/tls"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/protobuf/types/known/emptypb"
-	cdspb "github.com/amadeusitgroup/cds/internal/api/v1"
-	"github.com/amadeusitgroup/cds/internal/core"
-	cdstls "github.com/amadeusitgroup/cds/internal/tls"
 )
 
 func newMock() commandManager {
@@ -98,8 +98,8 @@ func setupTest(t *testing.T, fn func(*bom)) (client cdspb.AgentClient, cfg *bom,
 
 	return client, cfg, func() {
 		server.Stop()
-		conn.Close()
-		lis.Close()
+		_ = conn.Close()
+		_ = lis.Close()
 	}
 }
 

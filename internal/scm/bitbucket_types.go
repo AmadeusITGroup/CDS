@@ -13,11 +13,11 @@ import "github.com/amadeusitgroup/cds/internal/clog"
 // latest API documentation: https://docs.atlassian.com/bitbucket-server/rest/7.16.0/bitbucket-rest.html#idp271
 
 // partial response of GET /rest/api/1.0/project/{PROJECT}/repos/{REPO}
-type repository struct {
-	Slug  string `json:"slug"`
-	ScmId string `json:"scmId"`
-	State string `json:"state"`
-}
+// type repository struct {
+// 	Slug  string `json:"slug"`
+// 	ScmId string `json:"scmId"`
+// 	State string `json:"state"`
+// }
 
 // response of GET /rest/api/1.0/project/{PROJECT}/repos/{REPO}/files for file type
 type RepositoryFileType struct {

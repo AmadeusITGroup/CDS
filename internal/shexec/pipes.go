@@ -72,8 +72,9 @@ func ExecutePipe(p Pipe, workDir string) (string, error) {
 	}
 
 	go func() {
-		defer stdin.Close()
-
+		defer func() {
+			_ = stdin.Close()
+		}()
 		_, err = io.WriteString(stdin, buf.String())
 		if err != nil {
 			clog.Error(fmt.Sprintf("Error writing to stdin: %v", err))

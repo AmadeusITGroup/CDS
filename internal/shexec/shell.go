@@ -127,7 +127,7 @@ func openAttachedSession(client *ssh.Client) (*ssh.Session, func(), error) {
 	session, err := client.NewSession()
 	cleanup = func() {
 		if session != nil {
-			session.Close()
+			_ = session.Close()
 		}
 	}
 
@@ -145,7 +145,7 @@ func openAttachedSession(client *ssh.Client) (*ssh.Session, func(), error) {
 		}
 
 		if session != nil {
-			session.Close()
+			_ = session.Close()
 		}
 	}
 

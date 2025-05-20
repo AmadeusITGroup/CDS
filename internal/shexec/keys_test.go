@@ -78,18 +78,17 @@ func TestCheckValidSSHKeyPairExistence(t *testing.T) {
 
 	h := mockedTarget{name: "mockedHost", pathToPub: mockedPublicKeyPath, pathToPrv: mockedPrivateKeyPath}
 
-	expectedError := cerr.NewError(fmt.Sprintf("Host %s does not have a valid ssh key pair", h.FQDN())).Error()
-
+	expectedError := cerr.NewError(fmt.Sprintf("Host %s does not have a valid ssh key pair", h.FQDN()))
 	// Both private and public ssh keys are missing
 	assert.Error(t, CheckValidSSHKeyPairExistence(h))
-	assert.Equal(t, CheckValidSSHKeyPairExistence(h).Error(), expectedError)
+	assert.Equal(t, cerr.Message(CheckValidSSHKeyPairExistence(h)), cerr.Message(expectedError))
 
 	// Missing private ssh key
 	if _, err := cos.Fs.OpenFile(mockedPublicKeyPath, os.O_CREATE|os.O_RDWR, fs.FileMode(0600)); err != nil {
 		t.Fatal(err)
 	}
 	assert.Error(t, CheckValidSSHKeyPairExistence(h))
-	assert.Equal(t, CheckValidSSHKeyPairExistence(h).Error(), expectedError)
+	assert.Equal(t, cerr.Message(CheckValidSSHKeyPairExistence(h)), cerr.Message(expectedError))
 
 	if err := cos.Fs.Remove(mockedPublicKeyPath); err != nil {
 		t.Fatal(err)
@@ -100,7 +99,7 @@ func TestCheckValidSSHKeyPairExistence(t *testing.T) {
 		t.Fatal(err)
 	}
 	assert.Error(t, CheckValidSSHKeyPairExistence(h))
-	assert.Equal(t, CheckValidSSHKeyPairExistence(h).Error(), expectedError)
+	assert.Equal(t, cerr.Message(CheckValidSSHKeyPairExistence(h)), cerr.Message(expectedError))
 
 	//Both keys are present
 	if _, err := cos.Fs.OpenFile(mockedPublicKeyPath, os.O_CREATE|os.O_RDWR, fs.FileMode(0600)); err != nil {

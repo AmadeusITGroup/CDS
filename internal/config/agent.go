@@ -1,7 +1,5 @@
 package config
 
-import "github.com/spf13/viper"
-
 const (
 	kAgentFileName string = "aconfig"
 	kKeyAgents     string = "agents"
@@ -13,16 +11,16 @@ func InitAgentConfig() error {
 		return err
 	}
 
-	if viper.IsSet(kKeyAgents) {
-		agents = viper.Get(kKeyAgents).([]agent)
-	}
+	// if viper.IsSet(kKeyAgents) {
+	// 	agents = viper.Get(kKeyAgents).([]agent)
+	// }
 
 	return nil
 }
 
-var (
-	agents []agent
-)
+// var (
+// 	agents []agent
+// )
 
 type agent struct {
 	Server string    `yaml:"server"` // server address

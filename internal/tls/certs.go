@@ -88,7 +88,10 @@ func BuildCerts() error {
 	if workDir, err = os.MkdirTemp(cg.EmptyStr, "cds"); err != nil {
 		return cerr.AppendError("Failed to create temp dir", err)
 	}
-	defer os.RemoveAll(workDir)
+	defer func() {
+		_ = os.RemoveAll(workDir)
+	}()
+
 	clog.Debug(fmt.Sprintf("Working directory: %s", workDir))
 
 	for idx, pipe := range pipes {

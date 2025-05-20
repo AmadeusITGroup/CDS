@@ -18,38 +18,38 @@ const (
 	kLimitFileInRequest = "10000"
 )
 
-func (bc *bitbucketClient) repositoryExists(projectName string, repositoryName string) (bool, error) {
-	if bc.err != nil {
-		return false, cerr.AppendErrorFmt("Failed to check if repository '%s/%s' exists, an error occurred in bitbucket client", bc.err, projectName, repositoryName)
-	}
+// func (bc *bitbucketClient) repositoryExists(projectName string, repositoryName string) (bool, error) {
+// 	if bc.err != nil {
+// 		return false, cerr.AppendErrorFmt("Failed to check if repository '%s/%s' exists, an error occurred in bitbucket client", bc.err, projectName, repositoryName)
+// 	}
 
-	url, err := url.Parse(fmt.Sprintf(
-		"%s/rest/api/1.0/projects/%s/repos/%s",
-		bc.instancePath,
-		projectName, repositoryName))
+// 	url, err := url.Parse(fmt.Sprintf(
+// 		"%s/rest/api/1.0/projects/%s/repos/%s",
+// 		bc.instancePath,
+// 		projectName, repositoryName))
 
-	if err != nil {
-		return false, cerr.AppendError(fmt.Sprintf("Failed to build url to get repository status (%s/%s)", projectName, repositoryName), err)
-	}
+// 	if err != nil {
+// 		return false, cerr.AppendError(fmt.Sprintf("Failed to build url to get repository status (%s/%s)", projectName, repositoryName), err)
+// 	}
 
-	resp, err := bc.httpClient.Get(*url)
+// 	resp, err := bc.httpClient.Get(*url)
 
-	if err != nil {
-		return false, cerr.AppendError(fmt.Sprintf("Failed to get repository status (%s/%s)", projectName, repositoryName), err)
-	}
+// 	if err != nil {
+// 		return false, cerr.AppendError(fmt.Sprintf("Failed to get repository status (%s/%s)", projectName, repositoryName), err)
+// 	}
 
-	if resp.code == http.StatusNotFound {
-		return false, nil
-	}
+// 	if resp.code == http.StatusNotFound {
+// 		return false, nil
+// 	}
 
-	repo := repository{}
+// 	repo := repository{}
 
-	if err = json.Unmarshal(resp.body, &repo); err != nil {
-		return false, cerr.AppendError("Failed to parse response to repository status request", err)
-	}
+// 	if err = json.Unmarshal(resp.body, &repo); err != nil {
+// 		return false, cerr.AppendError("Failed to parse response to repository status request", err)
+// 	}
 
-	return repo.State == "AVAILABLE", nil
-}
+// 	return repo.State == "AVAILABLE", nil
+// }
 
 // return list of files in a repository at the given path in the repo, default branch & latest commit
 func (bc *bitbucketClient) listFiles(projectName string, repositoryName string, filepath string, ref string) ([]string, error) {
@@ -187,7 +187,8 @@ func (bc *bitbucketClient) ValidateAuthentication() (bool, error) {
 		return false, cerr.AppendError("Failed to determine credential validity, unable to perform a request against bitbucket !", err)
 	}
 
-	if resp.code == http.StatusOK || resp.code == http.StatusNoContent {
+	switch resp.code {
+	case http.StatusOK, http.StatusNoContent:
 		userInfo := bitbucketUserResponse{}
 		err = json.Unmarshal(resp.body, &userInfo)
 
@@ -198,11 +199,10 @@ func (bc *bitbucketClient) ValidateAuthentication() (bool, error) {
 		if !userInfo.Active {
 			return false, cerr.NewError("Specified user is not active on Bitbucket !")
 		}
-
 		return true, nil
-	} else if resp.code == http.StatusUnauthorized {
+	case http.StatusUnauthorized:
 		return false, cerr.NewError("Failed to validate bitbucket credentials, HTTP code was 401")
-	} else {
+	default:
 		clog.Debug("Made GET request but HTTP code was", resp.code, ", server responded:", string(resp.body))
 		return false, cerr.NewError(fmt.Sprintf("Failed to make HTTP GET request to validate credentials, HTTP code was %v", resp.code))
 	}

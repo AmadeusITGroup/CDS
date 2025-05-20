@@ -51,21 +51,13 @@ install: \
 	test \
 	coverage
 
-# build: \
-# 	init \
-# 	gencert \
-# 	lint \
-# 	build-pb \
-# 	build-api-agent \
-# 	build-client \
-# 	build-metrics-analyzer \
-
 build: \
 	init \
 	gencert \
+	lint \
 	build-pb \
 	build-api-agent \
-	build-client \
+	build-client
 
 ci-build: \
 	init \
@@ -77,11 +69,10 @@ ci-build: \
 scaffold: \
 	init \
 	gencert \
-	lint-weak \
+	lint \
 	build-pb \
 	build-api-agent \
 	build-client \
-	build-metrics-analyzer \
 	test \
 	gen-coverage \
 	coverage

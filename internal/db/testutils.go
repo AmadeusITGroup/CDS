@@ -68,6 +68,8 @@ func createConfigFile(bom any, pathToFile string) error {
 		return err
 	}
 
-	defer file.Close()
+	defer func() {
+		_ = file.Close()
+	}()
 	return nil
 }

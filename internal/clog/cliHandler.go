@@ -121,7 +121,7 @@ func (c *cliHandler) Handle(ctx context.Context, r slog.Record) error {
 				c.appendAttr(buf, a, 0)
 			}
 		}
-		buf.WriteByte(cg.SpaceRune)
+		_ = buf.WriteByte(cg.SpaceRune)
 	}
 	// write source
 	if c.opts.AddSource && r.PC != 0 {
@@ -136,10 +136,10 @@ func (c *cliHandler) Handle(ctx context.Context, r slog.Record) error {
 
 			if replaceAttr == nil {
 				c.appendSource(buf, src)
-				buf.WriteByte(cg.SpaceRune)
+				_ = buf.WriteByte(cg.SpaceRune)
 			} else if a := replaceAttr(nil, slog.Any(slog.SourceKey, src)); a.Key != cg.EmptyStr {
 				c.appendAttr(buf, a, 0)
-				buf.WriteByte(cg.SpaceRune)
+				_ = buf.WriteByte(cg.SpaceRune)
 			}
 		}
 
@@ -147,14 +147,14 @@ func (c *cliHandler) Handle(ctx context.Context, r slog.Record) error {
 
 	// write level
 	c.appendLevel(buf, r.Level)
-	buf.WriteByte(cg.SpaceRune)
+	_ = buf.WriteByte(cg.SpaceRune)
 
 	alignCharsTotal := bufferSizeWithoutColors(buf)
 
 	c.addFgColorForLevel(buf, r.Level)
 	if replaceAttr == nil {
-		buf.WriteString(r.Message)
-		buf.WriteByte(cg.SpaceRune)
+		_, _ = buf.WriteString(r.Message)
+		_ = buf.WriteByte(cg.SpaceRune)
 	} else if a := replaceAttr(nil, slog.String(slog.MessageKey, r.Message)); a.Key != cg.EmptyStr {
 		c.appendAttr(buf, a, 0)
 	}
@@ -170,7 +170,7 @@ func (c *cliHandler) Handle(ctx context.Context, r slog.Record) error {
 	for _, goa := range goas {
 		indentSpaces := alignCharsTotal + indentLevel*4
 		if goa.group != cg.EmptyStr {
-			buf.WriteStringf("%*s%s:\n", indentSpaces, cg.EmptyStr, goa.group)
+			_, _ = buf.WriteStringf("%*s%s:\n", indentSpaces, cg.EmptyStr, goa.group)
 			indentLevel++
 		} else {
 			for _, a := range goa.attrs {
@@ -183,7 +183,7 @@ func (c *cliHandler) Handle(ctx context.Context, r slog.Record) error {
 		return true
 	})
 	if !c.opts.NoColor {
-		buf.WriteString(ansiCodeReset)
+		_, _ = buf.WriteString(ansiCodeReset)
 	}
 	c.Lock()
 	defer c.Unlock()
@@ -226,55 +226,55 @@ func (c *cliHandler) appendAttr(buf *buffer, a slog.Attr, indentSpaceTotal int) 
 	}
 
 	indentsTotal := indentSpaceTotal
-	buf.WriteStringf("%*s", indentsTotal, cg.EmptyStr)
+	_, _ = buf.WriteStringf("%*s", indentsTotal, cg.EmptyStr)
 	switch a.Value.Kind() {
 	case slog.KindString:
 		if a.Key == slog.MessageKey {
-			buf.WriteStringf("%s\n", a.Value.String())
+			_, _ = buf.WriteStringf("%s\n", a.Value.String())
 		} else {
-			buf.WriteStringf("%s: %q\n", a.Key, a.Value)
+			_, _ = buf.WriteStringf("%s: %q\n", a.Key, a.Value)
 		}
 	case slog.KindTime:
-		buf.WriteStringf("%s", a.Value.Time().Format(c.opts.TimeFormat))
+		_, _ = buf.WriteStringf("%s", a.Value.Time().Format(c.opts.TimeFormat))
 	case slog.KindGroup:
 		attrs := a.Value.Group()
 		if len(attrs) == 0 {
 			return
 		}
 		if a.Key != cg.EmptyStr {
-			buf.WriteStringf("%s:\n", a.Key)
+			_, _ = buf.WriteStringf("%s:\n", a.Key)
 			indentsTotal += 4
 		}
 		for _, ga := range attrs {
 			c.appendAttr(buf, ga, indentsTotal)
 		}
 	default:
-		buf.WriteStringf("%s: %s\n", a.Key, a.Value)
+		_, _ = buf.WriteStringf("%s: %s\n", a.Key, a.Value)
 	}
 }
 
 func (c *cliHandler) appendSource(buf *buffer, src slog.Source) {
 	if !c.opts.NoColor {
-		buf.WriteString(ansiCodeFaint)
+		_, _ = buf.WriteString(ansiCodeFaint)
 	}
 	dir, file := filepath.Split(src.File)
-	buf.WriteByte('(')
-	buf.WriteString(filepath.Join(filepath.Base(dir), file))
-	buf.WriteByte(':')
-	buf.WriteString(strconv.Itoa(src.Line))
-	buf.WriteByte(')')
+	_ = buf.WriteByte('(')
+	_, _ = buf.WriteString(filepath.Join(filepath.Base(dir), file))
+	_ = buf.WriteByte(':')
+	_, _ = buf.WriteString(strconv.Itoa(src.Line))
+	_ = buf.WriteByte(')')
 	if !c.opts.NoColor {
-		buf.WriteString(ansiCodeReset)
+		_, _ = buf.WriteString(ansiCodeReset)
 	}
 }
 
 func (c *cliHandler) appendTime(buf *buffer, t time.Time) {
 	if !c.opts.NoColor {
-		buf.WriteString(ansiCodeFaint)
+		_, _ = buf.WriteString(ansiCodeFaint)
 	}
 	*buf = t.AppendFormat(*buf, c.opts.TimeFormat)
 	if !c.opts.NoColor {
-		buf.WriteString(ansiCodeReset)
+		_, _ = buf.WriteString(ansiCodeReset)
 	}
 }
 
@@ -297,7 +297,7 @@ func (c *cliHandler) appendLevel(buf *buffer, l slog.Level) {
 	if !c.opts.NoColor {
 		s = fmt.Sprintf("%s%s%s", color, s, ansiCodeReset)
 	}
-	buf.WriteString(s)
+	_, _ = buf.WriteString(s)
 }
 
 // centerText centers the given text within the specified width.
@@ -323,7 +323,7 @@ func (c *cliHandler) addFgColorForLevel(buf *buffer, l slog.Level) {
 	case slog.LevelDebug:
 	}
 	if !c.opts.NoColor {
-		buf.WriteString(color)
+		_, _ = buf.WriteString(color)
 	}
 }
 

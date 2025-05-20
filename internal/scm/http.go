@@ -211,12 +211,12 @@ func (c *Client) doRequest(req *http.Request, emptyResponse bool) (io.ReadCloser
 
 	// TODO:FixMe: proper handling of HTTP codes
 	if resp.StatusCode > 499 {
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		return nil, resp.StatusCode, cerr.NewError(fmt.Sprintf("Request failed with HTTP code: %v", resp.StatusCode))
 	}
 
 	if emptyResponse || resp.StatusCode == http.StatusNoContent {
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		return nil, resp.StatusCode, nil
 	}
 
