@@ -2,11 +2,12 @@ package cg
 
 import (
 	"encoding/json"
-	"os"
+
+	"github.com/amadeusitgroup/cds/internal/cos"
 )
 
 func UnmarshalJSON(path string, data any) error {
-	file, err := os.ReadFile(path)
+	file, err := cos.ReadFile(path)
 	if err != nil {
 		return err
 	}

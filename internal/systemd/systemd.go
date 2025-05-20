@@ -173,7 +173,10 @@ func (s *sysD) createUnitFileOnTarget(fileName string, data []byte) error {
 	if errTmpDir != nil {
 		return cerr.AppendError("Failed to create temp dir", errTmpDir)
 	}
-	defer os.RemoveAll(workDir)
+	defer func() {
+		_ = os.RemoveAll(workDir)
+	}()
+
 	clog.Debug(fmt.Sprintf("Working directory: %s", workDir))
 
 	if err := cos.WriteFile(filepath.Join(workDir, fileName), data, fs.FileMode(0600)); err != nil {

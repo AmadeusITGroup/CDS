@@ -131,7 +131,9 @@ func writeToFile(filename string, data []byte) {
 	if err != nil {
 		panic(err)
 	}
-	defer file.Close()
+	defer func() {
+		_ = file.Close()
+	}()
 
 	_, err = file.Write(data)
 	if err != nil {

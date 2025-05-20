@@ -30,7 +30,9 @@ func isAgentRunning(hostName string) bool {
 		clog.Debug("Failed to connect to agent", err)
 		return false
 	}
-	defer conn.Close()
+	defer func() {
+		_ = conn.Close()
+	}()
 	return true
 }
 

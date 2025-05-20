@@ -12,12 +12,13 @@ import (
 )
 
 var testServerGlobal = httptest.NewServer(http.HandlerFunc(func(res http.ResponseWriter, req *http.Request) {
-	if req.RequestURI == "/TestClient" {
+	switch req.RequestURI {
+	case "/TestClient":
 		res.WriteHeader(200)
 		if _, err := res.Write([]byte("body")); err != nil {
 			clog.Warn("", err)
 		}
-	} else if req.RequestURI == "/TestClientAuth" {
+	case "/TestClientAuth":
 		user, pass, ok := req.BasicAuth()
 		if !ok || user != "testuser" || pass != "testpassword" {
 			res.WriteHeader(403)

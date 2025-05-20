@@ -3,8 +3,8 @@ package db
 import (
 	"testing"
 
-	"github.com/stretchr/testify/assert"
 	"github.com/amadeusitgroup/cds/internal/bo"
+	"github.com/stretchr/testify/assert"
 )
 
 func TestListHostNames(t *testing.T) {
@@ -107,8 +107,8 @@ func TestRemoveHostFromHostList(t *testing.T) { //TODO: Rename to 'RemoveHost' o
 				actualHosts[i] = *h
 			}
 
-			expectedHosts := make([]host, len(tt.expectedData.hosts.Hosts))
-			for i, h := range tt.expectedData.hosts.Hosts {
+			expectedHosts := make([]host, len(tt.expectedData.Hosts))
+			for i, h := range tt.expectedData.Hosts {
 				expectedHosts[i] = *h
 			}
 			assert.EqualValues(t, expectedHosts, actualHosts)
@@ -358,9 +358,9 @@ func TestUpdateHostKey(t *testing.T) {
 			host, err := instance().d.getHost(tt.boHost.Name)
 
 			assert.NoError(t, err)
-			assert.Equal(t, tt.boHost.PathToPrv, host.sshInfo.PathToKey)
-			assert.Equal(t, tt.boHost.PathToPub, host.sshInfo.PathToPubKey)
-			assert.Equal(t, true, host.sshInfo.UseKey)
+			assert.Equal(t, tt.boHost.PathToPrv, host.PathToKey)
+			assert.Equal(t, tt.boHost.PathToPub, host.PathToPubKey)
+			assert.Equal(t, true, host.UseKey)
 		})
 	}
 }

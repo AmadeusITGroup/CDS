@@ -117,7 +117,7 @@ func (v visitHost) get(hostName string) (any, error) {
 }
 
 func (d *data) getHost(hostName string) (*host, error) {
-	h, found := cg.FindElemFromSlice(d.hosts.Hosts, func(h *host) bool { return h.Name == hostName })
+	h, found := cg.FindElemFromSlice(d.Hosts, func(h *host) bool { return h.Name == hostName })
 	if !found {
 		return nil, cerr.NewError((fmt.Sprintf("Failed to get host %s ", hostName)))
 	}
@@ -134,7 +134,7 @@ func HasHost(hostName string) bool {
 
 func GetHostKey(hostName string) string {
 	var fn visitHost = func(h *host) any {
-		return h.sshInfo.PathToKey
+		return h.PathToKey
 	}
 	value, err := fn.get(hostName)
 	if err != nil {
@@ -145,7 +145,7 @@ func GetHostKey(hostName string) string {
 
 func GetHostPubKey(hostName string) string {
 	var fn visitHost = func(h *host) any {
-		return h.sshInfo.PathToPubKey
+		return h.PathToPubKey
 	}
 	value, err := fn.get(hostName)
 	if err != nil {

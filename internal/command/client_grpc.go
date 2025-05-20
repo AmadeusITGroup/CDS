@@ -4,12 +4,12 @@ import (
 	"context"
 	"time"
 
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials"
 	cdspb "github.com/amadeusitgroup/cds/internal/api/v1"
 	"github.com/amadeusitgroup/cds/internal/cerr"
 	"github.com/amadeusitgroup/cds/internal/clog"
 	cdstls "github.com/amadeusitgroup/cds/internal/tls"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
 )
 
 type stubCallback func(c cdspb.AgentClient, ctx context.Context) error
@@ -33,7 +33,10 @@ func (s stubCallback) execute() error {
 	if err != nil {
 		clog.Error("Failed to connect", err)
 	}
-	defer conn.Close()
+	defer func() {
+		_ = conn.Close()
+	}()
+
 	c := cdspb.NewAgentClient(conn)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()

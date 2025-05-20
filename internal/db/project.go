@@ -39,7 +39,7 @@ func (v visitProject) get(projectName string) (any, error) {
 }
 
 func (d *data) getProject(projectName string) (*project, error) {
-	for _, p := range d.projects.Projects {
+	for _, p := range d.Projects {
 		if p.Name == projectName {
 			return p, nil
 		}

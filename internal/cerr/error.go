@@ -7,6 +7,16 @@ import (
 	"github.com/amadeusitgroup/cds/internal/clog"
 )
 
+type ErrorDetail int
+
+const (
+	TopLevelOnly ErrorDetail = iota
+	MessageOnly
+	FullChain
+)
+
+var DefaultErrorDetail ErrorDetail = FullChain
+
 type Err struct {
 	From    string
 	Message string
@@ -14,7 +24,29 @@ type Err struct {
 }
 
 func (e *Err) Error() string {
-	return e.bubbleUp()
+	return e.format(DefaultErrorDetail)
+}
+
+func Message(e error) string {
+	switch e := e.(type) {
+	case *Err:
+		return e.format(MessageOnly)
+	default:
+		return e.Error()
+	}
+}
+
+func (e *Err) format(detail ErrorDetail) string {
+	switch detail {
+	case TopLevelOnly:
+		return fmt.Sprintf("%s, at [%s].", e.Message, e.From)
+	case MessageOnly:
+		return e.Message
+	case FullChain:
+		return e.bubbleUp()
+	default:
+		return e.bubbleUp()
+	}
 }
 
 func (e *Err) bubbleUp() string {

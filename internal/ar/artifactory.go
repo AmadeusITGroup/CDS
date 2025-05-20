@@ -13,9 +13,9 @@ import (
 	"github.com/jfrog/jfrog-client-go/config"
 )
 
-const (
-	artifactoryUrl = "https://repository.rnd.fix.me"
-)
+// const (
+// 	artifactoryUrl = "https://repository.rnd.fix.me"
+// )
 
 // callbacks to obtain credentials from outside of this package
 var (

@@ -51,7 +51,7 @@ var sshClients map[target]*ssh.Client = make(map[target]*ssh.Client)
 func CloseAllSSHClients() {
 	for _, sshClient := range sshClients {
 		if sshClient != nil {
-			sshClient.Close()
+			_ = sshClient.Close()
 		}
 	}
 }
@@ -283,7 +283,9 @@ func runSession(client *ssh.Client, cmd ...any) (string, error) {
 	if err != nil {
 		return "", cerr.AppendError("Failed to create session", err)
 	}
-	defer session.Close()
+	defer func() {
+		_ = session.Close()
+	}()
 
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
@@ -473,13 +475,17 @@ func CopyFile(method RemoteExecute, src, dst string) error {
 			if errS != nil {
 				return "", cerr.AppendError("Failed to create a session", errS)
 			}
-			defer session.Close()
+			defer func() {
+				_ = session.Close()
+			}()
 
 			file, errF := cos.Fs.Open(src)
 			if errF != nil {
 				return "", cerr.AppendError(fmt.Sprintf("Failed to read source file (%s)", src), errF)
 			}
-			defer file.Close()
+			defer func() {
+				_ = file.Close()
+			}()
 
 			stat, _ := file.Stat()
 
@@ -492,14 +498,17 @@ func CopyFile(method RemoteExecute, src, dst string) error {
 				if errStdin != nil {
 					clog.Error("unable to open a pipe:", errStdin)
 				}
-				defer hostIn.Close()
-				fmt.Fprintf(hostIn, "C0600 %d %s\n", stat.Size(), fileName)
+				defer func() {
+					_ = hostIn.Close()
+				}()
+
+				_, _ = fmt.Fprintf(hostIn, "C0600 %d %s\n", stat.Size(), fileName)
 
 				_, err := io.Copy(hostIn, file)
 				if err != nil {
 					clog.Error("", err)
 				}
-				fmt.Fprint(hostIn, "\x00")
+				_, _ = fmt.Fprint(hostIn, "\x00")
 
 			}()
 
@@ -532,13 +541,17 @@ func DownloadFile(method RemoteExecute, src, dst string) error {
 			if errF != nil {
 				return "", cerr.AppendError(fmt.Sprintf("Failed to create destination file (%s)", dst), errF)
 			}
-			defer file.Close()
+			defer func() {
+				_ = file.Close()
+			}()
 
 			session, errS := client.NewSession()
 			if errS != nil {
 				return "", cerr.AppendError("Failed to create a session", errS)
 			}
-			defer session.Close()
+			defer func() {
+				_ = session.Close()
+			}()
 
 			data, err := session.Output(fmt.Sprintf("cat %v", src))
 			if err != nil {
@@ -601,7 +614,7 @@ func forwardConnToRemote(conn net.Conn, client *ssh.Client, remote string) {
 	sshEndConn, err := client.Dial("tcp", remote)
 	defer func() {
 		if sshEndConn != nil {
-			sshEndConn.Close()
+			_ = sshEndConn.Close()
 		}
 	}()
 	if err != nil {

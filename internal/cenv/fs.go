@@ -82,7 +82,9 @@ func EnsureFile(path string, perm fs.FileMode) error {
 		return cerr.AppendError(fmt.Sprintf("Failed to create directory for path '%s'", path), errCreate)
 	}
 
-	defer file.Close()
+	defer func() {
+		_ = file.Close()
+	}()
 
 	if errChmod := cos.Fs.Chmod(file.Name(), perm); errChmod != nil {
 		return cerr.AppendError(fmt.Sprintf("Failed to apply permissions (%v) for file '%s'", perm, path), errChmod)
@@ -108,14 +110,18 @@ func CopyDir(src, dst string) error {
 		if errOpen != nil {
 			return errOpen
 		}
-		defer inputFile.Close()
+		defer func() {
+			_ = inputFile.Close()
+		}()
 
 		// create output
 		outputFile, errOpenOut := cos.Fs.Create(outputPath)
 		if errOpenOut != nil {
 			return errOpenOut
 		}
-		defer outputFile.Close()
+		defer func() {
+			_ = outputFile.Close()
+		}()
 
 		errChmod := cos.Fs.Chmod(outputFile.Name(), info.Mode())
 		if errChmod != nil {
@@ -157,13 +163,17 @@ func CopyFile(src, dst string) error {
 	if errOpen != nil {
 		return errOpen
 	}
-	defer inputFile.Close()
+	defer func() {
+		_ = inputFile.Close()
+	}()
 
 	outputFile, errOpenOut := cos.Fs.Create(dst)
 	if errOpenOut != nil {
 		return errOpenOut
 	}
-	defer outputFile.Close()
+	defer func() {
+		_ = outputFile.Close()
+	}()
 
 	info, _ := cos.Fs.Stat(src)
 	errChmod := cos.Fs.Chmod(outputFile.Name(), info.Mode())
