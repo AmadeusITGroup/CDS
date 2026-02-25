@@ -31,6 +31,11 @@ func NotExist(path string) bool {
 	return !Exists(path)
 }
 
+func EnsureDir(path string, perm os.FileMode) error {
+	dir := filepath.Dir(path)
+	return Fs.MkdirAll(dir, perm)
+}
+
 func Rename(oldname string, newName string) error {
 	return Fs.Rename(oldname, newName)
 }
