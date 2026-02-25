@@ -12,19 +12,12 @@ type scmSource struct {
 	path    string // path within the repository
 }
 
-// Compile-time check that scmSource satisfies Source.
-var _ Source = (*scmSource)(nil)
-
 // NewSCMSource creates a Source backed by a git repository at repoUrl
 // checked out at the given ref (branch, tag, or commit SHA), pointing
 // to the given path within the repository.
 func NewSCMSource(repoUrl, ref, path string) (Source, error) {
 	clog.Warn("source.NewSCMSource Not Implemented")
-	return &scmSource{repoUrl: repoUrl, ref: ref, path: path}, nil
-}
-
-func (s *scmSource) Type() SourceType {
-	return SCM
+	return &scmSource{baseSource: baseSource{sourceType: SCM}, repoUrl: repoUrl, ref: ref, path: path}, nil
 }
 
 func (s *scmSource) Information() string {

@@ -80,10 +80,14 @@ type Source interface {
 
 // baseSource provides default implementations for the Source interface.
 // Concrete source types embed this struct and override only the methods they actually support.
-type baseSource struct{}
+type baseSource struct {
+	sourceType SourceType
+}
+
+var _ Source = (*baseSource)(nil) // ensure baseSource implements Source
 
 func (b *baseSource) Type() SourceType {
-	return Undefined
+	return b.sourceType
 }
 
 func (b *baseSource) Information() string {

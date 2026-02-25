@@ -14,10 +14,9 @@ import (
 // localSource implements Source backed by the local filesystem.
 // Each instance points to a single file or directory.
 type localSource struct {
-	path string // absolute path to the file or directory
+	baseSource
+	path string
 }
-
-var _ Source = (*localSource)(nil)
 
 // NewLocalSource creates a Source pointing to the given path.
 func NewLocalSource(path string) (Source, error) {
@@ -26,11 +25,7 @@ func NewLocalSource(path string) (Source, error) {
 		return nil, cerr.AppendError("failed to resolve absolute path", err)
 	}
 
-	return &localSource{path: abs}, nil
-}
-
-func (ls *localSource) Type() SourceType {
-	return LocalFS
+	return &localSource{baseSource: baseSource{sourceType: LocalFS}, path: abs}, nil
 }
 
 func (ls *localSource) Information() string {
@@ -86,7 +81,7 @@ func (ls *localSource) Children() ([]Source, error) {
 	children := make([]Source, 0, len(fileInfos))
 	for _, fi := range fileInfos {
 		childPath := filepath.Join(ls.path, fi.Name())
-		children = append(children, &localSource{path: childPath})
+		children = append(children, &localSource{baseSource: baseSource{sourceType: LocalFS}, path: childPath})
 	}
 	return children, nil
 }
