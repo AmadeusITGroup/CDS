@@ -1,0 +1,34 @@
+#!/bin/sh
+
+update_files_with_unique_entries() {
+    file=$1
+    entry=$2
+    if [ -f "$file" ]; then
+        if ! grep -Fq "$entry" "$file"; then
+            echo "$entry" >> "$file"
+        fi
+    else
+        echo "$entry" >> "$file"
+    fi
+}
+
+PODMAN_SOCKET=
+CONTAINER_USR="{.remoteUser}"
+
+if [ "$(id -u "$CONTAINER_USR")" = "0" ]; then
+    PODMAN_SOCKET=/run/podman/podman.sock
+else
+    PODMAN_SOCKET=/run/user/$(id -u "$CONTAINER_USR")/podman/podman.sock
+fi
+
+read -r profile_appends << EOS
+export CONTAINER_HOST=unix:$PODMAN_SOCKET \nexport DOCKER_HOST=unix://$PODMAN_SOCKET
+EOS
+
+profile="/etc/profile"
+zshenv="/etc/zshenv"
+
+echo "$profile_appends" | while IFS= read -r elem; do
+    update_files_with_unique_entries $profile "$elem"
+    update_files_with_unique_entries $zshenv "$elem"
+done

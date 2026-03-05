@@ -55,3 +55,25 @@ func SetMockedFileSystem() {
 func SetRealFileSystem() {
 	Fs = afero.NewOsFs()
 }
+
+func CreateTempDir(dir, pattern string) (string, error) {
+	return afero.TempDir(Fs, dir, pattern)
+}
+
+func CreateTempFile(dir, pattern string) (File, error) {
+	return afero.TempFile(Fs, dir, pattern)
+}
+
+func CreateTempFileWithContent(dir, pattern string, content []byte) (File, error) {
+	tmpFile, err := CreateTempFile(dir, pattern)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := tmpFile.Write(content); err != nil {
+		return nil, err
+	}
+	if err := tmpFile.Close(); err != nil {
+		return nil, err
+	}
+	return tmpFile, nil
+}

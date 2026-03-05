@@ -15,6 +15,10 @@ import (
 	cg "github.com/amadeusitgroup/cds/internal/global"
 )
 
+const (
+	kTmp = "tmp"
+)
+
 func EnsureDir(path string, perm fs.FileMode) error {
 	if fs.FileMode(0100)&perm == 0 {
 		clog.Warn(fmt.Sprintf("Permissions for file '%s' don't grant execute perm to owner, directory won't be accessible", path))
@@ -183,4 +187,20 @@ func CopyFile(src, dst string) error {
 
 	_, err := io.Copy(outputFile, inputFile)
 	return err
+}
+
+func CreateTempFileWithContent(content []byte) (string, error) {
+	tmpFile, err := cos.CreateTempFile(ConfigDir(kTmp), "temp-file-*")
+	if err != nil {
+		return "", err
+	}
+	defer func() {
+		_ = tmpFile.Close()
+	}()
+
+	if _, err := tmpFile.Write(content); err != nil {
+		return "", err
+	}
+
+	return tmpFile.Name(), nil
 }

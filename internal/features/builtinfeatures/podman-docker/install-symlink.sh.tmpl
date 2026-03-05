@@ -1,0 +1,54 @@
+#!/bin/sh
+
+# Function to check if a command exists in the PATH
+command_exists() {
+    command -v "$1" >/dev/null 2>&1
+}
+
+ensureBinary() {
+    binary_name=$1
+    package_name=$2
+
+    if command_exists $binary_name; then
+        echo "$binary_name already exists"
+        return
+    fi
+
+    echo "$binary_name does not exist"
+
+    # Most RHEL based distributions
+    if command_exists dnf; then
+        echo "dnf exists. installing $binary_name"
+        dnf -y install $package_name
+        return
+    fi
+
+    # Fedora
+    if command_exists microdnf; then
+        echo "microdnf exists. installing $binary_name"
+        microdnf -y install $package_name
+        return
+    fi
+
+    if command_exists zypper; then
+        echo "zypper exists. installing $binary_name"
+        zypper install -y $package_name
+        return
+    fi
+
+    if command_exists apt-get; then
+        echo "apt-get exists. installing $binary_name"
+        apt-get update
+        apt-get -y install $package_name
+        return
+    fi
+
+    echo "No suitable package manager found to install $binary_name"
+}
+
+ensureBinary sudo sudo
+
+REMOTE_USER="{.remoteUser}"
+PODMAN_SOCKET=$(sudo -u "$REMOTE_USER" bash -lc 'podman info -f "{{ .Host.RemoteSocket.Path }}"')
+
+ln -s "$PODMAN_SOCKET" /var/run/docker.sock

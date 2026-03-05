@@ -1,0 +1,12 @@
+{
+  "name": "podman-docker",
+  "dependency": [
+    "podman-sibling"
+  ],
+  "onContainer": {
+    "files": [
+      "install-symlink.sh.tmpl"
+    ],
+    "as": "root"
+  }
+}
