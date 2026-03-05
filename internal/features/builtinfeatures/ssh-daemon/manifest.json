@@ -1,0 +1,9 @@
+{
+  "name": "ssh-daemon",
+  "onContainer": {
+    "files": [
+      "ssh-server.sh"
+    ],
+    "as": "root"
+  }
+}

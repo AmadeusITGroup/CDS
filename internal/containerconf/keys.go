@@ -1,0 +1,36 @@
+package containerconf
+
+const (
+	KAppPort                     = "appPort"
+	KBuild                       = "build"
+	KBuildDockerfile             = "dockerfile"
+	KCds                         = "cds"
+	KCdsDefaultShell             = "defaultShell"
+	KCdsMountNas                 = "mount_nas"
+	KContainerUser               = "containerUser"
+	KFeatures                    = "features"
+	KHomeEnvVariable             = "HOME"
+	KImage                       = "image"
+	KOverrideImageTag            = "overrideImageTag"
+	KInitializeCommand           = "initializeCommand"
+	KMounts                      = "mounts"
+	KName                        = "name"
+	KOrchestration               = "orchestration"
+	KOrchestrationConfigFile     = "configFile"
+	KOrchestrationEngine         = "engine"
+	KOrchestrationRegistry       = "registry"
+	KOrchestrationRegistrySecure = "secure"
+	KOrchestrationRegistryPort   = "port"
+	KOverrideCommand             = "overrideCommand"
+	KPersistentVolumeClaim       = "pvc"
+	KPostCreateCommand           = "postCreateCommand"
+	KRemoteUser                  = "remoteUser"
+	KRunArgs                     = "runArgs"
+	KSsm                         = "ssm"
+
+	// DevContainer directory/file naming conventions.
+	KProjectDefaultDir        = ".devcontainer"
+	KProjectDefaultConfigFile = "devcontainer.json"
+	KFlavourConfigFile        = "cds-flavour.json"
+	KDotfileFolder            = ".dotfiles"
+)
