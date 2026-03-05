@@ -1,0 +1,12 @@
+{
+  "name": "podman-sibling",
+  "dependency": [
+    "userns-keepid"
+  ],
+  "onContainer": {
+    "files": [
+      "podman-sibling.sh.tmpl"
+    ],
+    "as": "root"
+  }
+}
