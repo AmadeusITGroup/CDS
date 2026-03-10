@@ -4,13 +4,13 @@ import (
 	"context"
 	"log/slog"
 
+	cdspb "github.com/amadeusitgroup/cds/internal/api/v1"
+	"github.com/amadeusitgroup/cds/internal/clog"
+	"github.com/amadeusitgroup/cds/internal/core"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/emptypb"
-	cdspb "github.com/amadeusitgroup/cds/internal/api/v1"
-	"github.com/amadeusitgroup/cds/internal/clog"
-	"github.com/amadeusitgroup/cds/internal/core"
 )
 
 type bom struct {

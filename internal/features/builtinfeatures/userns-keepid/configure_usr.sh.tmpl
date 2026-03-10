@@ -1,0 +1,105 @@
+#!/bin/sh
+
+# Note: despite having a shebang, this file is not executed.  Instead,
+# its contents are simply piped into a "/bin/sh -l" executed within
+# the container.
+
+# check_if_string_in_file STRING FILE
+# Check whether some string is present in the given file.
+# If yes, return 1; if no, print a message and return 0.
+check_if_string_in_file () {
+    if ! grep -Fq "$1" "$2"
+    then
+        echo "$1 not in $2"
+        return 0
+    fi
+    return 1
+}
+
+# add_to_file LINE FILE
+# Make sure the given LINE is present in FILE.
+# If not, add the LINE at the end.
+add_to_file () {
+    check_if_string_in_file "$1" "$2"
+    if [ $? -eq 0 ]; then
+        echo "$1" >> $2
+        echo "Added $1 to $2"
+        return 0
+    fi
+    echo "$1 is already in $2"
+    return 0
+}
+
+# ensureShell SHELL
+# e.g. ensureShell zsh
+# Ensure the given SHELL is installed, installing it if missing.
+ensureShell() {
+    command -v $1
+    if [ $? -gt 0 ]; then
+        echo "Requested shell $1 not found."
+
+        # Most Fedora-based distributions
+        if [ -e /usr/bin/dnf ]; then
+            echo "dnf exist. installing $1"
+            /usr/bin/dnf -y install $1
+            return
+        fi
+
+        # Fedora-based, light
+        if [ -e /usr/bin/microdnf ]; then
+            echo "microdnf exist. installing $1"
+            /usr/bin/microdnf -y install $1
+            return
+        fi
+
+        # Debian family
+        if [ -e /usr/bin/apt-get ]; then
+            echo "apt-get exist. installing $1"
+            /usr/bin/apt-get update
+            /usr/bin/apt-get -y install $1
+            return
+        fi
+    fi
+}
+
+# REQUESTED_SHELL should be parameterized using profile.json or devcontainer.json shell attribute
+REQUESTED_SHELL="{.defaultShell}"
+if [ -z "$REQUESTED_SHELL" ]; then
+    REQUESTED_SHELL="zsh"
+fi
+ensureShell $REQUESTED_SHELL
+PATH_TO_REQUESTED_SHELL=$(which $REQUESTED_SHELL)
+
+CONTAINER_USR="{.remoteUser}"
+CONTAINER_HOMEDIR=/home/$CONTAINER_USR
+CONTAINER_RUN_DIR=/run/user/`id -u $CONTAINER_USR`
+
+mkdir -p $CONTAINER_HOMEDIR
+chmod 700 $CONTAINER_HOMEDIR
+
+usermod -d $CONTAINER_HOMEDIR -s $PATH_TO_REQUESTED_SHELL $CONTAINER_USR
+mkdir -p $CONTAINER_RUN_DIR
+chown `id -u $CONTAINER_USR`:`id -g $CONTAINER_USR` $CONTAINER_HOMEDIR $CONTAINER_RUN_DIR
+
+SSH_DIR=$CONTAINER_HOMEDIR/.ssh
+mkdir -p $SSH_DIR
+chmod 700 $SSH_DIR
+if [ ! -f $SSH_DIR/id_rsa ]; then
+    ssh-keygen -t rsa -f $SSH_DIR/id_rsa -q -P ""
+fi
+chmod 600 $SSH_DIR/id_rsa
+chmod 644 $SSH_DIR/id_rsa.pub
+
+if [ -f $SSH_DIR/authorized_keys ]; then
+    check_if_string_in_file "$(cat $SSH_DIR/id_rsa.pub)" $SSH_DIR/authorized_keys
+    if [ $? -eq 0 ]; then
+        cat $SSH_DIR/id_rsa.pub >> $SSH_DIR/authorized_keys
+    fi
+else
+    cat $SSH_DIR/id_rsa.pub > $SSH_DIR/authorized_keys
+fi
+chmod 600 $SSH_DIR/authorized_keys
+chown -R `id -u $CONTAINER_USR`:`id -g $CONTAINER_USR` $SSH_DIR
+
+mkdir -p $CONTAINER_HOMEDIR/.cache
+chown -R `id -u $CONTAINER_USR`:`id -g $CONTAINER_USR` $CONTAINER_HOMEDIR/.cache

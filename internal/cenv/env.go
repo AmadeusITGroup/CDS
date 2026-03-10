@@ -8,6 +8,22 @@ import (
 	cg "github.com/amadeusitgroup/cds/internal/global"
 )
 
+const (
+	// KConfigPathEnvVar is the name of the environment variable that can be used to override the default configuration path
+	kConfigPathEnvVar = "CDS_CONFIG_PATH"
+
+	kClientConfigDirName = ".xcds"
+	kAgentConfigDirName  = ".xcds-agent"
+)
+
+var (
+	sDataDir = kClientConfigDirName
+)
+
+func SetConfigDirForAgent() {
+	sDataDir = kAgentConfigDirName
+}
+
 func ConfigFile(filename string) string {
 	return configPath(filename)
 }
@@ -21,14 +37,14 @@ func GlobalConfigPath() string {
 }
 
 func configPath(filename string) string {
-	if dir := os.Getenv("CDS_CONFIG_PATH"); dir != "" {
-		return filepath.Join(dir, ".xcds", filename)
+	if dir := os.Getenv(kConfigPathEnvVar); dir != "" {
+		return filepath.Join(dir, sDataDir, filename)
 	}
 	homedir, err := os.UserHomeDir()
 	if err != nil {
 		panic(err)
 	}
-	return filepath.Join(homedir, ".xcds", filename)
+	return filepath.Join(homedir, sDataDir, filename)
 }
 
 // determines the users based on local ENV variables
