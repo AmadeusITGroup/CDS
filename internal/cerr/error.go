@@ -3,6 +3,7 @@ package cerr
 import (
 	"fmt"
 	"runtime"
+	"strings"
 
 	"github.com/amadeusitgroup/cds/internal/clog"
 )
@@ -72,7 +73,7 @@ func AppendError(message string, err error) error {
 	return forwardError(message, err, 4)
 }
 
-func AppendErrorFmt(fmtMessage string, err error, elems ...interface{}) error {
+func AppendErrorFmt(fmtMessage string, err error, elems ...any) error {
 	if err == nil {
 		clog.Error("Incorrect usage of AppendError, received a nil error !\n Occured at", getCodePosition(3))
 	}
@@ -81,14 +82,15 @@ func AppendErrorFmt(fmtMessage string, err error, elems ...interface{}) error {
 }
 
 func AppendMultipleErrors(reportTitle string, errors []error) error {
-	errorsReport := fmt.Sprintf("%s\n", reportTitle)
+	var errorsReport strings.Builder
+	fmt.Fprintf(&errorsReport, "%s\n", reportTitle)
 	for index, err := range errors {
 		if err == nil {
 			clog.Error("Incorrect usage of AppendMultipleErrors, received a nil error !\n Occured at", getCodePosition(3))
 		}
-		errorsReport += fmt.Sprintf("Error %v: %v \n", index, err.Error())
+		fmt.Fprintf(&errorsReport, "Error %v: %v \n", index, err.Error())
 	}
-	return NewError(errorsReport)
+	return NewError(errorsReport.String())
 }
 
 func getCodePosition(skipFrames int) string {
@@ -100,13 +102,13 @@ func getCodePosition(skipFrames int) string {
 	var frame runtime.Frame
 	var next bool
 
-	for i := 0; i < n; i++ {
+	for i := range n {
 		frame, next = frames.Next()
-		if !next {
-			panic("No more frame to wind back in call stack !")
-		}
 		if i == int(skipFrames) {
 			break
+		}
+		if !next {
+			panic("No more frame to wind back in call stack !")
 		}
 	}
 
@@ -133,7 +135,7 @@ func forwardError(message string, err error, frameSkip int) error {
 
 func fromBuiltinError(err error) *Err {
 	return &Err{
-		From:    getCodePosition(4),
+		From:    getCodePosition(2),
 		Message: err.Error(),
 		Cause:   nil,
 	}
