@@ -1,19 +1,27 @@
 package config
 
+import (
+	"github.com/amadeusitgroup/cds/internal/cenv"
+	"github.com/amadeusitgroup/cds/internal/cerr"
+	cg "github.com/amadeusitgroup/cds/internal/global"
+	"github.com/amadeusitgroup/cds/internal/source"
+)
+
 const (
-	kAgentFileName string = "aconfig"
-	kKeyAgents     string = "agents"
+	kAgentFileName string = "aconfig.yaml"
 )
 
 func InitAgentConfig() error {
+	agentPath := cenv.ConfigFile(kAgentFileName)
 
-	if err := initConfig(kAgentFileName); err != nil {
-		return err
+	src, err := source.NewLocalSource(agentPath)
+	if err != nil {
+		return cerr.AppendError("failed to create agent config source", err)
 	}
 
-	// if viper.IsSet(kKeyAgents) {
-	// 	agents = viper.Get(kKeyAgents).([]agent)
-	// }
+	if err := EnsureSourceWithDefault(src, defaultAgentConfig(), cg.KPermFile); err != nil {
+		return cerr.AppendError("failed to ensure agent config exists", err)
+	}
 
 	return nil
 }

@@ -8,19 +8,29 @@ import (
 	"testing"
 
 	"github.com/amadeusitgroup/cds/internal/cos"
+	"github.com/amadeusitgroup/cds/internal/source"
+	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 )
 
+// initTestSource sets up dbSrc pointing to testDBPath on the current mock FS.
+func initTestSource(t *testing.T) {
+	t.Helper()
+	src, err := source.NewLocalSource(testDBPath)
+	if err != nil {
+		t.Fatalf("failed to create test source: %v", err)
+	}
+	dbSrc = src
+}
+
 func Test_saveDBContent(t *testing.T) {
 	tests := []struct {
-		name         string
-		bom          data
-		expectedPath string
+		name string
+		bom  data
 	}{
 		{
-			name:         "With a valid json",
-			bom:          data{projects: projects{Projects: []*project{}}},
-			expectedPath: getPathToCdsDBFile(),
+			name: "With a valid json",
+			bom:  data{projects: projects{Projects: []*project{}}},
 		},
 	}
 	for _, tt := range tests {
@@ -30,49 +40,44 @@ func Test_saveDBContent(t *testing.T) {
 			sStore = &store{d: tt.bom}
 			defer resetContent()
 
+			initTestSource(t)
 			if err := saveDBContent(); err != nil {
 				t.Errorf("saveDbContent --> error = %v", err)
 			}
-			assert.True(t, cos.Exists(tt.expectedPath))
+			assert.True(t, cos.Exists(testDBPath))
 
-			file, err := cos.ReadFile(tt.expectedPath)
+			file, err := cos.ReadFile(testDBPath)
 			if err != nil {
-				t.Fatalf("Cannot read file %s: %v", tt.expectedPath, err)
+				t.Fatalf("Cannot read file %s: %v", testDBPath, err)
 			}
 			expectedContent, _ := json.MarshalIndent(instance().d, "", "  ")
 			assert.Equal(t, expectedContent, file)
-
 		})
 	}
-
 }
 
 func Test_getDBContent(t *testing.T) {
 	tests := []struct {
 		name              string
 		bom               data
-		expectedPath      string
 		expectedError     error
 		withFileCreation  bool
 		withCorruptedFile bool
 	}{
 		{
 			name:             "With a valid bom",
-			bom:              data{Profile: profilePath{Path: getPathToDefaultProfile()}, projects: projects{Projects: []*project{{Name: "test"}}}},
-			expectedPath:     getPathToCdsDBFile(),
+			bom:              data{projects: projects{Projects: []*project{{Name: "test"}}}},
 			expectedError:    nil,
 			withFileCreation: true,
 		},
 		{
 			name:             "With a missing file",
-			bom:              data{Profile: profilePath{Path: getPathToDefaultProfile()}},
-			expectedPath:     getPathToCdsDBFile(),
+			bom:              data{},
 			expectedError:    nil,
 			withFileCreation: false,
 		},
 		{
 			name:              "With a corrupted file",
-			expectedPath:      getPathToCdsDBFile(),
 			withFileCreation:  false,
 			withCorruptedFile: true,
 			expectedError:     fmt.Errorf("Failed to parse CDS database file"),
@@ -80,25 +85,21 @@ func Test_getDBContent(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cos.SetMockedFileSystem()
+			cos.Fs = afero.NewMemMapFs()
 			defer cos.SetRealFileSystem()
 			defer resetContent()
 
+			initTestSource(t)
+
 			if tt.withFileCreation {
-				err := createConfigFile(tt.bom, tt.expectedPath)
+				content, _ := json.Marshal(tt.bom)
+				err := cos.WriteFile(testDBPath, content, 0600)
 				assert.Nil(t, err)
-				defer func() {
-					err := removeFile(tt.expectedPath)
-					assert.Nil(t, err)
-				}()
 			} else if tt.withCorruptedFile {
-				err := cos.WriteFile(tt.expectedPath, []byte("corrupted"), 0600)
+				err := cos.WriteFile(testDBPath, []byte("corrupted"), 0600)
 				assert.Nil(t, err)
-				defer func() {
-					err := removeFile(tt.expectedPath)
-					assert.Nil(t, err)
-				}()
 			}
+
 			_, err := getDBContent()
 			if err != nil {
 				if tt.expectedError != nil {
@@ -113,58 +114,50 @@ func Test_getDBContent(t *testing.T) {
 	}
 }
 
-func Test_parseFile(t *testing.T) {
+func Test_parseSource(t *testing.T) {
 	tests := []struct {
 		name          string
-		path          string
 		jsonContent   string
 		expectedBom   data
 		expectedError error
 	}{
 		{
 			name:          "With a valid json",
-			path:          getPathToCdsDBFile(),
-			jsonContent:   `{"context": {"project": ""},"profile": {"path": "/dummyPath"},"projects":[]}`,
-			expectedBom:   data{Context: context{ProjectContext: ""}, Profile: profilePath{Path: "/dummyPath"}, projects: projects{Projects: []*project{}}},
+			jsonContent:   `{"context": {"project": ""},"projects":[]}`,
+			expectedBom:   data{Context: context{ProjectContext: ""}, projects: projects{Projects: []*project{}}},
 			expectedError: nil,
 		},
 		{
 			name:          "With a corrupted json",
-			path:          getPathToCdsDBFile(),
 			jsonContent:   `corrupted`,
-			expectedError: fmt.Errorf("Failed to deserialize file "),
+			expectedError: fmt.Errorf("Failed to deserialize source"),
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cos.SetMockedFileSystem()
+			cos.Fs = afero.NewMemMapFs()
 			defer cos.SetRealFileSystem()
 			defer resetContent()
 
-			err := cos.WriteFile(tt.path, []byte(tt.jsonContent), 0600)
+			err := cos.WriteFile(testDBPath, []byte(tt.jsonContent), 0600)
 			assert.Nil(t, err)
-			defer func() {
-				err := removeFile(tt.path)
-				assert.Nil(t, err)
-			}()
 
+			initTestSource(t)
 			sStore = newDB()
 			defer resetContent()
 
-			err = parseFile(tt.path, sStore)
+			err = parseSource(sStore)
 			if err != nil {
 				if tt.expectedError != nil {
 					assert.True(t, strings.Contains(err.Error(), tt.expectedError.Error()))
 					return
 				}
-				t.Fatalf("parseFile --> error = %v", err)
+				t.Fatalf("parseSource --> error = %v", err)
 			}
 			assert.True(t, reflect.DeepEqual(tt.expectedBom, sStore.d))
-
 		})
 	}
-
 }
 
 func Test_instance(t *testing.T) {
@@ -184,47 +177,42 @@ func Test_instance(t *testing.T) {
 	}
 }
 
-func Test_Load(t *testing.T) {
+func Test_Init(t *testing.T) {
 	tests := []struct {
 		name          string
 		expectedBom   data
-		path          string
 		expectedError error
 		jsonContent   string
 	}{
 		{
 			name:          "With a valid json",
-			path:          getPathToCdsDBFile(),
-			jsonContent:   `{"context": {"project": ""},"profile": {"path": "/dummyPath"},"projects":[]}`,
-			expectedBom:   data{Context: context{ProjectContext: ""}, Profile: profilePath{Path: "/dummyPath"}, projects: projects{Projects: []*project{}}},
+			jsonContent:   `{"context": {"project": ""},"projects":[]}`,
+			expectedBom:   data{Context: context{ProjectContext: ""}, projects: projects{Projects: []*project{}}},
 			expectedError: nil,
 		},
 		{
 			name:          "With a corrupted file",
-			path:          getPathToCdsDBFile(),
 			jsonContent:   `corrupted`,
 			expectedError: fmt.Errorf("Failed to initialize cds configuration"),
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cos.SetMockedFileSystem()
+			cos.Fs = afero.NewMemMapFs()
 			defer cos.SetRealFileSystem()
 			defer resetContent()
 
-			err := cos.WriteFile(tt.path, []byte(tt.jsonContent), 0600)
+			err := cos.WriteFile(testDBPath, []byte(tt.jsonContent), 0600)
 			assert.Nil(t, err)
-			defer func() {
-				err := removeFile(tt.path)
-				assert.Nil(t, err)
-			}()
-			err = Load()
+
+			initTestSource(t)
+			err = Load(dbSrc)
 			if err != nil {
 				if tt.expectedError != nil {
 					assert.True(t, strings.Contains(err.Error(), tt.expectedError.Error()))
 					return
 				}
-				t.Fatalf("Load --> error = %v", err)
+				t.Fatalf("Init --> error = %v", err)
 			}
 			assert.True(t, reflect.DeepEqual(tt.expectedBom, instance().d))
 		})
@@ -235,40 +223,38 @@ func Test_Save(t *testing.T) {
 	tests := []struct {
 		name          string
 		bom           data
-		expectedPath  string
 		expectedError error
 	}{
 		{
 			name:          "With a valid bom",
-			bom:           data{Profile: profilePath{Path: getPathToDefaultProfile()}, projects: projects{Projects: []*project{{Name: "test"}}}},
-			expectedPath:  getPathToCdsDBFile(),
+			bom:           data{projects: projects{Projects: []*project{{Name: "test"}}}},
 			expectedError: nil,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cos.SetMockedFileSystem()
+			cos.Fs = afero.NewMemMapFs()
 			defer cos.SetRealFileSystem()
 			sStore = &store{d: tt.bom}
 			defer resetContent()
 
+			initTestSource(t)
 			if err := Save(); err != nil {
 				if tt.expectedError != nil {
 					assert.True(t, strings.Contains(err.Error(), tt.expectedError.Error()))
 					return
 				}
-				t.Errorf("saveDbContent --> error = %v", err)
+				t.Errorf("Save --> error = %v", err)
 			}
-			assert.True(t, cos.Exists(tt.expectedPath))
+			assert.True(t, cos.Exists(testDBPath))
 
-			file, err := cos.ReadFile(tt.expectedPath)
+			file, err := cos.ReadFile(testDBPath)
 			if err != nil {
-				t.Fatalf("Cannot read file %s: %v", tt.expectedPath, err)
+				t.Fatalf("Cannot read file %s: %v", testDBPath, err)
 			}
 			expectedContent, _ := json.MarshalIndent(instance().d, "", "  ")
 			assert.Equal(t, expectedContent, file)
-
 		})
 	}
 }

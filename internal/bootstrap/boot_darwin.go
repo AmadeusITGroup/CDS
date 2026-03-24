@@ -53,7 +53,7 @@ func fire() error {
 				config.WithCert(cdstls.ClientCertFilePath),
 				config.WithKey(cdstls.ClientKeyFilePath)),
 		),
-	), true); err != nil {
+	)); err != nil {
 		return cerr.AppendError("failed to add client to CLI config", err)
 	}
 	return nil

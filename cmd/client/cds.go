@@ -5,7 +5,6 @@ import (
 	"log/slog"
 	"os"
 
-	"github.com/mattn/go-isatty"
 	"github.com/amadeusitgroup/cds/internal/bootstrap"
 	"github.com/amadeusitgroup/cds/internal/cenv"
 	"github.com/amadeusitgroup/cds/internal/cerr"
@@ -15,6 +14,7 @@ import (
 	"github.com/amadeusitgroup/cds/internal/db"
 	cg "github.com/amadeusitgroup/cds/internal/global"
 	"github.com/amadeusitgroup/cds/internal/profile"
+	"github.com/mattn/go-isatty"
 )
 
 var (
@@ -26,19 +26,16 @@ func init() {
 }
 
 func init() {
-	var (
-		err error
-	)
+	var err error
 	defer func() {
 		if err != nil {
 			clog.Error("cds init failed", err)
 			os.Exit(1)
 		}
-
 	}()
 
 	if err = config.InitCLIConfig(); err != nil {
-		err = cerr.AppendError("Failed to initialize the CDS configuration", err)
+		err = cerr.AppendError("Failed to initialize CDS config", err)
 		return
 	}
 
@@ -53,8 +50,13 @@ func init() {
 		return
 	}
 
-	// Init profile
-	profile.New(profile.WithPath(db.GetProfilePath()))
+	// Init profile from config-resolved reader
+	r, profileErr := config.ProfileReader()
+	if profileErr != nil {
+		clog.Warn("Failed to read profile source, skipping", profileErr)
+	} else {
+		profile.New(profile.WithReader(r))
+	}
 }
 
 type cmd interface {
@@ -63,7 +65,7 @@ type cmd interface {
 
 func main() {
 
-	if err := db.Load(); err != nil {
+	if err := db.Load(config.DBSource()); err != nil {
 		clog.Error("Failed to load state from database", err)
 		os.Exit(1)
 	}
