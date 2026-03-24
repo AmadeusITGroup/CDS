@@ -25,3 +25,8 @@ const (
 const (
 	KLocalhost = "localhost"
 )
+
+const (
+	KOrchestrationDefaultNamespace = "default"
+	KContainerAuthFileName         = "auth.json"
+)

@@ -120,6 +120,10 @@ func FilterSlice[T any](s []T, predicate func(T) bool) []T {
 	return filteredList
 }
 
+func VariadicJoin(sep string, parts ...string) string {
+	return strings.Join(parts, sep)
+}
+
 // Used to get the first parent directory of a given path
 // e.g. /home/user/parent/child -> home
 // e.g. .devcontainer/devcontainer.json -> .devcontainer

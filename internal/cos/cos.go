@@ -1,6 +1,7 @@
 package cos
 
 import (
+	"io"
 	"os"
 	"path/filepath"
 
@@ -54,4 +55,26 @@ func SetMockedFileSystem() {
 
 func SetRealFileSystem() {
 	Fs = afero.NewOsFs()
+}
+
+func CreateTempDir(dir, pattern string) (string, error) {
+	return afero.TempDir(Fs, dir, pattern)
+}
+
+func CreateTempFile(dir, pattern string) (File, error) {
+	return afero.TempFile(Fs, dir, pattern)
+}
+
+func CreateTempFileWithContent(dir, pattern string, r io.Reader) (string, error) {
+	tmpFile, err := CreateTempFile(dir, pattern)
+	if err != nil {
+		return "", err
+	}
+	if _, err := io.Copy(tmpFile, r); err != nil {
+		return "", err
+	}
+	if err := tmpFile.Close(); err != nil {
+		return "", err
+	}
+	return tmpFile.Name(), nil
 }

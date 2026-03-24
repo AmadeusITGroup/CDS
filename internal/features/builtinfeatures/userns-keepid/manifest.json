@@ -1,0 +1,9 @@
+{
+  "name": "userns-keepid",
+  "onContainer": {
+    "files": [
+      "configure_usr.sh.tmpl"
+    ],
+    "as": "root"
+  }
+}
