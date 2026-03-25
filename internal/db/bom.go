@@ -1,14 +1,15 @@
 package db
 
 import (
+	"encoding/json"
+	"io"
 	"sync"
 
 	"github.com/amadeusitgroup/cds/internal/cerr"
-	cg "github.com/amadeusitgroup/cds/internal/global"
 )
 
 type bom interface {
-	unmarshall(string) error
+	unmarshall(io.Reader) error
 }
 
 // store
@@ -18,15 +19,14 @@ type store struct {
 }
 
 type data struct {
-	Context context     `json:"context"`
-	Profile profilePath `json:"profile"`
+	Context context `json:"context"`
 	projects
 	hosts
 	registryInstances
 }
 
-func (s *store) unmarshall(path string) error {
-	if err := cg.UnmarshalJSON(path, &s.d); err != nil {
+func (s *store) unmarshall(r io.Reader) error {
+	if err := json.NewDecoder(r).Decode(&s.d); err != nil {
 		return cerr.AppendError("Failed deserialize config", err)
 	}
 	return nil
@@ -42,15 +42,7 @@ type context struct {
 	ProjectContext string `json:"project"`
 }
 
-// //////////////////////////////////////////////////////////////////
-//
-//	Profile Struct
-//
-// //////////////////////////////////////////////////////////////////
 
-type profilePath struct {
-	Path string `json:"path"`
-}
 
 // //////////////////////////////////////////////////////////////////
 //

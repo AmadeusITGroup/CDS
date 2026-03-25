@@ -6,36 +6,44 @@ import (
 	"os"
 	"testing"
 
-	"github.com/amadeusitgroup/cds/internal/cenv"
 	"github.com/amadeusitgroup/cds/internal/cos"
+	"github.com/amadeusitgroup/cds/internal/source"
 )
 
 // Warning : These functions to manipulate files should be used only to test instance.go. Manipulating files in other parts of db package is prohibited.
 
+const testDBPath = "/testdata/db.json"
+
 func setupTest(t *testing.T, bom any) (teardown func()) {
 	t.Helper()
 	cos.SetMockedFileSystem()
+
+	src, err := source.NewLocalSource(testDBPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	if bom == nil {
-		if err := createFile(cenv.ConfigFile(kCdsStateFile)); err != nil {
+		if err := createFile(testDBPath); err != nil {
 			t.Fatal(err)
 		}
 		return func() {
-			if err := removeFile(cenv.ConfigFile(kCdsStateFile)); err != nil {
+			if err := removeFile(testDBPath); err != nil {
 				t.Fatal(err)
 			}
 			cos.SetRealFileSystem()
 		}
 	}
-	if err := createConfigFile(bom, cenv.ConfigFile(kCdsStateFile)); err != nil {
+	if err := createConfigFile(bom, testDBPath); err != nil {
 		t.Fatal(err)
 	}
-	err := Load()
+	err = Load(src)
 	if err != nil {
 		t.Fatal(err)
 	}
 	return func() {
 		resetContent()
-		if err := removeFile(cenv.ConfigFile(kCdsStateFile)); err != nil {
+		if err := removeFile(testDBPath); err != nil {
 			t.Fatal(err)
 		}
 		cos.SetRealFileSystem()
