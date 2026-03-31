@@ -16,9 +16,9 @@ func (p *project) initSubCommands() {
 	p.subCmds = append(p.subCmds,
 		/*&projectCopy{},*/
 		&projectInit{},
-		/*&projectRun{},
+		/*&projectRun{},*/
 		&projectUse{},
-		&projectList{},
+		/*&projectList{},
 		&projectStart{},
 		&projectStop{},
 		&projectClear{},
