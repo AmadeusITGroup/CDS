@@ -1,0 +1,17 @@
+syntax = "proto3";
+
+package api.v1.container;
+option go_package = "github.com/amadeusitgroup/cds/cdspb";
+
+// DeployContainerResponse is the final deploy result.
+message DeployContainerResponse {
+  // container_name is the authoritative identifier chosen by the agent.
+  string container_name = 1;
+
+  // output is the primary success summary.
+  string output = 2;
+
+  // error contains an application-level failure message.
+  string error = 3;
+}
+

@@ -1,0 +1,12 @@
+syntax = "proto3";
+
+package api.v1.container;
+option go_package = "github.com/amadeusitgroup/cds/cdspb";
+
+
+
+// StartContainerRequest identifies the container to start.
+message StartContainerRequest {
+  // container_name is the target container identifier.
+  string container_name = 1;
+}
