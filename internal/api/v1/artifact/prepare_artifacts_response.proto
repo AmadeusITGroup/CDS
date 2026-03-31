@@ -1,0 +1,14 @@
+syntax = "proto3";
+
+package api.v1.artifact;
+option go_package = "github.com/amadeusitgroup/cds/cdspb";
+
+import "internal/api/v1/artifact/artifact_descriptor.proto";
+
+// PrepareArtifactsResponse tells the client which artifacts are missing and which need to be uploaded.
+message PrepareArtifactsResponse {
+    // found are the found artifacts on agent's cache
+    repeated ArtifactDescriptor found = 1;
+    // missing are the artifacts that are not already present in the cache and need to be uploaded
+    repeated ArtifactDescriptor missing = 2;
+}

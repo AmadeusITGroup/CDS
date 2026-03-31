@@ -1,0 +1,11 @@
+syntax = "proto3";
+
+package api.v1.artifact;
+option go_package = "github.com/amadeusitgroup/cds/cdspb";
+
+import "internal/api/v1/artifact/artifact_descriptor.proto";
+
+// UploadArtifactResponse acknowledges the received artifact
+message UploadArtifactResponse {
+    ArtifactDescriptor received = 1;
+}

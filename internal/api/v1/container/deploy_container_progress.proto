@@ -1,0 +1,15 @@
+syntax = "proto3";
+
+package api.v1.container;
+option go_package = "github.com/amadeusitgroup/cds/cdspb";
+
+
+
+// DeployContainerProgress is a display-oriented progress signal.
+message DeployContainerProgress {
+  // phase is the current deploy stage.
+  string phase = 1;
+
+  // message is a human-readable description of the current work.
+  string message = 2;
+}

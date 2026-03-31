@@ -1,0 +1,11 @@
+syntax = "proto3";
+
+package api.v1.container;
+option go_package = "github.com/amadeusitgroup/cds/cdspb";
+
+// DeleteContainerResponse contains the lifecycle summary emitted by the agent.
+message DeleteContainerResponse {
+  // output is the primary success summary.
+  string output = 1;
+}
+

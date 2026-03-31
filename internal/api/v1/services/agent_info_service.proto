@@ -1,0 +1,15 @@
+syntax = "proto3";
+
+package api.v1.services;
+
+import "internal/api/v1/info/get_version_request.proto";
+import "internal/api/v1/info/get_version_response.proto";
+option go_package = "github.com/amadeusitgroup/cds/cdspb";
+
+
+
+// AgentInfoService exposes protocol-level metadata used for compatibility checks.
+service AgentInfoService {
+  // GetVersion returns the current agent version string.
+  rpc GetVersion(api.v1.info.GetVersionRequest) returns (api.v1.info.GetVersionResponse);
+}

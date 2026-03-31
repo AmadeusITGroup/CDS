@@ -1,0 +1,18 @@
+syntax = "proto3";
+
+package api.v1.container;
+option go_package = "github.com/amadeusitgroup/cds/cdspb";
+
+
+
+// RebuildContainerResponse is the final result of a rebuild workflow.
+message RebuildContainerResponse {
+  // container_name is the rebuilt container identifier.
+  string container_name = 1;
+
+  // output is the main success summary.
+  string output = 2;
+
+  // error contains an application-level rebuild failure message.
+  string error = 3;
+}

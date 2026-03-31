@@ -6,3 +6,4 @@ coverage.out
 .vscode
 *.exe
 tarball-deliv
+**/api/**/*.pb.go

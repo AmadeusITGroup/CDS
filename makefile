@@ -102,7 +102,7 @@ gencert: init
 		$(TEST_FOLDER)client-csr.json | cfssljson -bare client
 	mv *.pem *.csr $(CDS_CONFIG_PATH)/.xcds/certs
 
-go-tidy:
+go-tidy: build-pb
 	@echo "$(ECHO_BEFORE)Executing go mod tidy$(ECHO_AFTER)"
 	go mod tidy
 
@@ -138,11 +138,16 @@ build-client: go-tidy build-pb
 	@echo "$(ECHO_BEFORE2)Building cds CLI$(ECHO_AFTER)"
 	go build -o cds ./cmd/client/cds.go
 
-build-pb: go-tidy
+build-pb:
 	@echo "$(ECHO_BEFORE2)Building protobuf$(ECHO_AFTER)"
 	go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
 	go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
-	protoc --go_out=. --go_opt=paths=source_relative --go-grpc_out=. --go-grpc_opt=paths=source_relative internal/api/v1/*.proto
+	mkdir -p internal/api/v1/cdspb
+	rm -f internal/api/v1/cdspb/*.pb.go
+	protoc --proto_path=. \
+		--go_out=internal/api/v1 --go_opt=module=github.com/amadeusitgroup/cds \
+		--go-grpc_out=internal/api/v1 --go-grpc_opt=module=github.com/amadeusitgroup/cds \
+		$$(find internal/api/v1 -name '*.proto' | LC_ALL=C sort)
 test:
 	@echo "$(ECHO_BEFORE2)Executing tests$(ECHO_AFTER)"
 	CDS_CONFIG_PATH=$(CDS_CONFIG_PATH) go test ./... -v
