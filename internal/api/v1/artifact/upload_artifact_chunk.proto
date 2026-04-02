@@ -1,0 +1,30 @@
+syntax = "proto3";
+
+package api.v1.artifact;
+option go_package = "github.com/amadeusitgroup/cds/cdspb";
+
+import "internal/api/v1/artifact/artifact_descriptor.proto";
+
+
+// UploadArtifactChunk streams one artifact body to the agent. descriptor should
+// be sent on the first chunk so the agent can validate the stream.
+message UploadArtifactChunk {
+  // upload_id groups chunks that belong to the same artifact upload session.
+  string upload_id = 1;
+
+  // descriptor identifies the artifact being uploaded.
+  ArtifactDescriptor descriptor = 2;
+
+  // offset is the byte offset represented by this chunk.
+  int64 offset = 3;
+
+  // content is the raw bytes for this chunk.
+  bytes content = 4;
+
+  // finish marks the final chunk in the upload stream for this artifact.
+  bool finish = 5;
+
+  // project_name scopes the staged artifact to one CDS project. It should be
+  // sent on the first chunk.
+  string project_name = 6;
+}

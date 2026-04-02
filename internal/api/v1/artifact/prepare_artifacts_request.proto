@@ -1,0 +1,15 @@
+syntax = "proto3";
+
+package api.v1.artifact;
+option go_package = "github.com/amadeusitgroup/cds/cdspb";
+
+import "internal/api/v1/artifact/artifact_descriptor.proto";
+
+// PrepareArtifactsRequest advertises all the artifacts that the client wants to bind to the project for the upcoming deploy flow.
+message PrepareArtifactsRequest {
+    // descriptors are all the ArtifactDescriptor prepared after configuration analysis.
+    repeated ArtifactDescriptor descriptors = 1;
+
+    // project_name identifies to which project this ressource is attached to.
+    string project_name = 2;
+}

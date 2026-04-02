@@ -1,0 +1,26 @@
+syntax = "proto3";
+
+package api.v1.container;
+option go_package = "github.com/amadeusitgroup/cds/cdspb";
+
+// Container is the CDS summary view returned by query operations.
+message Container {
+  // id is the engine-native container identifier.
+  string id = 1;
+
+  // name is the CDS-visible container name.
+  string name = 2;
+
+  // status is the lifecycle state as a string.
+  string status = 3;
+
+  // host is the hostname reported by the serving agent.
+  string host = 4;
+
+  // port_mapping maps container ports to host ports.
+  map<string, int32> port_mapping = 5;
+
+  // raw_inspect_json contains the raw engine inspect payload when available.
+  string raw_inspect_json = 6;
+}
+

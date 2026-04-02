@@ -4,11 +4,10 @@ import (
 	"context"
 	"fmt"
 
-	cdspb "github.com/amadeusitgroup/cds/internal/api/v1"
+	"github.com/amadeusitgroup/cds/internal/api/v1/cdspb"
 	"github.com/amadeusitgroup/cds/internal/cerr"
 	"github.com/amadeusitgroup/cds/internal/clog"
 	"github.com/spf13/cobra"
-	"google.golang.org/protobuf/types/known/emptypb"
 )
 
 var (
@@ -80,8 +79,8 @@ func (v *version) subCommands() []baseCmd {
 /*                                                         */
 /***********************************************************/
 
-var agentVersion stubCallback = func(c cdspb.AgentClient, ctx context.Context) error {
-	reply, err := c.GetVersion(ctx, &emptypb.Empty{})
+var agentVersion stubCallback = func(c agentServices, ctx context.Context) error {
+	reply, err := c.info.GetVersion(ctx, &cdspb.GetVersionRequest{})
 
 	if err != nil {
 		return cerr.NewError("Failed to get agent version")

@@ -1,0 +1,7 @@
+syntax = "proto3";
+
+package api.v1.info;
+option go_package = "github.com/amadeusitgroup/cds/cdspb";
+
+// GetVersionRequest is intentionnaly empty, to let it evolve without forcing the empty request.
+message GetVersionRequest {}

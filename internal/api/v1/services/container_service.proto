@@ -1,0 +1,53 @@
+syntax = "proto3";
+
+package api.v1.services;
+import "internal/api/v1/container/deploy_container_request.proto";
+import "internal/api/v1/container/deploy_container_event.proto";
+import "internal/api/v1/container/start_container_response.proto";
+import "internal/api/v1/container/start_container_request.proto";
+import "internal/api/v1/container/stop_container_request.proto";
+import "internal/api/v1/container/stop_container_response.proto";
+import "internal/api/v1/container/delete_container_request.proto";
+import "internal/api/v1/container/execute_in_container_response.proto";
+import "internal/api/v1/container/execute_in_container_request.proto";
+import "internal/api/v1/container/rebuild_container_request.proto";
+import "internal/api/v1/container/rebuild_container_response.proto";
+import "internal/api/v1/container/delete_container_response.proto";
+import "internal/api/v1/container/get_container_response.proto";
+import "internal/api/v1/container/get_container_request.proto";
+import "internal/api/v1/container/list_containers_response.proto";
+import "internal/api/v1/container/list_container_request.proto";
+option go_package = "github.com/amadeusitgroup/cds/cdspb";
+
+
+
+// ContainerService groups the stable typed container workflows.
+service ContainerService {
+  // DeployContainer creates or reconciles a container from a devcontainer.json
+  // plus an optional resource bundle.
+  rpc DeployContainer(api.v1.container.DeployContainerRequest) returns (stream api.v1.container.DeployContainerEvent);
+
+  // StartContainer starts an existing container.
+  rpc StartContainer(api.v1.container.StartContainerRequest) returns (api.v1.container.StartContainerResponse);
+
+  // StopContainer stops a running container.
+  rpc StopContainer(api.v1.container.StopContainerRequest) returns (api.v1.container.StopContainerResponse);
+
+  // DeleteContainer removes a container and any CDS-managed cached state.
+  rpc DeleteContainer(api.v1.container.DeleteContainerRequest) returns (api.v1.container.DeleteContainerResponse);
+
+  // GetContainer returns the current summary and raw inspect payload for one container.
+  rpc GetContainer(api.v1.container.GetContainerRequest) returns (api.v1.container.GetContainerResponse);
+
+  // ListContainers returns all containers currently visible to the engine.
+  rpc ListContainers(api.v1.container.ListContainerRequest) returns (api.v1.container.ListContainersResponse);
+
+  // ExecuteInContainer runs a shell command inside the target container.
+  rpc ExecuteInContainer(api.v1.container.ExecuteInContainerRequest) returns (api.v1.container.ExecuteInContainerResponse);
+
+  // RebuildContainer rebuilds a previously deployed container from the config
+  // and resources cached by the agent.
+  rpc RebuildContainer(api.v1.container.RebuildContainerRequest) returns (api.v1.container.RebuildContainerResponse);
+}
+
+

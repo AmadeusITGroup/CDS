@@ -1,0 +1,20 @@
+syntax = "proto3";
+
+package api.v1.container;
+option go_package = "github.com/amadeusitgroup/cds/cdspb";
+
+// DeployContainerRequest contains the full set of client inputs for deploy.
+message DeployContainerRequest {
+  // project_name is the logical client-side project identifier.
+  string project_name = 1;
+
+  // container_name is the caller-requested container identifier.
+  string container_name = 2;
+
+  // labels are applied to the deployed container and may be cached by the agent.
+  map<string, string> labels = 3;
+
+  // devcontainer_config contains the raw devcontainer.json bytes.
+  bytes devcontainer_config = 4; 
+}
+
