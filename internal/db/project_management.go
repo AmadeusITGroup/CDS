@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"slices"
 
+	"github.com/amadeusitgroup/cds/internal/bo"
 	"github.com/amadeusitgroup/cds/internal/cerr"
 	"github.com/amadeusitgroup/cds/internal/clog"
 )
@@ -109,4 +110,37 @@ func BuildFlavourLocalConfDir(projectName, flavourPath, overrideDir string) erro
 	// The local conf dir path is derived from the CDS config directory
 	localConfDir := filepath.Join(flavourPath, KCdsProjectDefaultDir)
 	return SetFlavourLocalConfDir(projectName, localConfDir)
+}
+
+// GetProjectInfo builds a bo.ProjectInfo for the given project, suitable for display/output.
+func GetProjectInfo(projectName string) bo.ProjectInfo {
+	instance().Lock()
+	defer instance().Unlock()
+
+	p, err := instance().d.getProject(projectName)
+	if err != nil {
+		return bo.ProjectInfo{Name: projectName}
+	}
+
+	containers := make([]bo.ContainerInfo, 0, len(p.Containers))
+	for _, c := range p.Containers {
+		containers = append(containers, bo.ContainerInfo{
+			Id:             c.Id,
+			Name:           c.Name,
+			Status:         c.State,
+			ExpectedStatus: c.ExpectedState,
+		})
+	}
+
+	return bo.ProjectInfo{
+		Name:       p.Name,
+		Host:       p.Host,
+		Containers: containers,
+		Status:     bo.GetProjStatus(containers),
+		Current:    p.Name == instance().d.Context.ProjectContext,
+		OrchestrationUsage: bo.OrchestrationUsage{
+			Cluster:  bo.ClusterUsage{Use: p.OrchestrationUsage.Cluster.Use},
+			Registry: bo.RegistryUsage{Use: p.OrchestrationUsage.Registry.Use},
+		},
+	}
 }

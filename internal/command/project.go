@@ -18,8 +18,8 @@ func (p *project) initSubCommands() {
 		&projectInit{},
 		/*&projectRun{},*/
 		&projectUse{},
-		/*&projectList{},
-		&projectStart{},
+		&projectList{},
+		/*&projectStart{},
 		&projectStop{},
 		&projectClear{},
 		&projectDrain{},
