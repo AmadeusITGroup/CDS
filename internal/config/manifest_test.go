@@ -1,6 +1,7 @@
 package config
 
 import (
+	"io"
 	"strings"
 	"testing"
 
@@ -195,4 +196,43 @@ func TestEnsureSourceWithDefault_Exists(t *testing.T) {
 	data, err := cos.ReadFile("/tmp/existing.yaml")
 	require.NoError(t, err)
 	assert.Equal(t, "existing", string(data))
+}
+
+func TestProfileReader_ResolvesWithoutInit(t *testing.T) {
+	cos.Fs = afero.NewMemMapFs()
+	defer cos.SetRealFileSystem()
+
+	t.Setenv("CDS_CONFIG_PATH", "/tmp/testconfig")
+
+	err := cos.Fs.MkdirAll("/tmp/testconfig/.xcds", 0755)
+	require.NoError(t, err)
+	err = cos.WriteFile("/tmp/testconfig/.xcds/profile.json", []byte(`{"name":"default"}`), 0600)
+	require.NoError(t, err)
+
+	r, err := ProfileReader()
+	require.NoError(t, err)
+
+	content, err := io.ReadAll(r)
+	require.NoError(t, err)
+	assert.Equal(t, `{"name":"default"}`, string(content))
+}
+
+func TestDBSource_ResolvesWithoutInit(t *testing.T) {
+	cos.Fs = afero.NewMemMapFs()
+	defer cos.SetRealFileSystem()
+
+	t.Setenv("CDS_CONFIG_PATH", "/tmp/testconfig")
+
+	src, err := DBSource()
+	require.NoError(t, err)
+
+	exists, err := src.Exists()
+	require.NoError(t, err)
+	assert.True(t, exists)
+
+	r, err := src.Read()
+	require.NoError(t, err)
+	content, err := io.ReadAll(r)
+	require.NoError(t, err)
+	assert.Equal(t, "{}", string(content))
 }

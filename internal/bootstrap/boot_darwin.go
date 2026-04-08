@@ -45,16 +45,16 @@ func fire() error {
 		return cerr.AppendError("Failed to parse agent address", parseErr)
 	}
 
-	if err := config.AddClientToConfig(config.NewClient(
+	if err := config.AddAgentToConfig(config.NewAgent(
 		config.WithTargetAddress(addr.String()),
-		config.WithClientTLS(
+		config.WithAgentTLS(
 			config.NewTlssecret(
 				config.WithCA(cdstls.CAFilePath),
 				config.WithCert(cdstls.ClientCertFilePath),
 				config.WithKey(cdstls.ClientKeyFilePath)),
 		),
 	)); err != nil {
-		return cerr.AppendError("failed to add client to CLI config", err)
+		return cerr.AppendError("failed to add agent to CLI config", err)
 	}
 	return nil
 }
