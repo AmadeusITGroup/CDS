@@ -3,6 +3,7 @@ package bootstrap
 import (
 	"net"
 
+	"github.com/amadeusitgroup/cds/internal/cerr"
 	"github.com/amadeusitgroup/cds/internal/clog"
 	"github.com/amadeusitgroup/cds/internal/config"
 	cg "github.com/amadeusitgroup/cds/internal/global"
@@ -12,7 +13,11 @@ import (
 
 func StartAgent(hostname string) error {
 	// check if agent is already running
-	if isAgentRunning(hostname) {
+	running, err := isAgentRunning(hostname)
+	if err != nil {
+		return cerr.AppendErrorFmt("failed to check for agent running on %s", err, hostname)
+	}
+	if running {
 		clog.Debug("Agent is already running")
 		return StartOnRunError{}
 	}
@@ -23,17 +28,23 @@ func StartAgent(hostname string) error {
 
 }
 
-func isAgentRunning(hostName string) bool {
-	server := config.AgentAddress(hostName)
+func isAgentRunning(hostName string) (bool, error) {
+	server, err := config.AgentAddress(hostName)
+	if err != nil {
+		return false, cerr.AppendError("failed to resolve agent address", err)
+	}
+	if server == cg.EmptyStr {
+		return false, nil
+	}
 	conn, err := net.Dial("tcp", server)
 	if err != nil {
 		clog.Debug("Failed to connect to agent", err)
-		return false
+		return false, nil
 	}
 	defer func() {
 		_ = conn.Close()
 	}()
-	return true
+	return true, nil
 }
 
 func fireRemote(hostName string) error {

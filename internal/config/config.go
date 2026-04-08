@@ -40,35 +40,22 @@ func WithKey(key string) func(*tlssecret) {
 // cliconfig.yaml example:
 // apiVersion: v1
 // agents:
-//   - agent:
-//     certificate-authority-data: HJHJHJHJHJHJHJH
-//     client-key-data: CHGHSGSHSGHSGHS
-//     server: https://localhost:8087
-//   - agent:
-//     certificate-authority-data: HJHJHJHJHJHJHJH
-//     client-key-data: CHGHSGSHSGHSGHS
-//     server: https://my.server.fix.me:1337
-//   - agent:
-//     server: http://localhost:1337
-//     ssh: yes
+//   - targetServer: https://localhost:8087
+//     tls:
+//       ca: /Users/me/.xcds/certs/ca.pem
+//       certificate: /Users/me/.xcds/certs/client.pem
+//       key: /Users/me/.xcds/certs/client-key.pem
+//   - targetServer: localhost:1337
+//     ssh-tunnel: true
 
 // aconfig.yaml example:
 // apiVersion: v1
-// client:
-//   certificate-authority-data: HJHJHJHJHJHJHJH
-//   client-key-data: CHGHSGSHSGHSGHS
-// agents:
-//   - agent:
-//     certificate-authority-data: HJHJHJHJHJHJHJH
-//     client-key-data: CHGHSGSHSGHSGHS
-//     server: https://localhost:8087
-//   - agent:
-//     certificate-authority-data: HJHJHJHJHJHJHJH
-//     client-key-data: CHGHSGSHSGHSGHS
-//     server: https://my.server.fix.me:1337
-//   - agent:
-//     server: http://localhost:1337
-//     ssh: yes
+// clients:
+//   - name: my-laptop
+//     tls:
+//       ca: /Users/me/.xcds/certs/ca.pem
+//       certificate: /Users/me/.xcds/certs/client.pem
+//       key: /Users/me/.xcds/certs/client-key.pem
 
 // defaultCLIAgentConfig returns the default content for cliconfig.yaml.
 func defaultCLIAgentConfig() io.Reader {
@@ -80,7 +67,6 @@ agents:
 // defaultAgentConfig returns the default content for aconfig.yaml.
 func defaultAgentConfig() io.Reader {
 	return strings.NewReader(`apiVersion: v1
-client:
-agents:
+clients:
 `)
 }
