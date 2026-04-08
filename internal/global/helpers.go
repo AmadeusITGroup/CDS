@@ -28,26 +28,9 @@ func FilterNilFromSlice[T comparable](elems []T) []T {
 	return FilterSlice(elems, isNotNil)
 }
 
-// Checks that the slice s of type comparable contains element e of the same type.
-//
-// Deprecated: use golang's slices.Contains
-func Contains[T comparable](s []T, e T) bool {
-	for _, val := range s {
-		if val == e {
-			return true
-		}
-	}
-	return false
-}
-
 // Checks if predicate is true for at least one element in the slice
 func Any[T any](s []T, predicate func(T) bool) bool {
-	for _, x := range s {
-		if predicate(x) {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(s, predicate)
 }
 
 // returns the first element verifying predicate, return nil equivalent otherwise
