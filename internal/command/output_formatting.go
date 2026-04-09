@@ -103,3 +103,37 @@ func printProjectList(projectsInfo []bo.ProjectInfo, currentProject string) {
 		clog.Error("Failed to render project list", err)
 	}
 }
+
+// formatProjectInfoInOutput prints a single project's info in the configured output format.
+func formatProjectInfoInOutput(projectInfo bo.ProjectInfo) {
+	if len(cdsOutputFormat) > 0 {
+		dumpOutputFormat(projectInfo, cdsOutputFormat)
+	} else {
+		printProjectInfo(projectInfo)
+	}
+}
+
+func printProjectInfo(projectInfo bo.ProjectInfo) {
+	status := bo.GetProjStatus(projectInfo.Containers)
+	style := getProjectStyle(status)
+
+	bulletList := []pterm.BulletListItem{
+		{Level: 0, Text: fmt.Sprintf("Project name: %s", projectInfo.Name), BulletStyle: style},
+		{Level: 1, Text: fmt.Sprintf("Project status: %s", status)},
+		{Level: 1, Text: fmt.Sprintf("Deployed on host: %s", projectInfo.Host)},
+	}
+
+	if len(projectInfo.Containers) > 0 {
+		bulletList = append(bulletList, pterm.BulletListItem{Level: 1, Text: "List of containers: "})
+	}
+
+	for _, container := range projectInfo.Containers {
+		if container.Status != "deleted" {
+			bulletList = append(bulletList, pterm.BulletListItem{Level: 4, Text: container.Name, Bullet: "-", BulletStyle: pterm.NewStyle(pterm.FgDefault)})
+		}
+	}
+
+	if err := pterm.DefaultBulletList.WithItems(bulletList).Render(); err != nil {
+		clog.Error("Failed to render project info", err)
+	}
+}
