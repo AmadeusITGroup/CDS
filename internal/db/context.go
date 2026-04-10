@@ -23,3 +23,11 @@ func SetProject(projectName string) error {
 func IsCurrentProject(projectName string) bool {
 	return GetCurrentProject() == projectName
 }
+
+// FlushContext clears the current project context, leaving no project selected.
+func FlushContext() error {
+	instance().Lock()
+	defer instance().Unlock()
+	instance().d.Context.ProjectContext = ""
+	return nil
+}

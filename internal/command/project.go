@@ -14,7 +14,6 @@ type project struct {
 
 func (p *project) initSubCommands() {
 	p.subCmds = append(p.subCmds,
-		/*&projectCopy{},*/
 		&projectInit{},
 		/*&projectRun{},*/
 		&projectUse{},
@@ -24,10 +23,10 @@ func (p *project) initSubCommands() {
 		&projectClear{},
 		&projectDrain{},
 		&projectRebuild{},
-		&projectSync{},
+		&projectSync{},*/
 		&projectDelete{},
 		&projectShow{},
-		&projectSsh{},
+		/*&projectSsh{},
 		&projectRsh{},
 		&projectExpose{},
 		&projectRename{},
