@@ -1,0 +1,16 @@
+syntax = "proto3";
+
+package api.v1.container;
+option go_package = "github.com/amadeusitgroup/cds/cdspb";
+
+// ExecuteInContainerRequest describes a shell execution request.
+message ExecuteInContainerRequest {
+  // container_name is the target container identifier.
+  string container_name = 1;
+
+  // command is the shell command to execute inside the container.
+  string command = 2;
+
+  // user optionally overrides the in-container user for execution.
+  string user = 3;
+}

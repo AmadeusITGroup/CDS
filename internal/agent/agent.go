@@ -4,13 +4,12 @@ import (
 	"context"
 	"log/slog"
 
-	cdspb "github.com/amadeusitgroup/cds/internal/api/v1"
+	"github.com/amadeusitgroup/cds/internal/api/v1/cdspb"
 	"github.com/amadeusitgroup/cds/internal/clog"
 	"github.com/amadeusitgroup/cds/internal/core"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
-	"google.golang.org/protobuf/types/known/emptypb"
 )
 
 type bom struct {
@@ -50,20 +49,19 @@ func NewAgent(config *bom, opts ...grpc.ServerOption) (*grpc.Server, error) {
 	if err != nil {
 		return nil, err
 	}
-	cdspb.RegisterAgentServer(gsrv, srv)
+	cdspb.RegisterAgentInfoServiceServer(gsrv, newAgentInfoServiceServer(srv))
+	cdspb.RegisterContainerServiceServer(gsrv, newContainerServiceServer(srv))
 	return gsrv, nil
 }
 
-func (s *grpcServer) GetVersion(context.Context, *emptypb.Empty) (*cdspb.Version, error) {
-
+func (s *agentInfoServiceServer) GetVersion(context.Context, *cdspb.GetVersionRequest) (*cdspb.GetVersionResponse, error) {
 	if 1 == 2 { // TODO: remove - it's just a showcase of how one can return error
 		return nil, status.Error(codes.NotFound, "dummy error")
 	}
-	return &cdspb.Version{Current: s.manager().Version()}, nil
+	return &cdspb.GetVersionResponse{Current: s.core.manager().Version()}, nil
 }
 
 type grpcServer struct {
-	cdspb.UnimplementedAgentServer
 	b bom
 }
 
@@ -80,4 +78,22 @@ func (s *grpcServer) manager() commandManager {
 		s.b.manager = defaultManager()
 	}
 	return s.b.manager
+}
+
+type agentInfoServiceServer struct {
+	cdspb.UnimplementedAgentInfoServiceServer
+	core *grpcServer
+}
+
+func newAgentInfoServiceServer(core *grpcServer) *agentInfoServiceServer {
+	return &agentInfoServiceServer{core: core}
+}
+
+type containerServiceServer struct {
+	cdspb.UnimplementedContainerServiceServer
+	core *grpcServer
+}
+
+func newContainerServiceServer(core *grpcServer) *containerServiceServer {
+	return &containerServiceServer{core: core}
 }

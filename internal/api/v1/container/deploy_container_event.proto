@@ -1,0 +1,19 @@
+syntax = "proto3";
+
+package api.v1.container;
+option go_package = "github.com/amadeusitgroup/cds/cdspb";
+
+import "internal/api/v1/container/deploy_container_progress.proto";
+import "internal/api/v1/container/deploy_container_response.proto";
+
+// DeployContainerEvent is the streamed envelope returned by DeployContainer.
+message DeployContainerEvent {
+  // payload carries either incremental progress or the final deploy result.
+  oneof payload {
+    // progress is a human-readable status update emitted during deploy.
+    DeployContainerProgress progress = 1;
+
+    // response is the final deploy outcome.
+    DeployContainerResponse response = 2;
+  }
+}

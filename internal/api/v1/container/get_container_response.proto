@@ -1,0 +1,12 @@
+syntax = "proto3";
+
+package api.v1.container;
+option go_package = "github.com/amadeusitgroup/cds/cdspb";
+
+import "internal/api/v1/container/container.proto";
+
+// GetContainerResponse wraps the queried container representation.
+message GetContainerResponse {
+    // container is the current container view returned by the agent.
+    Container container = 1;
+}

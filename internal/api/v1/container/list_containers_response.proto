@@ -1,0 +1,12 @@
+syntax = "proto3";
+
+package api.v1.container;
+option go_package = "github.com/amadeusitgroup/cds/cdspb";
+
+import "internal/api/v1/container/container.proto";
+
+// ListContainersResponse contains the current container summaries.
+message ListContainersResponse {
+  // containers is the set of container summaries returned by the agent.
+  repeated Container containers = 1;
+}
