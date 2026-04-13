@@ -7,6 +7,8 @@ import (
 	"github.com/amadeusitgroup/cds/internal/api/v1/cdspb"
 	"github.com/amadeusitgroup/cds/internal/cerr"
 	"github.com/amadeusitgroup/cds/internal/clog"
+	"github.com/amadeusitgroup/cds/internal/config"
+	cg "github.com/amadeusitgroup/cds/internal/global"
 	cdstls "github.com/amadeusitgroup/cds/internal/tls"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
@@ -22,7 +24,7 @@ type stubCallback func(c agentServices, ctx context.Context) error
 func (s stubCallback) execute() error {
 	addr, err := getAgentServerAddress()
 	if err != nil {
-		return cerr.AppendError("Failed to get server IP address", err)
+		return cerr.AppendError("Failed to get agent server address", err)
 	}
 
 	clientTLSConfig, errTLS := cdstls.SetupTLSConfig(cdstls.TLSConfig{CAFile: cdstls.CAFilePath,
@@ -52,5 +54,12 @@ func (s stubCallback) execute() error {
 }
 
 func getAgentServerAddress() (string, error) {
-	return "localhost:8087", nil
+	addr, err := config.AgentAddress(cg.KLocalhost)
+	if err != nil {
+		return cg.EmptyStr, err
+	}
+	if addr == cg.EmptyStr {
+		return cg.EmptyStr, cerr.NewError("localhost agent target server is not configured")
+	}
+	return addr, nil
 }
