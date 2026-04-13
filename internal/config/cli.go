@@ -9,58 +9,47 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-var (
-	clients []client
-)
-
 // cliAgentData is the typed representation of cliconfig.yaml content.
+// This config is owned by the CLI and tracks the user's registered agents.
 type cliAgentData struct {
-	APIVersion string   `yaml:"apiVersion"`
-	Clients    []client `yaml:"agents"`
+	APIVersion string  `yaml:"apiVersion"`
+	Agents     []agent `yaml:"agents"`
 }
 
-// ReloadCLIConfig re-reads the CLI agent config from the stored source
-// and refreshes the in-memory client list.
-func ReloadCLIConfig() error {
-	if cliSource == nil {
-		return cerr.NewError("config source has not been initialized")
-	}
-	data, err := readCLIAgentData()
-	if err != nil {
-		return cerr.AppendError("failed to reload CLI config", err)
-	}
-	clients = data.Clients
-	return nil
-}
-
-// AddClientToConfig appends a client entry to the CLI agent config and persists the change back to the stored source.
-func AddClientToConfig(c client) error {
-	if cliSource == nil {
-		return cerr.NewError("config.Init has not been called")
-	}
+// AddAgentToConfig appends an agent entry to the CLI config and persists the change back to the stored source.
+func AddAgentToConfig(a agent) error {
 	data, err := readCLIAgentData()
 	if err != nil {
 		return err
 	}
-	data.Clients = append(data.Clients, c)
+	data.Agents = append(data.Agents, a)
 	return writeCLIAgentData(data)
 }
 
 // AgentAddress returns the gRPC address for the agent running on hostname.
-func AgentAddress(hostname string) string {
-	for _, c := range clients {
-		if strings.Contains(c.TargetSrv, hostname) {
-			return c.TargetSrv
+func AgentAddress(hostname string) (string, error) {
+	data, err := readCLIAgentData()
+	if err != nil {
+		return cg.EmptyStr, err
+	}
+
+	for _, agent := range data.Agents {
+		if strings.Contains(agent.TargetSrv, hostname) {
+			return agent.TargetSrv, nil
 		}
 	}
 	if hostname == cg.KLocalhost {
-		return ":8087"
+		return ":8087", nil
 	}
-	return cg.EmptyStr
+	return cg.EmptyStr, nil
 }
 
 func readCLIAgentData() (cliAgentData, error) {
-	r, err := cliSource.Read()
+	src, err := cliConfigSource()
+	if err != nil {
+		return cliAgentData{}, err
+	}
+	r, err := src.Read()
 	if err != nil {
 		return cliAgentData{}, cerr.AppendError("failed to read CLI agent config", err)
 	}
@@ -72,41 +61,48 @@ func readCLIAgentData() (cliAgentData, error) {
 }
 
 func writeCLIAgentData(d cliAgentData) error {
+	src, err := cliConfigSource()
+	if err != nil {
+		return err
+	}
+	if d.APIVersion == cg.EmptyStr {
+		d.APIVersion = "v1"
+	}
 	out, err := yaml.Marshal(d)
 	if err != nil {
 		return cerr.AppendError("failed to serialize CLI agent config", err)
 	}
-	return cliSource.Write(bytes.NewReader(out), cg.KPermFile)
+	return src.Write(bytes.NewReader(out), cg.KPermFile)
 }
 
-type client struct {
+type agent struct {
 	Certs     tlssecret `yaml:"tls"`
 	SshTunnel bool      `yaml:"ssh-tunnel"`   // special case of ssh tunnel
 	TargetSrv string    `yaml:"targetServer"` // server address
 }
 
-func NewClient(options ...func(*client)) client {
-	c := client{}
+func NewAgent(options ...func(*agent)) agent {
+	a := agent{}
 	for _, option := range options {
-		option(&c)
+		option(&a)
 	}
-	return c
+	return a
 }
 
-func WithClientTLS(t tlssecret) func(*client) {
-	return func(c *client) {
-		c.Certs = t
-	}
-}
-
-func WithSSHTunnel(use bool) func(*client) {
-	return func(c *client) {
-		c.SshTunnel = use
+func WithAgentTLS(t tlssecret) func(*agent) {
+	return func(a *agent) {
+		a.Certs = t
 	}
 }
 
-func WithTargetAddress(addr string) func(*client) {
-	return func(a *client) {
+func WithSSHTunnel(use bool) func(*agent) {
+	return func(a *agent) {
+		a.SshTunnel = use
+	}
+}
+
+func WithTargetAddress(addr string) func(*agent) {
+	return func(a *agent) {
 		a.TargetSrv = addr
 	}
 }

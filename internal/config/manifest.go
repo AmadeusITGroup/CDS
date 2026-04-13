@@ -25,12 +25,6 @@ const (
 	kManifestFileName = "cdsconfig.yaml"
 )
 
-var (
-	cliSource  source.Source
-	profSource source.Source
-	dbSource   source.Source
-)
-
 type SourceRef struct {
 	Type string `yaml:"type"`
 	Ref  string `yaml:"ref"`
@@ -43,47 +37,31 @@ type Manifest struct {
 }
 
 func InitCLIConfig() error {
-	loadedManifest, err := LoadManifest()
-	if err != nil {
-		return cerr.AppendError("failed to load manifest", err)
+	if _, err := cliConfigSource(); err != nil {
+		return err
 	}
-
-	cliSource, err = loadedManifest.Resolve(SourceKeyCLIAgentConfig)
-	if err != nil {
-		return cerr.AppendError("failed to resolve CLI agent config source", err)
+	if _, err := profileSource(); err != nil {
+		return err
 	}
-	if err := EnsureSourceWithDefault(cliSource, defaultCLIAgentConfig(), cg.KPermFile); err != nil {
-		return cerr.AppendError("failed to ensure CLI agent config exists", err)
+	if _, err := DBSource(); err != nil {
+		return err
 	}
-
-	profSource, err = loadedManifest.Resolve(SourceKeyProfile)
-	if err != nil {
-		return cerr.AppendError("failed to resolve profile source", err)
-	}
-
-	dbSource, err = loadedManifest.Resolve(SourceKeyDB)
-	if err != nil {
-		return cerr.AppendError("failed to resolve db source", err)
-	}
-	if err := EnsureSourceWithDefault(dbSource, strings.NewReader("{}"), cg.KPermFile); err != nil {
-		return cerr.AppendError("failed to ensure db file exists", err)
-	}
-
 	return nil
 }
 
 func ProfileReader() (io.Reader, error) {
-	if profSource == nil {
-		return nil, cerr.NewError("config.Init has not been called")
+	src, err := profileSource()
+	if err != nil {
+		return nil, err
 	}
-	return profSource.Read()
+	return src.Read()
 }
 
 // DBSource returns the resolved source for the state database.
 // The db package accepts source.Source directly so callers can pass
 // the return value through without importing source themselves.
-func DBSource() source.Source {
-	return dbSource
+func DBSource() (source.Source, error) {
+	return dbSource()
 }
 
 func LoadManifest() (Manifest, error) {
@@ -154,6 +132,48 @@ func EnsureSourceWithDefault(src source.Source, defaultContent io.Reader, perm o
 	}
 
 	return src.Write(defaultContent, perm)
+}
+
+func cliConfigSource() (source.Source, error) {
+	src, err := manifestSource(SourceKeyCLIAgentConfig)
+	if err != nil {
+		return nil, cerr.AppendError("failed to resolve CLI agent config source", err)
+	}
+	if err := EnsureSourceWithDefault(src, defaultCLIAgentConfig(), cg.KPermFile); err != nil {
+		return nil, cerr.AppendError("failed to ensure CLI agent config exists", err)
+	}
+	return src, nil
+}
+
+func profileSource() (source.Source, error) {
+	src, err := manifestSource(SourceKeyProfile)
+	if err != nil {
+		return nil, cerr.AppendError("failed to resolve profile source", err)
+	}
+	return src, nil
+}
+
+func dbSource() (source.Source, error) {
+	src, err := manifestSource(SourceKeyDB)
+	if err != nil {
+		return nil, cerr.AppendError("failed to resolve db source", err)
+	}
+	if err := EnsureSourceWithDefault(src, strings.NewReader("{}"), cg.KPermFile); err != nil {
+		return nil, cerr.AppendError("failed to ensure db file exists", err)
+	}
+	return src, nil
+}
+
+func manifestSource(key string) (source.Source, error) {
+	loadedManifest, err := LoadManifest()
+	if err != nil {
+		return nil, cerr.AppendError("failed to load manifest", err)
+	}
+	src, err := loadedManifest.Resolve(key)
+	if err != nil {
+		return nil, err
+	}
+	return src, nil
 }
 
 func defaultManifest() Manifest {

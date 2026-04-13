@@ -64,8 +64,13 @@ type cmd interface {
 }
 
 func main() {
+	dbSrc, err := config.DBSource()
+	if err != nil {
+		clog.Error("Failed to resolve state database source", err)
+		os.Exit(1)
+	}
 
-	if err := db.Load(config.DBSource()); err != nil {
+	if err := db.Load(dbSrc); err != nil {
 		clog.Error("Failed to load state from database", err)
 		os.Exit(1)
 	}
