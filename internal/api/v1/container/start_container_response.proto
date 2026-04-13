@@ -1,0 +1,11 @@
+syntax = "proto3";
+
+package api.v1.container;
+option go_package = "github.com/amadeusitgroup/cds/cdspb";
+
+// StartContainerResponse contains the lifecycle summary emitted by the agent.
+message StartContainerResponse {
+  // output is the primary success summary.
+  string output = 1;
+}
+

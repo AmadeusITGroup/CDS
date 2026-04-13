@@ -1,0 +1,8 @@
+syntax = "proto3";
+
+package api.v1.container;
+option go_package = "github.com/amadeusitgroup/cds/cdspb";
+
+// ListContainerRequest intentionnally left empty to let it evolve without the hard dependency of empty.
+message ListContainerRequest {
+}

@@ -1,0 +1,19 @@
+syntax = "proto3";
+
+package api.v1.services;
+import "internal/api/v1/artifact/upload_artifact_chunk.proto";
+import "internal/api/v1/artifact/upload_artifact_response.proto";
+import "internal/api/v1/artifact/prepare_artifacts_request.proto";
+import "internal/api/v1/artifact/prepare_artifacts_response.proto";
+option go_package = "github.com/amadeusitgroup/cds/cdspb";
+
+
+// ArtifactServie handles the artifact transfers from client to agent
+service ArtifactService {
+    // UploadArtifact is the method used to upload an artifact to the agent
+    rpc UploadArtifact(stream api.v1.artifact.UploadArtifactChunk) returns (api.v1.artifact.UploadArtifactResponse);
+
+    // PrepareArtifacts is a pre-step for optimization that will let the client list all the files that it has found to upload to the agent.
+    // Agent will then be able to inform which file is actually necessary and which is already present.
+    rpc PrepareArtifacts(api.v1.artifact.PrepareArtifactsRequest) returns (api.v1.artifact.PrepareArtifactsResponse);
+}

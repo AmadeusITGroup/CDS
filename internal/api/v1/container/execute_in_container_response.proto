@@ -1,0 +1,13 @@
+syntax = "proto3";
+
+package api.v1.container;
+option go_package = "github.com/amadeusitgroup/cds/cdspb";
+
+// ExecuteInContainerResponse contains command output and exit status.
+message ExecuteInContainerResponse {
+  // output is the collected output returned by the command.
+  string output = 1;
+
+  // exit_code is the process exit code reported by the agent.
+  int32 exit_code = 2;
+}

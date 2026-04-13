@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	cdspb "github.com/amadeusitgroup/cds/internal/api/v1"
+	"github.com/amadeusitgroup/cds/internal/api/v1/cdspb"
 	"github.com/amadeusitgroup/cds/internal/cerr"
 	"github.com/amadeusitgroup/cds/internal/clog"
 	cdstls "github.com/amadeusitgroup/cds/internal/tls"
@@ -12,7 +12,12 @@ import (
 	"google.golang.org/grpc/credentials"
 )
 
-type stubCallback func(c cdspb.AgentClient, ctx context.Context) error
+type agentServices struct {
+	info      cdspb.AgentInfoServiceClient
+	container cdspb.ContainerServiceClient
+}
+
+type stubCallback func(c agentServices, ctx context.Context) error
 
 func (s stubCallback) execute() error {
 	addr, err := getAgentServerAddress()
@@ -37,7 +42,10 @@ func (s stubCallback) execute() error {
 		_ = conn.Close()
 	}()
 
-	c := cdspb.NewAgentClient(conn)
+	c := agentServices{
+		info:      cdspb.NewAgentInfoServiceClient(conn),
+		container: cdspb.NewContainerServiceClient(conn),
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	return s(c, ctx)

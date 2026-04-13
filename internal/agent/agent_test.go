@@ -5,14 +5,13 @@ import (
 	"net"
 	"testing"
 
-	cdspb "github.com/amadeusitgroup/cds/internal/api/v1"
+	"github.com/amadeusitgroup/cds/internal/api/v1/cdspb"
 	"github.com/amadeusitgroup/cds/internal/core"
 	cdstls "github.com/amadeusitgroup/cds/internal/tls"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
-	"google.golang.org/protobuf/types/known/emptypb"
 )
 
 func newMock() commandManager {
@@ -38,7 +37,7 @@ func (m mock) Project() map[string]core.Cmd {
 }
 
 func TestAgent(t *testing.T) {
-	for usecase, fn := range map[string]func(t *testing.T, client cdspb.AgentClient, config *bom){
+	for usecase, fn := range map[string]func(t *testing.T, client cdspb.AgentInfoServiceClient, config *bom){
 		"get server version succeeds": testServerVersion,
 	} {
 		t.Run(usecase, func(t *testing.T) {
@@ -49,7 +48,7 @@ func TestAgent(t *testing.T) {
 	}
 }
 
-func setupTest(t *testing.T, fn func(*bom)) (client cdspb.AgentClient, cfg *bom, teardown func()) {
+func setupTest(t *testing.T, fn func(*bom)) (client cdspb.AgentInfoServiceClient, cfg *bom, teardown func()) {
 	t.Helper()
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
 	assert.NoError(t, err)
@@ -94,7 +93,7 @@ func setupTest(t *testing.T, fn func(*bom)) (client cdspb.AgentClient, cfg *bom,
 		require.NoError(t, err)
 	}()
 
-	client = cdspb.NewAgentClient(conn)
+	client = cdspb.NewAgentInfoServiceClient(conn)
 
 	return client, cfg, func() {
 		server.Stop()
@@ -103,9 +102,9 @@ func setupTest(t *testing.T, fn func(*bom)) (client cdspb.AgentClient, cfg *bom,
 	}
 }
 
-func testServerVersion(t *testing.T, client cdspb.AgentClient, config *bom) {
+func testServerVersion(t *testing.T, client cdspb.AgentInfoServiceClient, config *bom) {
 	ctx := context.Background()
-	reply, err := client.GetVersion(ctx, &emptypb.Empty{})
+	reply, err := client.GetVersion(ctx, &cdspb.GetVersionRequest{})
 	assert.NoError(t, err)
 	want := "9.9.9"
 	assert.Equal(t, want, reply.GetCurrent(), "they should be equal")
