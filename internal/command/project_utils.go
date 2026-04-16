@@ -16,7 +16,8 @@ const (
 	kNbArgsProjectNameOnly = 1
 	kImageTagRegex         = `^[\w][\w.-]{0,127}$`
 	// containerNamesRegex is the naming convention regex for project/container names.
-	containerNamesRegex = `^([a-zA-Z0-9][a-zA-Z0-9_.-]*)$`
+	containerNamesRegex             = `^([a-zA-Z0-9][a-zA-Z0-9_.-]*)$`
+	kErrorImageTagFlagExclusiveness = "--override-tag, --pull-latest and --pull-given are mutually exclusive"
 )
 
 // isValidProjectName checks whether the given project name is valid per naming conventions.
@@ -97,4 +98,60 @@ func confInUse(path string) bool {
 		return true
 	}
 	return false
+}
+
+// ----- TIP SUGGESTION SECTION ------
+
+// getTipRun returns a tip on how to run a project/container.
+func getTipRun(projectName string) string {
+	hostname := db.ProjectHostName(projectName)
+	if len(hostname) == 0 {
+		hostnames := db.ListHostNames()
+		if len(hostnames) > 0 {
+			hostname = hostnames[0]
+		} else {
+			hostname = "<target-host>"
+		}
+	}
+	extras := ""
+	if !db.IsCurrentProject(projectName) {
+		extras = projectName
+	}
+	return fmt.Sprintf(`  (use "cds project run %s -t %s" to create and start a container)`, extras, hostname)
+}
+
+// getTipClear returns a tip on how to clear a project.
+func getTipClear(projectName string) string {
+	extras := ""
+	if !db.IsCurrentProject(projectName) {
+		extras = " " + projectName
+	}
+	return fmt.Sprintf(`  (use "cds project clear%s" to delete your container(s))`, extras)
+}
+
+// getTipSsh returns a tip on how to ssh into a project's container.
+func getTipSsh(projectName string) string {
+	extras := ""
+	if !db.IsCurrentProject(projectName) {
+		extras = " " + projectName
+	}
+	return fmt.Sprintf(`  (use "cds project ssh%s" to access your started container)`, extras)
+}
+
+// getTipStart returns a tip on how to start a project.
+func getTipStart(projectName string) string {
+	extras := ""
+	if !db.IsCurrentProject(projectName) {
+		extras = " " + projectName
+	}
+	return fmt.Sprintf(`  (use "cds project start%s" to start a container)`, extras)
+}
+
+// getTipStartAndSsh returns a tip on how to start a project and then ssh into it.
+func getTipStartAndSsh(projectName string) string {
+	extras := ""
+	if !db.IsCurrentProject(projectName) {
+		extras = " " + projectName
+	}
+	return fmt.Sprintf(`  (use "cds project start%s" then "cds project ssh%s" to access your started container)`, extras, extras)
 }
