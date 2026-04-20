@@ -1,12 +1,18 @@
 package command
 
 import (
-	"github.com/spf13/cobra"
+	"strings"
+
+	"github.com/amadeusitgroup/cds/internal/cerr"
 	"github.com/amadeusitgroup/cds/internal/clog"
+	"github.com/amadeusitgroup/cds/internal/output"
+	"github.com/spf13/cobra"
 )
 
 type cds struct {
-	verbose bool
+	verbose    bool
+	outputFlag string // --output: "json", "text", "auto"
+	quiet      bool   // --quiet: suppress all output
 	defaultCmd
 }
 
@@ -18,6 +24,8 @@ type cds struct {
 
 func (c *cds) initFlags() {
 	c.cmd.PersistentFlags().BoolVarP(&c.verbose, "verbose", "v", false, "Verbose output, switches log level to Debug")
+	c.cmd.PersistentFlags().StringVarP(&c.outputFlag, "output", "o", "auto", `Output format: "auto", "json", "text"`)
+	c.cmd.PersistentFlags().BoolVarP(&c.quiet, "quiet", "q", false, "Suppress all output; exit code signals success or failure")
 }
 
 func (c *cds) initSubCommands() {
@@ -46,6 +54,13 @@ containers orchestration platform.`,
 				if c.verbose {
 					clog.Verbose()
 				}
+				cmdPath := strings.TrimPrefix(cmd.CommandPath(), "cds ")
+				preparedCmd := strings.ReplaceAll(cmdPath, " ", ".")
+				octx, err := output.NewOutputOptions(output.WithDetect(c.outputFlag, c.quiet, c.verbose), output.WithCommand(preparedCmd))
+				if err != nil {
+					return cerr.AppendError("There was an error initializing output options", err)
+				}
+				cmd.SetContext(output.WithOutputOptions(cmd.Context(), octx))
 				return nil
 			},
 		}
