@@ -53,6 +53,7 @@ func (s stubCallback) execute() error {
 	return s(c, ctx)
 }
 
+// TODO: introduce Agent selection instead of using localhost agent only.
 func getAgentServerAddress() (string, error) {
 	addr, err := config.AgentAddress(cg.KLocalhost)
 	if err != nil {

@@ -14,7 +14,7 @@ type spc struct {
 func (s *spc) initSubCommands() {
 	s.subCmds = append(s.subCmds,
 		&spcInit{},
-		//&spcHost{},
+		&spcHost{},
 		//&spcRegistry{},
 		//&spcProfile{},
 		//&spcOrc{},

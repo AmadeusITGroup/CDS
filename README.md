@@ -169,6 +169,15 @@ cds project init
 # Initialize a new space
 cds space init
 
+# Bootstrap an agent host
+cds space host add
+cds space host add https://agent.example:8443
+
+# Manage configured agent hosts
+cds space host list
+cds space host get https://agent.example:8443
+cds space host delete https://agent.example:8443
+
 # Check version
 cds version
 ```
