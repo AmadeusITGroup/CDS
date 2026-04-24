@@ -11,10 +11,11 @@ import (
 
 func TestMounts(t *testing.T) {
 	mockedMountString := "source=${localEnv:HOME}/workspace,target=/workspace,type=bind"
-	containerconf.Set("mounts", []interface{}{mockedMountString})
+	config := containerconf.NewConfig()
+	config.Set("mounts", []interface{}{mockedMountString})
 	expectedDefaultMount := "source=${localEnv:HOME}/.devbox,target=/devbox,type=bind"
 
-	var ce ContainersEngine
+	ce := NewContainerEngine(WithContainerConfig(config))
 
 	mounts, err := ce.mounts()
 
@@ -24,9 +25,10 @@ func TestMounts(t *testing.T) {
 
 func TestMountsWithPvc(t *testing.T) {
 	mockedMountString := "source=${localEnv:HOME}/workspace,target=/workspace,type=bind"
-	containerconf.Set("mounts", []interface{}{mockedMountString})
-	containerconf.Set(cg.VariadicJoin(".", "orchestration", containerconf.KPersistentVolumeClaim), true)
-	var ce ContainersEngine
+	config := containerconf.NewConfig()
+	config.Set("mounts", []interface{}{mockedMountString})
+	config.Set(cg.VariadicJoin(".", "orchestration", containerconf.KPersistentVolumeClaim), true)
+	ce := NewContainerEngine(WithContainerConfig(config))
 
 	mounts, err := ce.mounts()
 	assert.Nil(t, err)
@@ -35,11 +37,10 @@ func TestMountsWithPvc(t *testing.T) {
 }
 
 func TestGetProfileAttributeValue(t *testing.T) {
-	var ce ContainersEngine
-
 	// test with empty local profile
-	err := containerconf.LoadFromBytes(strings.NewReader("{}"))
+	config, err := containerconf.ParseBytes(strings.NewReader("{}"))
 	assert.Nil(t, err)
+	ce := NewContainerEngine(WithContainerConfig(config))
 	value := ce.getProfileAttributeValue("key")
 	assert.Equal(t, "", value)
 
@@ -50,8 +51,45 @@ func TestGetProfileAttributeValue(t *testing.T) {
 	// test when attribute is defined in flavour profile
 	flavourProfileConfig := make(map[string]interface{})
 	flavourProfileConfig["defaultShell"] = "zsh"
-	containerconf.Set(containerconf.KCds, flavourProfileConfig)
+	config.Set(containerconf.KCds, flavourProfileConfig)
 
 	value = ce.getProfileAttributeValue("defaultShell")
 	assert.Equal(t, "zsh", value)
+}
+
+func TestGetDevcontainerNameForConfigUsesProvidedConfig(t *testing.T) {
+	configA := containerconf.NewConfig()
+	configA.Set(containerconf.KName, "alpha")
+
+	configB := containerconf.NewConfig()
+	configB.Set(containerconf.KName, "beta")
+
+	gotA := GetDevcontainerNameForConfig("project", configA)
+	gotB := GetDevcontainerNameForConfig("project", configB)
+
+	assert.Contains(t, gotA, "-alpha-")
+	assert.Contains(t, gotB, "-beta-")
+	assert.NotEqual(t, gotA, gotB)
+}
+
+func TestResolveUsersFromConfigDefaultsWithoutSharedConfig(t *testing.T) {
+	assert.Equal(t, kDefaultUser, ResolveContainerUserFromConfig(nil))
+	assert.Equal(t, kDefaultUser, ResolveRemoteUserFromConfig(nil))
+}
+
+func TestGetDevcontainerNameForConfigFallsBackWithoutConfig(t *testing.T) {
+	got := GetDevcontainerNameForConfig("project", nil)
+
+	assert.Contains(t, got, "project-")
+	assert.NotContains(t, got, "-alpha-")
+}
+
+func TestRunRequiresExplicitConfig(t *testing.T) {
+	ce := NewContainerEngine()
+	ce.SetAction(K_ACTION_RUN)
+
+	_, err := ce.BuildCommands()
+
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "container configuration is required for devcontainer run")
 }
