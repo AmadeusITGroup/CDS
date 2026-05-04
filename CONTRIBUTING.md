@@ -23,7 +23,7 @@ First off, thank you for considering contributing to CDS! 🎉 It's people like 
 
 Before you begin, ensure you have the following installed:
 
-- **Go 1.24.0+** - [Download Go](https://golang.org/dl/)
+- **Go 1.26.2+** - [Download Go](https://golang.org/dl/)
 - **Protocol Buffers Compiler (protoc)** - [Installation Guide](https://grpc.io/docs/protoc-installation/)
 - **Make** - Usually pre-installed on Linux/macOS; use Git Bash or WSL on Windows
 - **Git** - [Download Git](https://git-scm.com/)
@@ -508,7 +508,7 @@ What actually happened.
 
 ## Environment
 - OS: macOS 14.0
-- Go: 1.24.0
+- Go: 1.26.2
 - CDS: v1.0.0
 
 ## Additional Context
