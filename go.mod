@@ -1,6 +1,6 @@
 module github.com/amadeusitgroup/cds
 
-go 1.24.0
+go 1.26.2
 
 require (
 	github.com/coreos/go-systemd/v22 v22.5.0

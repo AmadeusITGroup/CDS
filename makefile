@@ -116,7 +116,7 @@ lint-weak: install-golangci-lint
 
 install-golangci-lint:
 	@echo "$(ECHO_BEFORE)Executing install-golangci-lint$(ECHO_AFTER)"
-	which golangci-lint || curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $(GOPATH)/bin $(GOLANGCI_LINT_VERSION)
+	which golangci-lint || curl -sSfL https://golangci-lint.run/install.sh | sh -s -- -b $(GOPATH)/bin $(GOLANGCI_LINT_VERSION)
 
 run-api-agent: go-tidy
 	@echo "$(ECHO_BEFORE2)Running cds api server$(ECHO_AFTER)"

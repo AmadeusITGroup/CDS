@@ -1,7 +1,7 @@
 # Containers Development Space (CDS)
 
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
-[![Go Version](https://img.shields.io/badge/Go-1.24%2B-00ADD8?logo=go)](go.mod)
+[![Go Version](https://img.shields.io/badge/Go-1.26%2B-00ADD8?logo=go)](go.mod)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
 
 > A powerful framework for building and managing development environment containers with consistent, reproducible workflows across teams and platforms.
@@ -87,7 +87,7 @@
 
 Before installing CDS, ensure you have the following dependencies:
 
-- **Go**: Version 1.24.0 or higher ([Download](https://golang.org/dl/))
+- **Go**: Version 1.26.2 or higher ([Download](https://golang.org/dl/))
 - **Protocol Buffers Compiler**: protoc for gRPC code generation ([Installation Guide](https://grpc.io/docs/protoc-installation/))
 - **Make**: Build automation tool
   - Linux/macOS: Usually pre-installed
