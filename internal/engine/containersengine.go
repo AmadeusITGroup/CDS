@@ -46,10 +46,8 @@ const (
 )
 
 var (
-	enVarsMutex           sync.Mutex
-	envVars               map[string]string
-	devcontainerNameMutex sync.Mutex
-	sDevcontainerName     string // if no name is given in configuration the generated name depends on time hence the need of single generation.
+	enVarsMutex sync.Mutex
+	envVars     map[string]string
 )
 
 type ContainersEngine struct {
@@ -81,6 +79,7 @@ type ContainersEngine struct {
 	networkCmd          Network_t
 	networkName         string
 	containerLabels     map[string]string
+	config              *containerconf.Config
 	resourceProvider    resourceProvider
 	resolvedFeatures    []features.ResolvedFeature
 }
@@ -135,6 +134,12 @@ func WithResourceProvider(rp resourceProvider) ContainerEngineOption {
 	}
 }
 
+func WithContainerConfig(config *containerconf.Config) ContainerEngineOption {
+	return func(ce *ContainersEngine) {
+		ce.config = config
+	}
+}
+
 func WithResolvedFeatures(rf []features.ResolvedFeature) ContainerEngineOption {
 	return func(ce *ContainersEngine) {
 		ce.resolvedFeatures = rf
@@ -142,19 +147,38 @@ func WithResolvedFeatures(rf []features.ResolvedFeature) ContainerEngineOption {
 }
 
 func NewContainerEngine(opts ...ContainerEngineOption) *ContainersEngine {
-	ce := &ContainersEngine{user: newContainersEngineUser()}
+	ce := &ContainersEngine{}
 	for _, opt := range opts {
 		opt(ce)
 	}
 
+	ce.user = newContainersEngineUser(ce.config)
 	if ce.resourceProvider == nil {
 		ce.resourceProvider = newUnimplementedResourceProvider()
 	}
 	return ce
 }
 
-func newContainersEngineUser() containersEngineUser {
-	return containersEngineUser{remoteUsr: ResolveRemoteUserFromConf(), containerUsr: ResolveContainerUser()}
+func newContainersEngineUser(config *containerconf.Config) containersEngineUser {
+	return containersEngineUser{
+		remoteUsr:    ResolveRemoteUserFromConfig(config),
+		containerUsr: ResolveContainerUserFromConfig(config),
+	}
+}
+
+func (ce *ContainersEngine) containerConfig() *containerconf.Config {
+	return ce.config
+}
+
+func (ce *ContainersEngine) configGet(key ...string) interface{} {
+	if ce.config == nil {
+		return nil
+	}
+	return ce.config.Get(key...)
+}
+
+func (ce *ContainersEngine) configIsSet(key ...string) bool {
+	return ce.config != nil && ce.config.IsSet(key...)
 }
 
 func (ce *ContainersEngine) BuildCommands() ([]shexec.ExecuteEvent, error) {
@@ -499,7 +523,11 @@ func (ce *ContainersEngine) execute() error {
 }
 
 func (ce *ContainersEngine) sshKeyHandler() (*RunEvent, error) {
-	pubKey, err := ce.resourceProvider.FetchFile(containerconf.ResourceTypeFile, containerconf.KindPubKey)
+	identifier, err := containerconf.SingletonIdentifier(containerconf.KindPubKey)
+	if err != nil {
+		return nil, cerr.AppendError("Failed to resolve public key identifier", err)
+	}
+	pubKey, err := ce.resourceProvider.FetchFile(containerconf.ResourceTypeFile, identifier)
 
 	if err != nil {
 		return nil, cerr.AppendError("Failed reading public key to configure ssh", err)
@@ -521,7 +549,11 @@ func (ce *ContainersEngine) sshKeyHandler() (*RunEvent, error) {
 }
 
 func (ce *ContainersEngine) addTempSharedKey() (*RunEvent, error) {
-	pubKey, err := ce.resourceProvider.FetchFile(containerconf.ResourceTypeFile, containerconf.KindSharedKey)
+	identifier, err := containerconf.SingletonIdentifier(containerconf.KindSharedKey)
+	if err != nil {
+		return nil, cerr.AppendError("Failed to resolve shared key identifier", err)
+	}
+	pubKey, err := ce.resourceProvider.FetchFile(containerconf.ResourceTypeFile, identifier)
 
 	if err != nil {
 		clog.Warn("Failed reading temp shared public key", err)
@@ -1149,6 +1181,9 @@ func (ce *ContainersEngine) run() error {
 		}
 		return nil
 	}
+	if ce.containerConfig() == nil {
+		return cerr.NewError("container configuration is required for devcontainer run")
+	}
 
 	if err := ce.preServer(); err != nil {
 		return cerr.AppendError("Failed to run pre server step of container run", err)
@@ -1244,8 +1279,12 @@ func (ce *ContainersEngine) preServer() error {
 }
 
 func (ce *ContainersEngine) addMandatoryConfigurationFiles() error {
+	identifier, err := containerconf.SingletonIdentifier(containerconf.KindAuthFile)
+	if err != nil {
+		return cerr.AppendError("Failed to resolve auth file identifier", err)
+	}
 	// ~/.config/containers/auth.json
-	authFileData, err := ce.resourceProvider.FetchFile(containerconf.ResourceTypeFile, containerconf.KindAuthFile)
+	authFileData, err := ce.resourceProvider.FetchFile(containerconf.ResourceTypeFile, identifier)
 	if err != nil {
 		return cerr.AppendError("Failed to read auth file data to copy mandatory container configuration file", err)
 	}
@@ -1275,10 +1314,10 @@ func (ce *ContainersEngine) preContainerRun() error {
 		}
 		ce.cmds = append(ce.cmds, rEvent)
 	}
-	if !containerconf.IsSet(containerconf.KInitializeCommand) {
+	if !ce.configIsSet(containerconf.KInitializeCommand) {
 		return nil
 	}
-	ic, err := ce.expand(containerconf.Get(containerconf.KInitializeCommand))
+	ic, err := ce.expand(ce.configGet(containerconf.KInitializeCommand))
 	if err != nil {
 		return cerr.AppendError("Failed to resolve initializeCommand", err)
 	}
@@ -1319,13 +1358,17 @@ func buildDockerfile(path, name string) error {
 //
 // returns the prepared image url
 func (ce *ContainersEngine) prepareImage() (string, error) {
-	if image := containerconf.Get(containerconf.KImage); image != nil {
+	if image := ce.configGet(containerconf.KImage); image != nil {
 		return ce.expand(image)
 	}
 
-	if containerconf.IsSet(containerconf.KBuild, containerconf.KBuildDockerfile) {
+	if ce.configIsSet(containerconf.KBuild, containerconf.KBuildDockerfile) {
+		identifier, err := containerconf.DockerfileIdentifier(ce.containerConfig())
+		if err != nil {
+			return "", cerr.AppendError("Failed to resolve dockerfile identifier", err)
+		}
 		// Prepare paths
-		dockerFileData, err := ce.resourceProvider.FetchFile(containerconf.ResourceTypeFile, containerconf.KindDockerfile)
+		dockerFileData, err := ce.resourceProvider.FetchFile(containerconf.ResourceTypeFile, identifier)
 		if err != nil {
 			return "", cerr.AppendError("Failed to read dockerfile data to prepare image", err)
 		}
@@ -1357,7 +1400,7 @@ func (ce *ContainersEngine) containerRun() error {
 		return cerr.AppendError("Failed to expand image name from configuration", err)
 	}
 
-	if overrideImageTag, ok := containerconf.Get(containerconf.KOverrideImageTag).(string); ok && overrideImageTag != "" {
+	if overrideImageTag, ok := ce.configGet(containerconf.KOverrideImageTag).(string); ok && overrideImageTag != "" {
 		clog.Warn(fmt.Sprintf("Overriding image tag with '%s' for image '%s'", overrideImageTag, parsedImage.ToString()))
 		parsedImage.OverrideTag(overrideImageTag)
 	}
@@ -1375,10 +1418,10 @@ func (ce *ContainersEngine) containerRun() error {
 	}
 
 	// best effort
-	if runArgs, ok := containerconf.Get(containerconf.KRunArgs).([]interface{}); ok {
+	if runArgs, ok := ce.configGet(containerconf.KRunArgs).([]interface{}); ok {
 		for _, arg := range runArgs {
 			arg := arg.(string)
-			if err := validateRunArg(arg); err != nil {
+			if err := ce.validateRunArg(arg); err != nil {
 				clog.Warn(fmt.Sprintf("run argument '%s' skipped:\n", arg), err)
 				continue
 			}
@@ -1386,7 +1429,7 @@ func (ce *ContainersEngine) containerRun() error {
 		}
 	}
 
-	if appPorts, ok := containerconf.Get(containerconf.KAppPort).([]interface{}); ok {
+	if appPorts, ok := ce.configGet(containerconf.KAppPort).([]interface{}); ok {
 		for _, port := range appPorts {
 			options = append(options, fmt.Sprintf("-p %s", port))
 		}
@@ -1400,7 +1443,7 @@ func (ce *ContainersEngine) containerRun() error {
 
 	// check if nas option has been given in cli arg or requested through .cds/profile.json
 	// With rework this should come from the client preparing properly the configuration
-	if containerconf.IsNasRequested() {
+	if config := ce.containerConfig(); config != nil && config.IsNasRequested() {
 		// TODO:FixMe:
 		// "-v /remote/dir1:/dst:ro [...] -v /remote:/remote:ro", if dst != "/remote",
 		// no issues whatsoever but if dst is mounted in remote, you have this behavior:
@@ -1464,12 +1507,12 @@ func (ce *ContainersEngine) getMountOptions() ([]string, error) {
 
 func (ce *ContainersEngine) mounts() ([]interface{}, error) {
 	mounts := defaultMounts()
-	mountsFromConfig, err := fromConfig()
+	mountsFromConfig, err := ce.mountsFromConfig()
 	if err != nil {
 		return nil, err
 	}
 	mounts = append(mounts, mountsFromConfig...)
-	mountsFromOrchestration := fromOrchestration()
+	mountsFromOrchestration := ce.mountsFromOrchestration()
 	if mountsFromOrchestration != nil {
 		mounts = append(mounts, mountsFromOrchestration...)
 	}
@@ -1482,8 +1525,8 @@ func defaultMounts() []interface{} {
 	}
 }
 
-func fromConfig() ([]interface{}, error) {
-	mountKeyValue := containerconf.Get(containerconf.KMounts)
+func (ce *ContainersEngine) mountsFromConfig() ([]interface{}, error) {
+	mountKeyValue := ce.configGet(containerconf.KMounts)
 	if mountKeyValue == nil {
 		return []interface{}{}, nil
 	}
@@ -1495,8 +1538,8 @@ func fromConfig() ([]interface{}, error) {
 	return mountsFromConfig, nil
 }
 
-func fromOrchestration() []interface{} {
-	if persistent, ok := containerconf.Get(containerconf.KOrchestration, containerconf.KPersistentVolumeClaim).(bool); ok && persistent {
+func (ce *ContainersEngine) mountsFromOrchestration() []interface{} {
+	if persistent, ok := ce.configGet(containerconf.KOrchestration, containerconf.KPersistentVolumeClaim).(bool); ok && persistent {
 		clog.Debug("Adding peristent volume to mounts list...")
 		return []interface{}{KPersistentVolumeMount}
 	}
@@ -1506,11 +1549,11 @@ func fromOrchestration() []interface{} {
 // handles:
 // 1 - postCreateCommand from devcontainer.json
 func (ce *ContainersEngine) postContainerRun() error {
-	if !containerconf.IsSet(containerconf.KPostCreateCommand) {
+	if !ce.configIsSet(containerconf.KPostCreateCommand) {
 		return nil
 	}
 
-	pcc, err := ce.expand(containerconf.Get(containerconf.KPostCreateCommand))
+	pcc, err := ce.expand(ce.configGet(containerconf.KPostCreateCommand))
 	if err != nil {
 		return cerr.AppendError("Failed to resolve postCreateCommand", err)
 	}
@@ -1649,7 +1692,7 @@ func (ce *ContainersEngine) formatContent(content []byte, filename string) []byt
 func (ce *ContainersEngine) getConfAttributeValue(s string) string {
 	s = trimAttribute(s)
 
-	attributeConfig := containerconf.Get(s)
+	attributeConfig := ce.configGet(s)
 	if attributeConfig == nil {
 		clog.Debug(fmt.Sprintf("Could not find attribute in the configuration: '%s'", s))
 		return ""
@@ -1664,7 +1707,7 @@ func (ce *ContainersEngine) getConfAttributeValue(s string) string {
 
 func (ce *ContainersEngine) getProfileAttributeValue(att string) string {
 	att = trimAttribute(att)
-	defaultShell, ok := containerconf.Get(containerconf.KCds, containerconf.KCdsDefaultShell).(string)
+	defaultShell, ok := ce.configGet(containerconf.KCds, containerconf.KCdsDefaultShell).(string)
 	var profileDefaultShell string
 	if ok {
 		profileDefaultShell = defaultShell
@@ -1702,23 +1745,25 @@ func (ce *ContainersEngine) getContainerUser() string {
 	return ce.user.containerUsr
 }
 
-func ResolveContainerUser() string {
-	if containerUser, err := expand(containerconf.Get(containerconf.KContainerUser)); err == nil {
+func ResolveContainerUserFromConfig(config *containerconf.Config) string {
+	if config == nil {
+		return kDefaultUser
+	}
+	if containerUser, err := expand(config.Get(containerconf.KContainerUser)); err == nil {
 		return containerUser
 	}
 	return kDefaultUser
-
 }
 
 func (ce *ContainersEngine) getRemoteUser() string {
 	return ce.user.remoteUsr
 }
 
-func validateRunArg(arg string) error {
+func (ce *ContainersEngine) validateRunArg(arg string) error {
 	switch arg {
 	case "--userns=keep-id":
 		keepIdfeature := "userns-keepid"
-		if featuresNames, ok := containerconf.Get(containerconf.KFeatures).(map[string]interface{}); ok {
+		if featuresNames, ok := ce.configGet(containerconf.KFeatures).(map[string]interface{}); ok {
 			for featureName := range featuresNames {
 				if featureName == keepIdfeature {
 					return nil
@@ -1730,39 +1775,38 @@ func validateRunArg(arg string) error {
 	return nil
 }
 
-func buildDevContainerName(projectName string) string {
-	devcontainerNameMutex.Lock()
-	defer devcontainerNameMutex.Unlock()
-	if sDevcontainerName != "" {
-		return sDevcontainerName
-	}
+func buildDevContainerName(projectName string, config *containerconf.Config) string {
 	hostname, _ := os.Hostname()
-	if containerNameInConfig, ok := containerconf.Get(containerconf.KName).(string); ok {
-		sDevcontainerName = fmt.Sprintf("%s-%s-%s", projectName, containerNameInConfig, hostname)
-	} else {
-		clog.Warn("Failed to retrieve container name from .devcontainer, changing naming pattern")
-		currentTime := time.Now()
-		sDevcontainerName = fmt.Sprintf(
-			"%s-%s-%d-%02d-%02dT%02d%02d%02d",
-			projectName,
-			hostname,
-			currentTime.Year(),
-			currentTime.Month(),
-			currentTime.Day(),
-			currentTime.Hour(),
-			currentTime.Minute(),
-			currentTime.Second(),
-		)
+	if config != nil {
+		if containerNameInConfig, ok := config.Get(containerconf.KName).(string); ok {
+			return fmt.Sprintf("%s-%s-%s", projectName, containerNameInConfig, hostname)
+		}
 	}
-	return sDevcontainerName
+
+	clog.Warn("Failed to retrieve container name from .devcontainer, changing naming pattern")
+	currentTime := time.Now()
+	return fmt.Sprintf(
+		"%s-%s-%d-%02d-%02dT%02d%02d%02d",
+		projectName,
+		hostname,
+		currentTime.Year(),
+		currentTime.Month(),
+		currentTime.Day(),
+		currentTime.Hour(),
+		currentTime.Minute(),
+		currentTime.Second(),
+	)
 }
 
-func GetDevcontainerName(projectName string) string {
-	return buildDevContainerName(projectName)
+func GetDevcontainerNameForConfig(projectName string, config *containerconf.Config) string {
+	return buildDevContainerName(projectName, config)
 }
 
-func ResolveRemoteUserFromConf() string {
-	if remoteUsr, err := expand(containerconf.Get(containerconf.KRemoteUser)); err == nil {
+func ResolveRemoteUserFromConfig(config *containerconf.Config) string {
+	if config == nil {
+		return kDefaultUser
+	}
+	if remoteUsr, err := expand(config.Get(containerconf.KRemoteUser)); err == nil {
 		return remoteUsr
 	}
 	return kDefaultUser

@@ -15,3 +15,5 @@ const (
 	KindAuthFile   = "auth"
 	KindDockerfile = "dockerfile"
 )
+
+const ResourceNamespace = "resource"
