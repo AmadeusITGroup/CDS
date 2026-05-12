@@ -90,6 +90,27 @@ func CreateAgentInConfig(a agent) error {
 	})
 }
 
+// UpsertAgentForHostInConfig creates or replaces the agent entry matching hostname.
+func UpsertAgentForHostInConfig(hostname string, a agent) error {
+	normalizedHostname := normalizeHostName(hostname)
+	normalizedAgent, err := normalizeAgent(a)
+	if err != nil {
+		return err
+	}
+
+	return updateCLIAgentData(func(c *cliAgentData) error {
+		index := slices.IndexFunc(c.Agents, func(existing agent) bool {
+			return targetServerHostname(existing.TargetSrv) == normalizedHostname
+		})
+		if index >= 0 {
+			c.Agents[index] = normalizedAgent
+			return nil
+		}
+		c.Agents = append(c.Agents, normalizedAgent)
+		return nil
+	})
+}
+
 // UpdateAgentInConfig updates an existing agent entry identified by targetServer.
 func UpdateAgentInConfig(targetServer string, updated agent) error {
 	normalizedTarget, err := normalizeTargetServer(targetServer)
@@ -137,15 +158,31 @@ func DeleteAgentFromConfig(targetServer string) error {
 
 // AgentAddress returns the targetServer of an agent by hostname
 func AgentAddress(hostname string) (string, error) {
-	return invokeWithCLIAgentData(func(c cliAgentData) (string, error) {
-		normalizedHostname := strings.TrimSpace(hostname)
+	address, found, err := AgentAddressIfRegistered(hostname)
+	if err != nil {
+		return cg.EmptyStr, err
+	}
+	if !found {
+		return cg.EmptyStr, cerr.NewError(fmt.Sprintf("No agent found with hostname %q", hostname))
+	}
+	return address, nil
+}
+
+// AgentAddressIfRegistered returns the targetServer of an agent by hostname when present.
+func AgentAddressIfRegistered(hostname string) (string, bool, error) {
+	normalizedHostname := normalizeHostName(hostname)
+	address, err := invokeWithCLIAgentData(func(c cliAgentData) (string, error) {
 		for _, agent := range c.Agents {
 			if targetServerHostname(agent.TargetSrv) == normalizedHostname {
 				return agent.TargetSrv, nil
 			}
 		}
-		return cg.EmptyStr, cerr.NewError(fmt.Sprintf("No agent found with hostname %q", hostname))
+		return cg.EmptyStr, nil
 	})
+	if err != nil {
+		return cg.EmptyStr, false, err
+	}
+	return address, address != cg.EmptyStr, nil
 }
 
 func readCLIAgentData() (cliAgentData, error) {
@@ -259,4 +296,12 @@ func targetServerHostname(targetServer string) string {
 		return host
 	}
 	return normalized
+}
+
+func normalizeHostName(hostname string) string {
+	normalized := strings.TrimSpace(hostname)
+	if normalized == cg.EmptyStr {
+		return cg.KLocalhost
+	}
+	return targetServerHostname(normalized)
 }

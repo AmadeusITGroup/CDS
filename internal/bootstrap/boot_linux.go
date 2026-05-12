@@ -1,7 +1,18 @@
 package bootstrap
 
+import (
+	"os/exec"
+	"syscall"
+)
+
 func fire() error {
-	return nil
+	return fireLocalAgent("Linux")
+}
+
+func prepareAgentCommand(cmd *exec.Cmd) {
+	cmd.SysProcAttr = &syscall.SysProcAttr{
+		Setpgid: true,
+	}
 }
 
 // func onRemoteLinux(hostName string) ([]byte, error) {

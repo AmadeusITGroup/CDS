@@ -140,6 +140,25 @@ func TestCollectArtifactsGeneratesAuthorizedKeysFromDefaultPublicKey(t *testing.
 	}, artifacts[0])
 }
 
+func TestCollectArtifactsFallsBackToEd25519PublicKey(t *testing.T) {
+	homeDir := isolateDefaultArtifactHome(t)
+	publicKeyPath := filepath.Join(homeDir, ".ssh", "id_ed25519.pub")
+	require.NoError(t, os.MkdirAll(filepath.Dir(publicKeyPath), 0700))
+	require.NoError(t, os.WriteFile(publicKeyPath, []byte("ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEd25519\n"), 0600))
+	config := NewConfig()
+	config.Set(KImage, "dockerhub.rnd.fix.me/dummy/image:0.1.0")
+
+	artifacts, err := CollectArtifacts(config, t.TempDir())
+	require.NoError(t, err)
+	require.Len(t, artifacts, 1)
+
+	assert.Equal(t, SourceRef{
+		Type: SourceTypeInline,
+		Ref:  "authorized_keys",
+		Data: []byte("ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEd25519\n"),
+	}, artifacts[0].Source)
+}
+
 func TestCollectArtifactsReturnsEmptyWithoutConfigDerivedFiles(t *testing.T) {
 	isolateDefaultArtifactHome(t)
 	config := NewConfig()

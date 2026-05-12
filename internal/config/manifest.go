@@ -40,9 +40,6 @@ func InitCLIConfig() error {
 	if _, err := cliConfigSource(); err != nil {
 		return err
 	}
-	if _, err := profileSource(); err != nil {
-		return err
-	}
 	if _, err := DBSource(); err != nil {
 		return err
 	}

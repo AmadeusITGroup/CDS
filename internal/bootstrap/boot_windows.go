@@ -1,5 +1,10 @@
 package bootstrap
 
+import "os/exec"
+
 func fire() error {
-	return nil
+	return fireLocalAgent("Windows")
+}
+
+func prepareAgentCommand(cmd *exec.Cmd) {
 }

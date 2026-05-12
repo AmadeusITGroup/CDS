@@ -112,6 +112,10 @@ func handleForceDelete(projectName string) error {
 func deleteProjectFromConfig(projectName string) error {
 	clog.Info(fmt.Sprintf("Using project '%s'.", projectName))
 
+	if err := projectClearMain(projectName); err != nil {
+		return err
+	}
+
 	if _, err := db.DeleteProject(projectName); err != nil {
 		clog.Warn("Failed to delete project in config file", err)
 		return err

@@ -5,7 +5,6 @@ import (
 	"log/slog"
 	"os"
 
-	"github.com/amadeusitgroup/cds/internal/bootstrap"
 	"github.com/amadeusitgroup/cds/internal/cenv"
 	"github.com/amadeusitgroup/cds/internal/cerr"
 	"github.com/amadeusitgroup/cds/internal/clog"
@@ -13,7 +12,6 @@ import (
 	"github.com/amadeusitgroup/cds/internal/config"
 	"github.com/amadeusitgroup/cds/internal/db"
 	cg "github.com/amadeusitgroup/cds/internal/global"
-	"github.com/amadeusitgroup/cds/internal/profile"
 	"github.com/mattn/go-isatty"
 )
 
@@ -39,24 +37,17 @@ func init() {
 		return
 	}
 
-	// Bootstrap local agent
-	if err = bootstrap.StartAgent(cg.KLocalhost); err != nil {
-		if _, ok := err.(bootstrap.StartOnRunError); ok {
-			err = nil
-			clog.Debug("Agent is already running")
-		} else {
-			err = cerr.AppendError("Failed to start local agent", err)
-		}
-		return
-	}
+	// // Bootstrap local agent
+	// if err = bootstrap.StartAgent(cg.KLocalhost); err != nil {
+	// 	if _, ok := err.(bootstrap.StartOnRunError); ok {
+	// 		err = nil
+	// 		clog.Debug("Agent is already running")
+	// 	} else {
+	// 		err = cerr.AppendError("Failed to start local agent", err)
+	// 	}
+	// 	return
+	// }
 
-	// Init profile from config-resolved reader
-	r, profileErr := config.ProfileReader()
-	if profileErr != nil {
-		clog.Warn("Failed to read profile source, skipping", profileErr)
-	} else {
-		profile.New(profile.WithReader(r))
-	}
 }
 
 type cmd interface {

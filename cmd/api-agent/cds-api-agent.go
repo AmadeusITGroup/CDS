@@ -14,8 +14,6 @@ import (
 	"github.com/amadeusitgroup/cds/internal/cerr"
 	"github.com/amadeusitgroup/cds/internal/clog"
 	"github.com/amadeusitgroup/cds/internal/config"
-	cg "github.com/amadeusitgroup/cds/internal/global"
-	"github.com/amadeusitgroup/cds/internal/host"
 	"github.com/amadeusitgroup/cds/internal/systemd"
 	cdstls "github.com/amadeusitgroup/cds/internal/tls"
 	"google.golang.org/grpc"
@@ -44,6 +42,7 @@ func main() {
 
 	if err != nil {
 		clog.Error(fmt.Sprintf("Failed to listen to port %d", *port), err)
+		return
 	}
 
 	agentTLSConfig, errTLS := cdstls.SetupTLSConfig(cdstls.TLSConfig{
@@ -168,14 +167,11 @@ func createAgentLogger() *slog.Logger {
 }
 
 func listener() (net.Listener, error) {
-
-	if systemd.New(systemd.WithTarget(host.New(host.WithName(cg.KLocalhost)))).In() {
-		// systemd use case
-		listeners, err := systemd.Listeners()
-		if err != nil {
-			return nil, cerr.AppendError("cannot retrieve listeners", err)
-		}
-
+	listeners, err := systemd.Listeners()
+	if err != nil {
+		return nil, cerr.AppendError("cannot retrieve systemd listeners", err)
+	}
+	if len(listeners) > 0 {
 		if len(listeners) != 1 {
 			return nil, cerr.NewError(fmt.Sprintf("expected 1 socket activation listener but got %d", len(listeners)))
 		}
@@ -188,7 +184,6 @@ func listener() (net.Listener, error) {
 		return lis, err
 	}
 
-	// bootstrap usecase
 	flag.Parse()
 	return net.Listen("tcp", fmt.Sprintf(":%d", *port))
 }

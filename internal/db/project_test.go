@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/stretchr/testify/assert"
 	"github.com/amadeusitgroup/cds/internal/bo"
+	"github.com/stretchr/testify/assert"
 )
 
 func Test_SetProjectHost(t *testing.T) {
@@ -449,6 +449,60 @@ func Test_AddContainerInfo(t *testing.T) {
 	}
 }
 
+func Test_UpsertProjectContainerAddsOrUpdatesOnlyNamedContainer(t *testing.T) {
+	tearDown := setupTest(t, data{projects: projects{Projects: []*project{{
+		Name: "Project 1",
+		Containers: []*containerInfo{
+			{Name: "target", Id: "old-id", State: bo.KContainerStatusExited.ToString(), PortSSH: 1000, RemoteUser: "old-user"},
+			{Name: "untouched", Id: "untouched-id", State: bo.KContainerStatusRunning.ToString(), PortSSH: 1001, RemoteUser: "keep-user"},
+		},
+	}}}})
+	defer tearDown()
+
+	err := UpsertProjectContainer("Project 1", bo.Container{
+		Id:             "new-id",
+		Name:           "target",
+		Status:         bo.KContainerStatusRunning,
+		ExpectedStatus: bo.KContainerStatusRunning,
+		RemoteUser:     "dev",
+		Pmapping:       bo.PortMapping{bo.KSSHPortMapping: 2222},
+	})
+	assert.NoError(t, err)
+
+	project, err := instance().d.getProject("Project 1")
+	assert.NoError(t, err)
+	if assert.Len(t, project.Containers, 2) {
+		target, err := project.getProjectContainer("target")
+		assert.NoError(t, err)
+		assert.Equal(t, "new-id", target.Id)
+		assert.Equal(t, bo.KContainerStatusRunning.ToString(), target.State)
+		assert.Equal(t, 2222, target.PortSSH)
+		assert.Equal(t, "dev", target.RemoteUser)
+
+		untouched, err := project.getProjectContainer("untouched")
+		assert.NoError(t, err)
+		assert.Equal(t, "untouched-id", untouched.Id)
+		assert.Equal(t, 1001, untouched.PortSSH)
+	}
+}
+
+func Test_RemoveProjectContainersRemovesOnlyNamedContainers(t *testing.T) {
+	tearDown := setupTest(t, data{projects: projects{Projects: []*project{{
+		Name: "Project 1",
+		Containers: []*containerInfo{
+			{Name: "keep-first"},
+			{Name: "remove-me"},
+			{Name: "keep-second"},
+		},
+	}}}})
+	defer tearDown()
+
+	err := RemoveProjectContainers("Project 1", []string{"remove-me", "missing"})
+	assert.NoError(t, err)
+
+	assert.Equal(t, []string{"keep-first", "keep-second"}, ProjectContainersName("Project 1"))
+}
+
 func Test_RemoveProject(t *testing.T) {
 	tests := []struct {
 		name        string
@@ -604,6 +658,15 @@ func Test_ProjectContainersName(t *testing.T) {
 			projectName:          "Project2",
 			bom:                  data{projects: projects{Projects: []*project{{Name: "Project1", Containers: []*containerInfo{{Name: "dummy"}, {Name: "dummy2"}, {Name: "dummy3"}}}}}},
 			wantedContainerNames: []string{},
+		},
+		{
+			name:        "Project with deleted containers",
+			projectName: "Project1",
+			bom: data{projects: projects{Projects: []*project{{Name: "Project1", Containers: []*containerInfo{
+				{Name: "running", State: bo.KContainerStatusRunning.ToString(), ExpectedState: bo.KContainerStatusRunning.ToString()},
+				{Name: "deleted", State: bo.KContainerStatusDeleted.ToString(), ExpectedState: bo.KContainerStatusDeleted.ToString()},
+			}}}}},
+			wantedContainerNames: []string{"running"},
 		},
 	}
 	for _, tt := range tests {

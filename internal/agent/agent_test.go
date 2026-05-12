@@ -6,35 +6,12 @@ import (
 	"testing"
 
 	"github.com/amadeusitgroup/cds/internal/api/v1/cdspb"
-	"github.com/amadeusitgroup/cds/internal/core"
 	cdstls "github.com/amadeusitgroup/cds/internal/tls"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 )
-
-func newMock() commandManager {
-	// add initialization here
-	return &mock{}
-}
-
-type mock struct {
-}
-
-func (m mock) Version() string {
-	return "99.99.99"
-}
-
-func (m mock) Space() map[string]core.Cmd {
-	// TODO Implement
-	return map[string]core.Cmd{}
-}
-
-func (m mock) Project() map[string]core.Cmd {
-	// TODO Implement
-	return map[string]core.Cmd{}
-}
 
 func TestAgent(t *testing.T) {
 	for usecase, fn := range map[string]func(t *testing.T, client cdspb.AgentInfoServiceClient, config *bom){
@@ -80,7 +57,7 @@ func setupTest(t *testing.T, fn func(*bom)) (client cdspb.AgentInfoServiceClient
 	agentCreds := credentials.NewTLS(agentTLSConfig)
 	require.NoError(t, err)
 
-	cfg = &bom{manager: newMock()}
+	cfg = &bom{}
 	if fn != nil {
 		fn(cfg)
 	}

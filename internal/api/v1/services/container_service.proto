@@ -12,6 +12,8 @@ import "internal/api/v1/container/execute_in_container_response.proto";
 import "internal/api/v1/container/execute_in_container_request.proto";
 import "internal/api/v1/container/rebuild_container_request.proto";
 import "internal/api/v1/container/rebuild_container_response.proto";
+import "internal/api/v1/container/rename_container_request.proto";
+import "internal/api/v1/container/rename_container_response.proto";
 import "internal/api/v1/container/delete_container_response.proto";
 import "internal/api/v1/container/get_container_response.proto";
 import "internal/api/v1/container/get_container_request.proto";
@@ -48,6 +50,8 @@ service ContainerService {
   // RebuildContainer rebuilds a previously deployed container from the config
   // and resources cached by the agent.
   rpc RebuildContainer(api.v1.container.RebuildContainerRequest) returns (api.v1.container.RebuildContainerResponse);
-}
 
+  // RenameContainer renames an existing container on the agent host.
+  rpc RenameContainer(api.v1.container.RenameContainerRequest) returns (api.v1.container.RenameContainerResponse);
+}
 

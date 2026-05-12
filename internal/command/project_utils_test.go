@@ -3,7 +3,10 @@ package command
 import (
 	"testing"
 
+	"github.com/amadeusitgroup/cds/internal/db"
+	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestValidateImageTagSyntax(t *testing.T) {
@@ -42,4 +45,27 @@ func TestIsValidProjectNameEmpty(t *testing.T) {
 	assert.False(t, valid)
 }
 
+func TestProjectNameFromArgsOrContextFallsBackToConfiguredDefaultProject(t *testing.T) {
+	setupDefaultProjectWithoutContext(t)
 
+	assert.Equal(t, db.KDefaultProjectName, getProjectNameFromArgsOrContext(nil))
+	require.NoError(t, validateProjectNameFromArgsOrContext(&cobra.Command{}, nil))
+}
+
+func TestGetTipContainerSSHIncludesCopyPasteCommand(t *testing.T) {
+	assert.Equal(t, "ssh default-app-host", getContainerSSHCommand("default-app-host"))
+	assert.Equal(t, "  To connect, run: ssh default-app-host", getTipContainerSSH("default-app-host"))
+}
+
+func setupDefaultProjectWithoutContext(t *testing.T) {
+	t.Helper()
+
+	db.RemoveProject(db.KDefaultProjectName)
+	require.NoError(t, db.FlushContext())
+	require.NoError(t, db.AddProjectUsingConfDir(db.KDefaultProjectName, t.TempDir()))
+	require.NoError(t, db.FlushContext())
+	t.Cleanup(func() {
+		db.RemoveProject(db.KDefaultProjectName)
+		_ = db.FlushContext()
+	})
+}

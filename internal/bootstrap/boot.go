@@ -1,50 +1,40 @@
 package bootstrap
 
 import (
-	"net"
+	"strings"
 
 	"github.com/amadeusitgroup/cds/internal/cerr"
 	"github.com/amadeusitgroup/cds/internal/clog"
-	"github.com/amadeusitgroup/cds/internal/config"
 	cg "github.com/amadeusitgroup/cds/internal/global"
 	"github.com/amadeusitgroup/cds/internal/host"
 	"github.com/amadeusitgroup/cds/internal/systemd"
 )
 
 func StartAgent(hostname string) error {
+	hostName := strings.TrimSpace(hostname)
+	if hostName == cg.EmptyStr {
+		hostName = cg.KLocalhost
+	}
+
 	// check if agent is already running
-	running, err := isAgentRunning(hostname)
+	running, address, err := isAgentRunning(hostName)
 	if err != nil {
-		return cerr.AppendErrorFmt("failed to check for agent running on %s", err, hostname)
+		return cerr.AppendErrorFmt("failed to check for agent running on %s", err, hostName)
 	}
 	if running {
+		if isLocalHost(hostName) {
+			if err := registerLocalAgent(address); err != nil {
+				return err
+			}
+		}
 		clog.Debug("Agent is already running")
 		return StartOnRunError{}
 	}
-	if hostname == cg.KLocalhost {
+	if isLocalHost(hostName) {
 		return fire()
 	}
-	return fireRemote(hostname)
+	return fireRemote(hostName)
 
-}
-
-func isAgentRunning(hostName string) (bool, error) {
-	server, err := config.AgentAddress(hostName)
-	if err != nil {
-		return false, cerr.AppendError("failed to resolve agent address", err)
-	}
-	if server == cg.EmptyStr {
-		return false, nil
-	}
-	conn, err := net.Dial("tcp", server)
-	if err != nil {
-		clog.Debug("Failed to connect to agent", err)
-		return false, nil
-	}
-	defer func() {
-		_ = conn.Close()
-	}()
-	return true, nil
 }
 
 func fireRemote(hostName string) error {

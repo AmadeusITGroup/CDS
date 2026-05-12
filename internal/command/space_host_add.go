@@ -9,8 +9,10 @@ import (
 
 	"github.com/amadeusitgroup/cds/internal/bootstrap"
 	"github.com/amadeusitgroup/cds/internal/cerr"
+	"github.com/amadeusitgroup/cds/internal/config"
 	cg "github.com/amadeusitgroup/cds/internal/global"
 	"github.com/amadeusitgroup/cds/internal/output"
+	cdstls "github.com/amadeusitgroup/cds/internal/tls"
 	"github.com/spf13/cobra"
 )
 
@@ -48,9 +50,10 @@ func (s *spcHostAdd) runE(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	// TODO: fix::bootstrap, There is a mix of responsibilities between the command and the bootstrap agent regarding host management and registration.
-	// Currently the bootstrap package registers the agent in the config. I believe it should be the responsibility of the command to manage the config entries,
-	// while the bootstrap package should focus on launching and managing the agent process.
+	if err := ensureAgentRegistered(args[0], hostName); err != nil {
+		return err
+	}
+
 	err = bootstrap.StartAgent(hostName)
 	alreadyRunning := false
 	if err != nil {
@@ -60,10 +63,6 @@ func (s *spcHostAdd) runE(cmd *cobra.Command, args []string) error {
 		alreadyRunning = true
 	}
 
-	// TODO: Persist or refresh the CLI host entry once bootstrap exposes the resolved endpoint and credentials again.
-	// TODO: Honor the full --target-server value during registration instead of only deriving the bootstrap hostname.
-	// TODO: Reintroduce local port selection once bootstrap accepts launch options directly.
-
 	message := fmt.Sprintf("Bootstrapped host %q", hostName)
 	if alreadyRunning {
 		message = fmt.Sprintf("Host %q is already running", hostName)
@@ -71,6 +70,38 @@ func (s *spcHostAdd) runE(cmd *cobra.Command, args []string) error {
 
 	o := output.FromContext(cmd.Context())
 	return output.Render(o, output.SimpleResult{Message: message})
+}
+
+func ensureAgentRegistered(targetServer, hostName string) error {
+	if _, err := config.AgentAddress(hostName); err == nil {
+		return nil
+	}
+
+	return config.CreateAgentInConfig(config.NewAgent(
+		config.WithTargetAddress(defaultAgentTargetAddress(targetServer, hostName)),
+		config.WithAgentTLS(config.NewTlssecret(
+			config.WithCA(cdstls.CAFilePath),
+			config.WithCert(cdstls.ClientCertFilePath),
+			config.WithKey(cdstls.ClientKeyFilePath),
+		)),
+	))
+}
+
+func defaultAgentTargetAddress(targetServer, hostName string) string {
+	normalizedTarget := strings.TrimSpace(targetServer)
+	if normalizedTarget == cg.EmptyStr || strings.HasPrefix(normalizedTarget, ":") {
+		return ":8087"
+	}
+	if strings.Contains(normalizedTarget, "://") {
+		return normalizedTarget
+	}
+	if _, _, err := net.SplitHostPort(normalizedTarget); err == nil {
+		return normalizedTarget
+	}
+	if hostName == cg.KLocalhost {
+		return ":8087"
+	}
+	return net.JoinHostPort(hostName, "8087")
 }
 
 func bootstrapHostName(targetServer string) (string, error) {

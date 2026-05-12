@@ -5,16 +5,13 @@ import (
 	"log/slog"
 
 	"github.com/amadeusitgroup/cds/internal/api/v1/cdspb"
-	"github.com/amadeusitgroup/cds/internal/clog"
-	"github.com/amadeusitgroup/cds/internal/core"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 )
 
+const defaultAgentVersion = "9.9.9"
+
 type bom struct {
-	manager commandManager
-	logger  *slog.Logger
+	logger *slog.Logger
 }
 
 func NewConfig(options ...func(*bom)) *bom {
@@ -32,68 +29,49 @@ func WithLogger(logger *slog.Logger) func(*bom) {
 	}
 }
 
-type commandManager interface {
-	Version() string
-	Space() map[string]core.Cmd
-	Project() map[string]core.Cmd
-}
-
-func defaultManager() commandManager {
-	return core.New()
-}
-
 func NewAgent(config *bom, opts ...grpc.ServerOption) (*grpc.Server, error) {
 	gsrv := grpc.NewServer(opts...)
-	config.manager = defaultManager()
-	srv, err := newgrpcServer(config)
-	if err != nil {
-		return nil, err
-	}
-	cdspb.RegisterAgentInfoServiceServer(gsrv, newAgentInfoServiceServer(srv))
-	cdspb.RegisterContainerServiceServer(gsrv, newContainerServiceServer(srv))
+	stagingDir := defaultArtifactStagingDir()
+	cdspb.RegisterAgentInfoServiceServer(gsrv, newAgentInfoServiceServer())
+	cdspb.RegisterContainerServiceServer(gsrv, newContainerServiceServer(stagingDir))
+	cdspb.RegisterArtifactServiceServer(gsrv, newArtifactServiceServer(stagingDir))
 	return gsrv, nil
 }
 
 func (s *agentInfoServiceServer) GetVersion(context.Context, *cdspb.GetVersionRequest) (*cdspb.GetVersionResponse, error) {
-	if 1 == 2 { // TODO: remove - it's just a showcase of how one can return error
-		return nil, status.Error(codes.NotFound, "dummy error")
-	}
-	return &cdspb.GetVersionResponse{Current: s.core.manager().Version()}, nil
-}
-
-type grpcServer struct {
-	b bom
-}
-
-func newgrpcServer(b *bom) (srv *grpcServer, err error) {
-	srv = &grpcServer{
-		b: *b,
-	}
-	return srv, nil
-}
-
-func (s *grpcServer) manager() commandManager {
-	if s.b.manager == nil {
-		clog.Warn("Agent server config was not initialized properly!")
-		s.b.manager = defaultManager()
-	}
-	return s.b.manager
+	return &cdspb.GetVersionResponse{Current: defaultAgentVersion}, nil
 }
 
 type agentInfoServiceServer struct {
 	cdspb.UnimplementedAgentInfoServiceServer
-	core *grpcServer
 }
 
-func newAgentInfoServiceServer(core *grpcServer) *agentInfoServiceServer {
-	return &agentInfoServiceServer{core: core}
+func newAgentInfoServiceServer() *agentInfoServiceServer {
+	return &agentInfoServiceServer{}
 }
 
 type containerServiceServer struct {
 	cdspb.UnimplementedContainerServiceServer
-	core *grpcServer
+	engineOps  ContainerOps
+	stagingDir string
 }
 
-func newContainerServiceServer(core *grpcServer) *containerServiceServer {
-	return &containerServiceServer{core: core}
+// NewContainerServiceWithOps creates a container gRPC service server that
+// delegates container engine calls to the provided ContainerOps implementation.
+// This is the primary entry point for tests that need to inject a fake engine.
+func NewContainerServiceWithOps(ops ContainerOps, stagingDir string) cdspb.ContainerServiceServer {
+	return &containerServiceServer{
+		engineOps:  ops,
+		stagingDir: stagingDir,
+	}
+}
+
+func newContainerServiceServer(stagingDir string) *containerServiceServer {
+	if stagingDir == "" {
+		stagingDir = defaultArtifactStagingDir()
+	}
+	return &containerServiceServer{
+		engineOps:  newDefaultContainerOps(),
+		stagingDir: stagingDir,
+	}
 }

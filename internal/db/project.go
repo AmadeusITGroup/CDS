@@ -91,20 +91,7 @@ func AddContainerInfo(projectName string, info bo.Container) error {
 			return
 		}
 
-		portMappings := info.PortMapping()
-		var port int
-		if val, ok := portMappings[bo.KSSHPortMapping]; ok {
-			port = val
-		}
-		cInfo := &containerInfo{
-			Id:            string(info.Id),
-			State:         bo.FContainerStatus(info.Status),
-			ExpectedState: bo.FContainerStatus(info.ExpectedStatus),
-			Name:          string(info.Name),
-			PortSSH:       port,
-			RemoteUser:    string(info.RemoteUser),
-		}
-		p.Containers = append(p.Containers, cInfo)
+		p.Containers = append(p.Containers, toContainerInfo(info))
 	}
 
 	if err := fn.update(projectName); err != nil {
@@ -112,6 +99,59 @@ func AddContainerInfo(projectName string, info bo.Container) error {
 	}
 
 	return nil
+}
+
+func UpsertProjectContainer(projectName string, info bo.Container) error {
+	var fn decorateProject = func(p *project) {
+		updated := toContainerInfo(info)
+		for index, container := range p.Containers {
+			if container.Name == updated.Name {
+				p.Containers[index] = updated
+				return
+			}
+		}
+		p.Containers = append(p.Containers, updated)
+	}
+
+	if err := fn.update(projectName); err != nil {
+		return cerr.AppendErrorFmt("Failed to update project %s container %s", err, projectName, info.Name)
+	}
+	return nil
+}
+
+func RemoveProjectContainers(projectName string, containerNames []string) error {
+	containerNamesSet := make(map[string]struct{}, len(containerNames))
+	for _, containerName := range containerNames {
+		containerNamesSet[containerName] = struct{}{}
+	}
+
+	var fn decorateProject = func(p *project) {
+		p.Containers = slices.DeleteFunc(p.Containers, func(container *containerInfo) bool {
+			_, ok := containerNamesSet[container.Name]
+			return ok
+		})
+	}
+
+	if err := fn.update(projectName); err != nil {
+		return cerr.AppendErrorFmt("Failed to remove project %s containers", err, projectName)
+	}
+	return nil
+}
+
+func toContainerInfo(info bo.Container) *containerInfo {
+	portMappings := info.PortMapping()
+	var port int
+	if val, ok := portMappings[bo.KSSHPortMapping]; ok {
+		port = val
+	}
+	return &containerInfo{
+		Id:            string(info.Id),
+		State:         bo.FContainerStatus(info.Status),
+		ExpectedState: bo.FContainerStatus(info.ExpectedStatus),
+		Name:          string(info.Name),
+		PortSSH:       port,
+		RemoteUser:    string(info.RemoteUser),
+	}
 }
 
 func SetProjectHost(projectName, hostName string) error {
@@ -273,6 +313,9 @@ func ProjectContainersName(projectName string) []string {
 	var fn visitProject = func(p project) any {
 		containers := []string{}
 		for _, container := range p.Containers {
+			if container.State == bo.KContainerStatusDeleted.ToString() || container.ExpectedState == bo.KContainerStatusDeleted.ToString() {
+				continue
+			}
 			containers = append(containers, container.Name)
 		}
 		return containers

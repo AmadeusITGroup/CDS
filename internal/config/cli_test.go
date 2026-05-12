@@ -68,6 +68,15 @@ func TestAgentAddressDoesNotFallbackToHardcodedLocalhostPort(t *testing.T) {
 	assert.Contains(t, err.Error(), `No agent found with hostname "localhost"`)
 }
 
+func TestAgentAddressIfRegisteredReturnsMissingWithoutError(t *testing.T) {
+	setupConfigTestFS(t)
+
+	address, found, err := AgentAddressIfRegistered("localhost")
+	require.NoError(t, err)
+	assert.False(t, found)
+	assert.Empty(t, address)
+}
+
 func TestAddAgentToConfigPersistsAgentsWithoutInit(t *testing.T) {
 	setupConfigTestFS(t)
 
@@ -131,4 +140,32 @@ func TestAgentCRUDHelpersWithoutInit(t *testing.T) {
 	agents, err = RegisteredAgents()
 	require.NoError(t, err)
 	assert.Empty(t, agents)
+}
+
+func TestUpsertAgentForHostInConfigReplacesExistingHostEntry(t *testing.T) {
+	setupConfigTestFS(t)
+
+	require.NoError(t, CreateAgentInConfig(NewAgent(
+		WithTargetAddress(":9091"),
+		WithAgentTLS(NewTlssecret(WithCA("/tmp/old-ca.pem"))),
+	)))
+
+	require.NoError(t, UpsertAgentForHostInConfig("localhost", NewAgent(
+		WithTargetAddress(":8087"),
+		WithAgentTLS(NewTlssecret(
+			WithCA("/tmp/ca.pem"),
+			WithCert("/tmp/client.pem"),
+			WithKey("/tmp/client-key.pem"),
+		)),
+	)))
+
+	agents, err := RegisteredAgents()
+	require.NoError(t, err)
+	require.Len(t, agents, 1)
+	assert.Equal(t, ":8087", agents[0].TargetSrv)
+	assert.Equal(t, "/tmp/ca.pem", agents[0].Certs.CA)
+
+	address, err := AgentAddress("localhost")
+	require.NoError(t, err)
+	assert.Equal(t, ":8087", address)
 }

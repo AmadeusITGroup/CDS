@@ -37,7 +37,7 @@ func isValidProjectName(projectName string) (bool, error) {
 func validateProjectNameFromArgsOrContext(cmd *cobra.Command, args []string) error {
 	var projectName string
 	if len(args) == 0 {
-		projectName = db.GetCurrentProject()
+		projectName = defaultProjectNameFromContext()
 		if len(projectName) == 0 {
 			clog.Info("Tip: You can list projects with 'cds project list' and set context using 'cds project use'")
 			return cerr.NewError("Could not identify project to run the command. No project is set!")
@@ -65,7 +65,17 @@ func getProjectNameFromArgsOrContext(args []string) string {
 	if len(args) == kNbArgsProjectNameOnly {
 		return args[0]
 	}
-	return db.GetCurrentProject()
+	return defaultProjectNameFromContext()
+}
+
+func defaultProjectNameFromContext() string {
+	if projectName := db.GetCurrentProject(); projectName != "" {
+		return projectName
+	}
+	if db.HasProject(db.KDefaultProjectName) {
+		return db.KDefaultProjectName
+	}
+	return ""
 }
 
 // validateImageTagSyntax checks whether the given image tag matches the expected regex format.
@@ -138,13 +148,12 @@ func getTipSsh(projectName string) string {
 	return fmt.Sprintf(`  (use "cds project ssh%s" to access your started container)`, extras)
 }
 
-// getTipStart returns a tip on how to start a project.
-func getTipStart(projectName string) string {
-	extras := ""
-	if !db.IsCurrentProject(projectName) {
-		extras = " " + projectName
-	}
-	return fmt.Sprintf(`  (use "cds project start%s" to start a container)`, extras)
+func getContainerSSHCommand(containerName string) string {
+	return fmt.Sprintf("ssh %s", containerName)
+}
+
+func getTipContainerSSH(containerName string) string {
+	return fmt.Sprintf("  To connect, run: %s", getContainerSSHCommand(containerName))
 }
 
 // getTipStartAndSsh returns a tip on how to start a project and then ssh into it.

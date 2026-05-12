@@ -3,7 +3,9 @@ package command
 import (
 	"testing"
 
+	"github.com/amadeusitgroup/cds/internal/db"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestProjectRunCheckMutualExclusiveness(t *testing.T) {
@@ -147,4 +149,15 @@ func TestProjectRunCheckCommandSemantic(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestProjectRunPreRunUsesConfiguredDefaultProject(t *testing.T) {
+	setupDefaultProjectWithoutContext(t)
+
+	pr := projectRun{}
+	cmd := pr.command()
+	require.NoError(t, pr.preRunE(cmd, nil))
+
+	assert.Equal(t, db.KDefaultProjectName, pr.projectName)
+	assert.Equal(t, "localhost", db.ProjectHostName(db.KDefaultProjectName))
 }
