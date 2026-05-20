@@ -1,6 +1,7 @@
 package bootstrap
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"net/url"
@@ -11,11 +12,14 @@ import (
 	"strings"
 	"time"
 
+	"github.com/amadeusitgroup/cds/internal/api/v1/cdspb"
 	"github.com/amadeusitgroup/cds/internal/cerr"
 	"github.com/amadeusitgroup/cds/internal/clog"
 	"github.com/amadeusitgroup/cds/internal/config"
 	cg "github.com/amadeusitgroup/cds/internal/global"
 	cdstls "github.com/amadeusitgroup/cds/internal/tls"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
 )
 
 const (
@@ -49,8 +53,8 @@ func fireLocalAgent(osName string) error {
 		}
 	}
 
-	if err := cdstls.BuildCerts(); err != nil {
-		return cerr.AppendError("Failed to build certs", err)
+	if err := ensureRuntimeCerts(); err != nil {
+		return err
 	}
 
 	server, err := startAgent()
@@ -66,6 +70,15 @@ func startAgent() (string, error) {
 	if err != nil {
 		return cg.EmptyStr, err
 	}
+	address, err := nextLocalAgentAddress()
+	if err != nil {
+		return cg.EmptyStr, err
+	}
+	port, err := agentPort(address)
+	if err != nil {
+		return cg.EmptyStr, err
+	}
+	agentCmd = agentCmd.withPort(port)
 
 	cmd := exec.Command(agentCmd.name, agentCmd.args...)
 	cmd.Dir = agentCmd.dir
@@ -84,10 +97,39 @@ func startAgent() (string, error) {
 	}()
 
 	clog.Debug(fmt.Sprintf("Agent started with pid: %d", cmd.Process.Pid))
-	if err := waitForAgent(localAgentAddress); err != nil {
+	if err := waitForHealthyAgent(address); err != nil {
 		return cg.EmptyStr, err
 	}
-	return localAgentAddress, nil
+	return address, nil
+}
+
+func (c agentCommand) withPort(port string) agentCommand {
+	args := make([]string, 0, len(c.args)+2)
+	args = append(args, c.args...)
+	args = append(args, "-port", port)
+	c.args = args
+	return c
+}
+
+func nextLocalAgentAddress() (string, error) {
+	listener, err := net.Listen("tcp", localAgentAddress)
+	if err == nil {
+		_ = listener.Close()
+		return localAgentAddress, nil
+	}
+
+	listener, err = net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return cg.EmptyStr, cerr.AppendError("Failed to allocate local agent port", err)
+	}
+	defer func() {
+		_ = listener.Close()
+	}()
+	tcpAddr, ok := listener.Addr().(*net.TCPAddr)
+	if !ok {
+		return cg.EmptyStr, cerr.NewError(fmt.Sprintf("unexpected local listener address %s", listener.Addr()))
+	}
+	return fmt.Sprintf(":%d", tcpAddr.Port), nil
 }
 
 func resolveAgentCommand() (agentCommand, error) {
@@ -149,30 +191,99 @@ func isAgentRunning(hostName string) (bool, string, error) {
 		address = localAgentAddress
 	}
 
-	conn, err := net.DialTimeout("tcp", address, time.Second)
+	tcpAddress, err := agentTCPAddress(address)
 	if err != nil {
-		clog.Debug(fmt.Sprintf("Agent is not listening at %s", address))
+		return false, address, err
+	}
+
+	conn, err := net.DialTimeout("tcp", tcpAddress, time.Second)
+	if err != nil {
+		clog.Debug(fmt.Sprintf("Agent is not listening at %s", tcpAddress))
 		return false, address, nil
 	}
 	defer func() {
 		_ = conn.Close()
 	}()
+	if err := verifyAgentHealth(address); err != nil {
+		clog.Warn(fmt.Sprintf("Agent is listening at %s but failed TLS verification; it will be repaired.", tcpAddress), err)
+		return false, address, nil
+	}
 	return true, address, nil
 }
 
-func waitForAgent(address string) error {
+func waitForHealthyAgent(address string) error {
 	deadline := time.Now().Add(localAgentStartDeadline)
+	var lastErr error
 	for {
-		conn, err := net.DialTimeout("tcp", address, time.Second)
-		if err == nil {
-			_ = conn.Close()
+		if err := verifyAgentHealth(address); err == nil {
 			return nil
+		} else {
+			lastErr = err
 		}
 		if time.Now().After(deadline) {
-			return cerr.AppendErrorFmt("agent did not start listening on %s", err, address)
+			return cerr.AppendErrorFmt("agent did not pass TLS verification on %s", lastErr, address)
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
+}
+
+func verifyAgentHealth(address string) error {
+	tcpAddress, err := agentTCPAddress(address)
+	if err != nil {
+		return err
+	}
+
+	target := agentTLSMaterialForAddress(address)
+	clientTLSConfig, err := cdstls.SetupTLSConfig(cdstls.TLSConfig{
+		CAFile:        target.caFile,
+		CertFile:      target.certFile,
+		KeyFile:       target.keyFile,
+		ServerAddress: cg.KLocalhost,
+	})
+	if err != nil {
+		return cerr.AppendError("Failed to setup agent TLS verification", err)
+	}
+
+	conn, err := grpc.NewClient(tcpAddress, grpc.WithTransportCredentials(credentials.NewTLS(clientTLSConfig)))
+	if err != nil {
+		return cerr.AppendError("Failed to create agent health client", err)
+	}
+	defer func() {
+		_ = conn.Close()
+	}()
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	_, err = cdspb.NewAgentInfoServiceClient(conn).GetVersion(ctx, &cdspb.GetVersionRequest{})
+	return err
+}
+
+type agentTLSFiles struct {
+	caFile   string
+	certFile string
+	keyFile  string
+}
+
+func agentTLSMaterialForAddress(address string) agentTLSFiles {
+	material := agentTLSFiles{
+		caFile:   cdstls.CAFilePath(),
+		certFile: cdstls.ClientCertFilePath(),
+		keyFile:  cdstls.ClientKeyFilePath(),
+	}
+	registeredAgent, err := config.RegisteredAgent(address)
+	if err != nil {
+		return material
+	}
+	if registeredAgent.Certs.CA != cg.EmptyStr {
+		material.caFile = registeredAgent.Certs.CA
+	}
+	if registeredAgent.Certs.Cert != cg.EmptyStr {
+		material.certFile = registeredAgent.Certs.Cert
+	}
+	if registeredAgent.Certs.Key != cg.EmptyStr {
+		material.keyFile = registeredAgent.Certs.Key
+	}
+	return material
 }
 
 func registerLocalAgent(address string) error {
@@ -185,9 +296,9 @@ func registerLocalAgent(address string) error {
 		config.WithTargetAddress(addr.String()),
 		config.WithAgentTLS(
 			config.NewTlssecret(
-				config.WithCA(cdstls.CAFilePath),
-				config.WithCert(cdstls.ClientCertFilePath),
-				config.WithKey(cdstls.ClientKeyFilePath),
+				config.WithCA(cdstls.CAFilePath()),
+				config.WithCert(cdstls.ClientCertFilePath()),
+				config.WithKey(cdstls.ClientKeyFilePath()),
 			),
 		),
 	)); err != nil {

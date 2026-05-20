@@ -11,6 +11,7 @@ import (
 	"syscall"
 
 	"github.com/amadeusitgroup/cds/internal/agent"
+	"github.com/amadeusitgroup/cds/internal/cenv"
 	"github.com/amadeusitgroup/cds/internal/cerr"
 	"github.com/amadeusitgroup/cds/internal/clog"
 	"github.com/amadeusitgroup/cds/internal/config"
@@ -23,6 +24,7 @@ import (
 var logger *slog.Logger
 
 func init() {
+	cenv.SetConfigDirForAgent()
 
 	logger = createAgentLogger()
 
@@ -46,9 +48,9 @@ func main() {
 	}
 
 	agentTLSConfig, errTLS := cdstls.SetupTLSConfig(cdstls.TLSConfig{
-		CertFile:      cdstls.AgentServerCertFilePath,
-		KeyFile:       cdstls.AgentServerKeyFilePath,
-		CAFile:        cdstls.CAFilePath,
+		CertFile:      cdstls.AgentServerCertFilePath(),
+		KeyFile:       cdstls.AgentServerKeyFilePath(),
+		CAFile:        cdstls.CAFilePath(),
 		ServerAddress: lis.Addr().String(),
 		Server:        true, // Setting Server attribute to true enable authentication of clients at server side. Mutual TLS authentication use case
 	})

@@ -39,8 +39,9 @@ func (v visitProject) get(projectName string) (any, error) {
 }
 
 func (d *data) getProject(projectName string) (*project, error) {
+	normalizedProjectName := normalizeProjectName(projectName)
 	for _, p := range d.Projects {
-		if p.Name == projectName {
+		if normalizeProjectName(p.Name) == normalizedProjectName {
 			return p, nil
 		}
 	}
@@ -48,14 +49,16 @@ func (d *data) getProject(projectName string) (*project, error) {
 }
 
 func (d *data) removeProjectFromList(projectName string) {
+	normalizedProjectName := normalizeProjectName(projectName)
 	d.Projects = slices.DeleteFunc(d.Projects, func(p *project) bool {
-		return p.Name == projectName
+		return normalizeProjectName(p.Name) == normalizedProjectName
 	})
 }
 
 func (project *project) getProjectContainer(containerName string) (*containerInfo, error) {
+	normalizedContainerName := strings.TrimSpace(containerName)
 	for _, container := range project.Containers {
-		if container.Name == containerName {
+		if strings.TrimSpace(container.Name) == normalizedContainerName {
 			return container, nil
 		}
 	}
@@ -86,12 +89,13 @@ func AddContainerInfo(projectName string, info bo.Container) error {
 			p.Containers = []*containerInfo{}
 		}
 
-		if slices.ContainsFunc(p.Containers, func(c *containerInfo) bool { return c.Name == string(info.Name) }) {
+		updated := toContainerInfo(info)
+		if slices.ContainsFunc(p.Containers, func(c *containerInfo) bool { return strings.TrimSpace(c.Name) == updated.Name }) {
 			clog.Warn(fmt.Sprintf("Container name %s already exists, skipping", info.Name))
 			return
 		}
 
-		p.Containers = append(p.Containers, toContainerInfo(info))
+		p.Containers = append(p.Containers, updated)
 	}
 
 	if err := fn.update(projectName); err != nil {
@@ -105,7 +109,7 @@ func UpsertProjectContainer(projectName string, info bo.Container) error {
 	var fn decorateProject = func(p *project) {
 		updated := toContainerInfo(info)
 		for index, container := range p.Containers {
-			if container.Name == updated.Name {
+			if strings.TrimSpace(container.Name) == updated.Name {
 				p.Containers[index] = updated
 				return
 			}
@@ -122,12 +126,12 @@ func UpsertProjectContainer(projectName string, info bo.Container) error {
 func RemoveProjectContainers(projectName string, containerNames []string) error {
 	containerNamesSet := make(map[string]struct{}, len(containerNames))
 	for _, containerName := range containerNames {
-		containerNamesSet[containerName] = struct{}{}
+		containerNamesSet[strings.TrimSpace(containerName)] = struct{}{}
 	}
 
 	var fn decorateProject = func(p *project) {
 		p.Containers = slices.DeleteFunc(p.Containers, func(container *containerInfo) bool {
-			_, ok := containerNamesSet[container.Name]
+			_, ok := containerNamesSet[strings.TrimSpace(container.Name)]
 			return ok
 		})
 	}
@@ -148,15 +152,15 @@ func toContainerInfo(info bo.Container) *containerInfo {
 		Id:            string(info.Id),
 		State:         bo.FContainerStatus(info.Status),
 		ExpectedState: bo.FContainerStatus(info.ExpectedStatus),
-		Name:          string(info.Name),
+		Name:          strings.TrimSpace(string(info.Name)),
 		PortSSH:       port,
-		RemoteUser:    string(info.RemoteUser),
+		RemoteUser:    strings.TrimSpace(string(info.RemoteUser)),
 	}
 }
 
 func SetProjectHost(projectName, hostName string) error {
 	var fn decorateProject = func(p *project) {
-		p.Host = strings.ToLower(hostName)
+		p.Host = normalizeHostName(hostName)
 	}
 	if err := fn.update(projectName); err != nil {
 		return cerr.AppendErrorFmt("Failed to update project %s", err, projectName)

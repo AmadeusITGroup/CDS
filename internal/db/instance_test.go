@@ -11,6 +11,7 @@ import (
 	"github.com/amadeusitgroup/cds/internal/source"
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // initTestSource sets up dbSrc pointing to testDBPath on the current mock FS.
@@ -257,4 +258,71 @@ func Test_Save(t *testing.T) {
 			assert.Equal(t, expectedContent, file)
 		})
 	}
+}
+
+func Test_SaveOmitsEmptyFields(t *testing.T) {
+	cos.Fs = afero.NewMemMapFs()
+	defer cos.SetRealFileSystem()
+	defer resetContent()
+
+	sStore = &store{d: data{
+		Context: context{ProjectContext: "test"},
+		projects: projects{Projects: []*project{{
+			Name:    "test",
+			ConfDir: "/config",
+			Host:    "localhost",
+			Containers: []*containerInfo{{
+				State:         "running",
+				ExpectedState: "running",
+				Name:          "test-container",
+				PortSSH:       2222,
+				RemoteUser:    "dev",
+			}},
+		}}},
+		hosts: hosts{Hosts: []*host{{
+			Name:     "localhost",
+			Projects: []string{"test"},
+			InUse:    true,
+		}}},
+	}}
+
+	initTestSource(t)
+	require.NoError(t, Save())
+
+	file, err := cos.ReadFile(testDBPath)
+	require.NoError(t, err)
+
+	assert.JSONEq(t, `{
+		"context": {
+			"project": "test"
+		},
+		"projects": [
+			{
+				"name": "test",
+				"confDir": "/config",
+				"host": "localhost",
+				"containers": [
+					{
+						"status": "running",
+						"expectedStatus": "running",
+						"name": "test-container",
+						"portSSH": 2222,
+						"remoteUser": "dev"
+					}
+				]
+			}
+		],
+		"hosts": [
+			{
+				"name": "localhost",
+				"projects": ["test"],
+				"inUse": true
+			}
+		]
+	}`, string(file))
+	assert.NotContains(t, string(file), `"flavour"`)
+	assert.NotContains(t, string(file), `"srcRepo"`)
+	assert.NotContains(t, string(file), `"orchestration"`)
+	assert.NotContains(t, string(file), `"registries"`)
+	assert.NotContains(t, string(file), `"id"`)
 }

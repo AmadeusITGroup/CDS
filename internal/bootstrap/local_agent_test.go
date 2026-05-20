@@ -2,11 +2,14 @@ package bootstrap
 
 import (
 	"errors"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"testing"
 
+	"github.com/amadeusitgroup/cds/internal/cenv"
+	"github.com/amadeusitgroup/cds/internal/config"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -66,6 +69,45 @@ func TestResolveAgentCommandFallsBackToGoRunFromRepository(t *testing.T) {
 	assert.Equal(t, "/usr/bin/go", cmd.name)
 	assert.Equal(t, []string{"run", "./cmd/api-agent/cds-api-agent.go"}, cmd.args)
 	assert.Equal(t, repoDir, cmd.dir)
+}
+
+func TestAgentCommandWithPortAppendsPortFlag(t *testing.T) {
+	cmd := agentCommand{name: "go", args: []string{"run", "./cmd/api-agent/cds-api-agent.go"}}
+
+	withPort := cmd.withPort("9091")
+
+	assert.Equal(t, []string{"run", "./cmd/api-agent/cds-api-agent.go"}, cmd.args)
+	assert.Equal(t, []string{"run", "./cmd/api-agent/cds-api-agent.go", "-port", "9091"}, withPort.args)
+}
+
+func TestIsAgentRunningRejectsTCPOnlyListener(t *testing.T) {
+	configDir := t.TempDir()
+	t.Setenv("CDS_CONFIG_PATH", configDir)
+	cenv.SetConfigDirForClient()
+	t.Cleanup(cenv.SetConfigDirForClient)
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	defer func() {
+		_ = listener.Close()
+	}()
+
+	missingCertDir := filepath.Join(configDir, "missing-certs")
+	address := listener.Addr().String()
+	require.NoError(t, config.UpsertAgentForHostInConfig("127.0.0.1", config.NewAgent(
+		config.WithTargetAddress(address),
+		config.WithAgentTLS(config.NewTlssecret(
+			config.WithCA(filepath.Join(missingCertDir, "ca.pem")),
+			config.WithCert(filepath.Join(missingCertDir, "client.pem")),
+			config.WithKey(filepath.Join(missingCertDir, "client-key.pem")),
+		)),
+	)))
+
+	running, resolvedAddress, err := isAgentRunning("127.0.0.1")
+
+	require.NoError(t, err)
+	assert.False(t, running)
+	assert.Equal(t, address, resolvedAddress)
 }
 
 func TestIsLocalHostRecognizesLocalTargets(t *testing.T) {

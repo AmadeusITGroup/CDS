@@ -80,9 +80,9 @@ func ensureAgentRegistered(targetServer, hostName string) error {
 	return config.CreateAgentInConfig(config.NewAgent(
 		config.WithTargetAddress(defaultAgentTargetAddress(targetServer, hostName)),
 		config.WithAgentTLS(config.NewTlssecret(
-			config.WithCA(cdstls.CAFilePath),
-			config.WithCert(cdstls.ClientCertFilePath),
-			config.WithKey(cdstls.ClientKeyFilePath),
+			config.WithCA(cdstls.CAFilePath()),
+			config.WithCert(cdstls.ClientCertFilePath()),
+			config.WithKey(cdstls.ClientKeyFilePath()),
 		)),
 	))
 }

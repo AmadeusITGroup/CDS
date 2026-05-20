@@ -87,6 +87,7 @@ func saveDBContent() error {
 	instance().Lock()
 	defer instance().Unlock()
 
+	instance().d.normalize()
 	data, jsonErr := json.MarshalIndent(instance().d, "", "  ")
 	if jsonErr != nil {
 		return cerr.AppendError("Failed serialize configuration", jsonErr)

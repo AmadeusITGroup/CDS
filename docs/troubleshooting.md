@@ -63,15 +63,16 @@ Symptoms:
 Common causes:
 
 - CLI and agent are using different CA files;
-- certs were copied to `.xcds-agent/certs` while the manually started agent is
-  using `.xcds/certs` under its `CDS_CONFIG_PATH`;
+- certs were copied to `.xcds/certs` on the agent host instead of the agent's
+  `.xcds-agent/certs` directory under its `CDS_CONFIG_PATH`;
 - certs were regenerated locally after the remote agent was started.
 
 Fix:
 
 1. Stop the agent.
-2. Copy the active CLI certs from `$CDS_CONFIG_PATH/.xcds/certs` to the cert
-   directory used by the agent's `CDS_CONFIG_PATH`.
+2. Regenerate certificates with `make gencert`, or copy the active agent certs
+   from `$CDS_CONFIG_PATH/.xcds-agent/certs` to the same `.xcds-agent/certs`
+   directory under the agent host's `CDS_CONFIG_PATH`.
 3. Restart the agent.
 4. Run `./cds space host get HOST`.
 
@@ -185,4 +186,3 @@ ssh "$REMOTE_HOST" 'lsof -tiTCP:8087 -sTCP:LISTEN || true'
 ssh "$REMOTE_HOST" 'podman ps -a --format "{{.Names}} {{.Status}}" || true'
 ssh "$REMOTE_HOST" 'rm -rf ~/cds-remote-validation'
 ```
-

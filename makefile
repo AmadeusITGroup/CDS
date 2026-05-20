@@ -121,7 +121,7 @@ scaffold: \
 
 init:
 	@echo "$(ECHO_BEFORE)Creating certs directory$(ECHO_AFTER)"
-	mkdir -p $(TEST_FOLDER) $(CDS_CONFIG_PATH)/.xcds/certs
+	mkdir -p $(TEST_FOLDER) $(CDS_CONFIG_PATH)/.xcds/certs $(CDS_CONFIG_PATH)/.xcds-agent/certs
 
 gencert: init install-cfssl
 	@echo "$(ECHO_BEFORE)Generating certificates$(ECHO_AFTER)"
@@ -139,7 +139,11 @@ gencert: init install-cfssl
 		-config=$(TEST_FOLDER)ca-config.json \
 		-profile=client \
 		$(TEST_FOLDER)client-csr.json | cfssljson -bare client
-	mv *.pem *.csr $(CDS_CONFIG_PATH)/.xcds/certs
+	rm -f $(CDS_CONFIG_PATH)/.xcds/certs/*.pem $(CDS_CONFIG_PATH)/.xcds/certs/*.csr $(CDS_CONFIG_PATH)/.xcds-agent/certs/*.pem $(CDS_CONFIG_PATH)/.xcds-agent/certs/*.csr
+	cp ca.pem client.pem client-key.pem $(CDS_CONFIG_PATH)/.xcds/certs
+	cp ca.pem agent-srv.pem agent-srv-key.pem $(CDS_CONFIG_PATH)/.xcds-agent/certs
+	rm -rf $(CDS_CONFIG_PATH)/.xcds/certsjson $(CDS_CONFIG_PATH)/.xcds-agent/certsjson
+	rm -f *.pem *.csr
 
 go-tidy: build-pb
 	@echo "$(ECHO_BEFORE)Executing go mod tidy$(ECHO_AFTER)"
@@ -173,11 +177,11 @@ install-protobuf-tools:
 
 run-api-agent: go-tidy
 	@echo "$(ECHO_BEFORE2)Running cds api server$(ECHO_AFTER)"
-	go run ./cmd/api-agent/cds-api-agent.go start
+	CDS_CONFIG_PATH=$(CDS_CONFIG_PATH) go run ./cmd/api-agent/cds-api-agent.go start
 
 run-client: go-tidy
 	@echo "$(ECHO_BEFORE2)Running cds CLI$(ECHO_AFTER)"
-	go run ./cmd/client/cds.go
+	CDS_CONFIG_PATH=$(CDS_CONFIG_PATH) go run ./cmd/client/cds.go
 
 run-metrics-analyzer: go-tidy
 	@echo "$(ECHO_BEFORE2)Running metrics analyzer$(ECHO_AFTER)"

@@ -3,6 +3,7 @@ package command
 import (
 	"testing"
 
+	"github.com/amadeusitgroup/cds/internal/cenv"
 	"github.com/amadeusitgroup/cds/internal/config"
 	"github.com/amadeusitgroup/cds/internal/cos"
 	cg "github.com/amadeusitgroup/cds/internal/global"
@@ -63,9 +64,9 @@ func TestGetAgentTargetFallsBackToDefaultCertPaths(t *testing.T) {
 
 	target, err := getAgentTarget(cg.KLocalhost)
 	require.NoError(t, err)
-	assert.Equal(t, cdstls.CAFilePath, target.caFile)
-	assert.Equal(t, cdstls.ClientCertFilePath, target.certFile)
-	assert.Equal(t, cdstls.ClientKeyFilePath, target.keyFile)
+	assert.Equal(t, cdstls.CAFilePath(), target.caFile)
+	assert.Equal(t, cdstls.ClientCertFilePath(), target.certFile)
+	assert.Equal(t, cdstls.ClientKeyFilePath(), target.keyFile)
 	assert.Equal(t, cg.KLocalhost, target.serverName)
 }
 
@@ -93,8 +94,10 @@ func setupCommandConfigTestFS(t *testing.T) {
 	t.Helper()
 
 	cos.SetMockedFileSystem()
+	cenv.SetConfigDirForClient()
 	t.Setenv("CDS_CONFIG_PATH", "/tmp/testconfig")
 	t.Cleanup(func() {
+		cenv.SetConfigDirForClient()
 		cos.SetRealFileSystem()
 	})
 }

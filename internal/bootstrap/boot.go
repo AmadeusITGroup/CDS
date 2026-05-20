@@ -6,8 +6,6 @@ import (
 	"github.com/amadeusitgroup/cds/internal/cerr"
 	"github.com/amadeusitgroup/cds/internal/clog"
 	cg "github.com/amadeusitgroup/cds/internal/global"
-	"github.com/amadeusitgroup/cds/internal/host"
-	"github.com/amadeusitgroup/cds/internal/systemd"
 )
 
 func StartAgent(hostname string) error {
@@ -38,11 +36,7 @@ func StartAgent(hostname string) error {
 }
 
 func fireRemote(hostName string) error {
-	sysd := systemd.New(systemd.WithTarget(host.New(host.WithName(hostName))))
-	if sysd.In() {
-		return sysd.StartService()
-	}
-	return nil
+	return startRemoteAgent(hostName)
 }
 
 /************************************************************/

@@ -2,6 +2,8 @@ package agent
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/amadeusitgroup/cds/internal/api/v1/cdspb"
@@ -318,6 +320,43 @@ func TestDeleteContainer(t *testing.T) {
 			assert.Equal(t, tc.name, tc.ops.lastDeleted)
 		})
 	}
+}
+
+func TestDeleteContainerRemovesProjectStaging(t *testing.T) {
+	stagingDir := t.TempDir()
+	projectDir := filepath.Join(stagingDir, "project-a")
+	require.NoError(t, os.MkdirAll(projectDir, 0700))
+	require.NoError(t, os.WriteFile(filepath.Join(projectDir, "artifact.txt"), []byte("staged"), 0600))
+
+	ops := &mockContainerOps{}
+	svc := &containerServiceServer{
+		engineOps:  ops,
+		stagingDir: stagingDir,
+	}
+
+	resp, err := svc.DeleteContainer(context.Background(), &cdspb.DeleteContainerRequest{
+		ContainerName: "container-a",
+		ProjectName:   "project-a",
+	})
+	require.NoError(t, err)
+	assert.Contains(t, resp.GetOutput(), "container-a")
+	assert.Equal(t, "container-a", ops.lastDeleted)
+
+	_, err = os.Stat(projectDir)
+	assert.True(t, os.IsNotExist(err))
+}
+
+func TestDeleteContainerRejectsInvalidProjectBeforeDeleting(t *testing.T) {
+	ops := &mockContainerOps{}
+	svc := newTestContainerService(ops)
+
+	_, err := svc.DeleteContainer(context.Background(), &cdspb.DeleteContainerRequest{
+		ContainerName: "container-a",
+		ProjectName:   "../project-a",
+	})
+	require.Error(t, err)
+	assert.Equal(t, codes.InvalidArgument, status.Code(err))
+	assert.Empty(t, ops.lastDeleted)
 }
 
 func TestRenameContainer(t *testing.T) {

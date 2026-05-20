@@ -22,8 +22,17 @@ func defaultArtifactStagingDir() string {
 	return filepath.Join(cenv.CacheDir(), stagingDirName)
 }
 
-func resolveProjectArtifact(stagingDir, projectName, identifier string) (stagedArtifact, error) {
+func projectStagingRoot(stagingDir, projectName string) (string, error) {
 	if err := validateAgentName("project_name", projectName); err != nil {
+		return "", err
+	}
+
+	return filepath.Join(stagingDir, projectName), nil
+}
+
+func resolveProjectArtifact(stagingDir, projectName, identifier string) (stagedArtifact, error) {
+	root, err := projectStagingRoot(stagingDir, projectName)
+	if err != nil {
 		return stagedArtifact{}, err
 	}
 
@@ -32,7 +41,6 @@ func resolveProjectArtifact(stagingDir, projectName, identifier string) (stagedA
 		return stagedArtifact{}, err
 	}
 
-	root := filepath.Join(stagingDir, projectName)
 	segments := strings.Split(normalized, "/")
 	resolvedPath := filepath.Join(append([]string{root}, segments...)...)
 

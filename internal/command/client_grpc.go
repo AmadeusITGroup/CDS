@@ -123,13 +123,13 @@ func getAgentTarget(hostName string) (agentTarget, error) {
 		serverName: agentServerName(addr),
 	}
 	if target.caFile == cg.EmptyStr {
-		target.caFile = cdstls.CAFilePath
+		target.caFile = cdstls.CAFilePath()
 	}
 	if target.certFile == cg.EmptyStr {
-		target.certFile = cdstls.ClientCertFilePath
+		target.certFile = cdstls.ClientCertFilePath()
 	}
 	if target.keyFile == cg.EmptyStr {
-		target.keyFile = cdstls.ClientKeyFilePath
+		target.keyFile = cdstls.ClientKeyFilePath()
 	}
 	return target, nil
 }

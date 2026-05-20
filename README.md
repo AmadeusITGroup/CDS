@@ -184,8 +184,9 @@ cds version
 
 ### Configuration
 
-CDS CLI configuration is stored in `~/.xcds/` by default. Agent configuration is
-stored in `~/.xcds-agent/` by default. You can customize settings through:
+CDS CLI configuration is stored in `~/.xcds/` by default. Agent configuration
+and agent-managed cache are stored in `~/.xcds-agent/` by default. You can
+customize settings through:
 - Configuration files
 - Environment variables
 - Command-line flags
@@ -202,11 +203,13 @@ make scaffold
 Generate and manage TLS certificates for secure communication:
 
 ```bash
+CFG="${CDS_CONFIG_PATH:-$HOME/cdstmp}"
+
 # Verify certificates
-openssl verify -CAfile ca_cert.pem server_cert.pem
+openssl verify -CAfile "$CFG/.xcds/certs/ca.pem" "$CFG/.xcds-agent/certs/agent-srv.pem"
 
 # Inspect certificate details
-openssl x509 -in server_cert.pem -text -noout
+openssl x509 -in "$CFG/.xcds-agent/certs/agent-srv.pem" -text -noout
 ```
 
 ---

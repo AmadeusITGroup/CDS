@@ -1273,6 +1273,9 @@ func (ce *ContainersEngine) preServer() error {
 				continue
 			}
 			if err := ce.executeFileOnHost(tmpPath); err != nil {
+				if removeErr := cenv.RemoveTempFile(tmpPath); removeErr != nil {
+					clog.Warn(fmt.Sprintf("Failed to remove temporary file '%v': %v\n", tmpPath, removeErr))
+				}
 				clog.Warn(fmt.Sprintf("Failed to append file '%v': %v\n", relPath, err))
 			}
 		}
@@ -1383,6 +1386,11 @@ func (ce *ContainersEngine) prepareImage() (string, error) {
 		if err != nil {
 			return "", cerr.AppendError("Failed to create temporary dockerfile", err)
 		}
+		defer func() {
+			if err := cenv.RemoveTempFile(dockerFilePath); err != nil {
+				clog.Warn(fmt.Sprintf("Failed to remove temporary dockerfile '%v': %v\n", dockerFilePath, err))
+			}
+		}()
 		// Image names need to be lowercase
 		imageName := strings.ToLower(ce.getContainerName())
 		if err := buildDockerfile(dockerFilePath, imageName); err != nil {
@@ -1729,6 +1737,9 @@ func (ce *ContainersEngine) executeFeatureOnContainer(f features.ResolvedFeature
 			continue
 		}
 		if err := ce.executeScriptOnContainerFromHost(tmpPath, f.OnContainer.As); err != nil {
+			if removeErr := cenv.RemoveTempFile(tmpPath); removeErr != nil {
+				executionErrs = append(executionErrs, cerr.AppendErrorFmt("Failed to remove temporary file %q", removeErr, tmpPath))
+			}
 			executionErrs = append(executionErrs, cerr.AppendErrorFmt("Failed to execute file %q", err, relPath))
 		}
 	}
@@ -1744,7 +1755,8 @@ func (ce *ContainersEngine) expand(a interface{}) (string, error) {
 }
 
 func (ce *ContainersEngine) executeFileOnHost(fileLocationForExec string) error {
-	cmd := fmt.Sprintf("bash %v; exit $rc", fileLocationForExec)
+	quotedPath := shellSingleQuote(fileLocationForExec)
+	cmd := fmt.Sprintf("bash %s; rc=$?; rm -f %s; exit $rc", quotedPath, quotedPath)
 	rEvent := &RunEvent{
 		cmd: cmd,
 
@@ -1766,13 +1778,15 @@ func (ce *ContainersEngine) executeScriptOnContainerFromHost(pathOnHost, user st
 		execCmdUsr = KRootUsr
 	}
 
+	quotedPath := shellSingleQuote(pathOnHost)
 	cmd := fmt.Sprintf(
-		"%v %v -u %v -i %v /bin/sh -l < %v",
+		"%v %v -u %v -i %v /bin/sh -l < %v; rc=$?; rm -f %v; exit $rc",
 		engineName(ce.name),
 		formatActionName(engineAction(K_ACTION_EXE)),
 		execCmdUsr,
 		ce.getContainerName(),
-		pathOnHost,
+		quotedPath,
+		quotedPath,
 	)
 	rEvent := &RunEvent{
 		cmd: cmd,

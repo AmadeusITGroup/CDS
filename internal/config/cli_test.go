@@ -142,6 +142,40 @@ func TestAgentCRUDHelpersWithoutInit(t *testing.T) {
 	assert.Empty(t, agents)
 }
 
+func TestRegisteredAgentsDeduplicatesSameHostEntries(t *testing.T) {
+	setupConfigTestFS(t)
+
+	require.NoError(t, cos.Fs.MkdirAll("/tmp/testconfig/.xcds", 0755))
+	require.NoError(t, cos.WriteFile("/tmp/testconfig/.xcds/cliconfig.yaml", []byte(`apiVersion: v1
+agents:
+  - targetServer: localhost:8087
+    tls:
+      ca: /tmp/old-ca.pem
+  - targetServer: :9091
+    tls:
+      ca: /tmp/new-ca.pem
+  - targetServer: https://remote.example.com:8443
+  - targetServer: REMOTE.example.com:9443
+`), 0600))
+
+	agents, err := RegisteredAgents()
+	require.NoError(t, err)
+	require.Len(t, agents, 2)
+	assert.Equal(t, ":9091", agents[0].TargetSrv)
+	assert.Equal(t, "/tmp/new-ca.pem", agents[0].Certs.CA)
+	assert.Equal(t, "remote.example.com:9443", agents[1].TargetSrv)
+}
+
+func TestCreateAgentInConfigRejectsSameHostVariant(t *testing.T) {
+	setupConfigTestFS(t)
+
+	require.NoError(t, CreateAgentInConfig(NewAgent(WithTargetAddress("localhost:8087"))))
+
+	err := CreateAgentInConfig(NewAgent(WithTargetAddress(":9091")))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `agent host "localhost" already exists`)
+}
+
 func TestUpsertAgentForHostInConfigReplacesExistingHostEntry(t *testing.T) {
 	setupConfigTestFS(t)
 

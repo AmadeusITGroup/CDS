@@ -40,6 +40,12 @@ func updateCLIAgentData(f func(*cliAgentData) error) error {
 	return writeCLIAgentData(data)
 }
 
+func normalizeCLIAgentConfig() error {
+	return updateCLIAgentData(func(*cliAgentData) error {
+		return nil
+	})
+}
+
 // AddAgentToConfig appends an agent entry to the CLI config and persists the change back to the stored source.
 func AddAgentToConfig(a agent) error {
 	return updateCLIAgentData(func(c *cliAgentData) error {
@@ -80,9 +86,13 @@ func CreateAgentInConfig(a agent) error {
 	if err != nil {
 		return err
 	}
+	normalizedHost := targetServerHostname(normalizedAgent.TargetSrv)
 	return updateCLIAgentData(func(c *cliAgentData) error {
 		if findAgentIndex(c.Agents, normalizedAgent.TargetSrv) >= 0 {
 			return cerr.NewError(fmt.Sprintf("agent %q already exists", normalizedAgent.TargetSrv))
+		}
+		if findAgentHostIndex(c.Agents, normalizedHost) >= 0 {
+			return cerr.NewError(fmt.Sprintf("agent host %q already exists", normalizedHost))
 		}
 
 		c.Agents = append(c.Agents, normalizedAgent)
@@ -131,6 +141,10 @@ func UpdateAgentInConfig(targetServer string, updated agent) error {
 
 		if duplicateIndex := findAgentIndex(c.Agents, normalizedAgent.TargetSrv); duplicateIndex >= 0 && duplicateIndex != index {
 			return cerr.NewError(fmt.Sprintf("agent %q already exists", normalizedAgent.TargetSrv))
+		}
+		normalizedHost := targetServerHostname(normalizedAgent.TargetSrv)
+		if duplicateHostIndex := findAgentHostIndex(c.Agents, normalizedHost); duplicateHostIndex >= 0 && duplicateHostIndex != index {
+			return cerr.NewError(fmt.Sprintf("agent host %q already exists", normalizedHost))
 		}
 
 		c.Agents[index] = normalizedAgent
@@ -204,7 +218,7 @@ func readCLIAgentData() (cliAgentData, error) {
 	if d.Agents == nil {
 		d.Agents = []agent{}
 	}
-	return d, nil
+	return sanitizeCLIAgentData(d)
 }
 
 func writeCLIAgentData(d cliAgentData) error {
@@ -212,14 +226,42 @@ func writeCLIAgentData(d cliAgentData) error {
 	if err != nil {
 		return err
 	}
-	if d.APIVersion == cg.EmptyStr {
-		d.APIVersion = "v1"
+	d, err = sanitizeCLIAgentData(d)
+	if err != nil {
+		return err
 	}
 	out, err := yaml.Marshal(d)
 	if err != nil {
 		return cerr.AppendError("failed to serialize CLI agent config", err)
 	}
 	return src.Write(bytes.NewReader(out), cg.KPermFile)
+}
+
+func sanitizeCLIAgentData(d cliAgentData) (cliAgentData, error) {
+	if d.APIVersion == cg.EmptyStr {
+		d.APIVersion = "v1"
+	}
+	if d.Agents == nil {
+		d.Agents = []agent{}
+	}
+
+	agents := make([]agent, 0, len(d.Agents))
+	indexByHost := make(map[string]int, len(d.Agents))
+	for _, a := range d.Agents {
+		normalizedAgent, err := normalizeAgent(a)
+		if err != nil {
+			return cliAgentData{}, cerr.AppendError("failed to normalize CLI agent config", err)
+		}
+		host := targetServerHostname(normalizedAgent.TargetSrv)
+		if index, ok := indexByHost[host]; ok {
+			agents[index] = normalizedAgent
+			continue
+		}
+		indexByHost[host] = len(agents)
+		agents = append(agents, normalizedAgent)
+	}
+	d.Agents = agents
+	return d, nil
 }
 
 type agent struct {
@@ -268,11 +310,28 @@ func normalizeTargetServer(targetServer string) (string, error) {
 	if normalized == cg.EmptyStr {
 		return cg.EmptyStr, cerr.NewError("target server is required")
 	}
-	return normalized, nil
+	if strings.Contains(normalized, "://") {
+		parsedURL, err := url.Parse(normalized)
+		if err == nil && parsedURL.Hostname() != cg.EmptyStr {
+			parsedURL.Host = strings.ToLower(parsedURL.Host)
+			return parsedURL.String(), nil
+		}
+	}
+	if host, port, err := net.SplitHostPort(normalized); err == nil {
+		if host == cg.EmptyStr {
+			return normalized, nil
+		}
+		return net.JoinHostPort(strings.ToLower(host), port), nil
+	}
+	return strings.ToLower(normalized), nil
 }
 
 func findAgentIndex(agents []agent, targetServer string) int {
 	return slices.IndexFunc(agents, func(a agent) bool { return strings.TrimSpace(a.TargetSrv) == targetServer })
+}
+
+func findAgentHostIndex(agents []agent, hostname string) int {
+	return slices.IndexFunc(agents, func(a agent) bool { return targetServerHostname(a.TargetSrv) == hostname })
 }
 
 func targetServerHostname(targetServer string) string {
@@ -286,16 +345,16 @@ func targetServerHostname(targetServer string) string {
 	if strings.Contains(normalized, "://") {
 		parsedURL, err := url.Parse(normalized)
 		if err == nil && parsedURL.Hostname() != cg.EmptyStr {
-			return parsedURL.Hostname()
+			return strings.ToLower(parsedURL.Hostname())
 		}
 	}
 	if host, _, err := net.SplitHostPort(normalized); err == nil {
 		if host == cg.EmptyStr {
 			return cg.KLocalhost
 		}
-		return host
+		return strings.ToLower(host)
 	}
-	return normalized
+	return strings.ToLower(normalized)
 }
 
 func normalizeHostName(hostname string) string {

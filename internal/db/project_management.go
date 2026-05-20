@@ -40,6 +40,10 @@ func ListProjects() []string {
 func AddProjectUsingConfDir(projectName, confDir string) error {
 	instance().Lock()
 	defer instance().Unlock()
+	projectName = normalizeProjectName(projectName)
+	if projectName == "" {
+		return cerr.NewError("Project name cannot be empty")
+	}
 
 	// Verify project doesn't already exist
 	if _, err := instance().d.getProject(projectName); err == nil {
@@ -59,6 +63,10 @@ func AddProjectUsingConfDir(projectName, confDir string) error {
 func AddProjectUsingFlavour(projectName, flavourName, overrideDir string) error {
 	instance().Lock()
 	defer instance().Unlock()
+	projectName = normalizeProjectName(projectName)
+	if projectName == "" {
+		return cerr.NewError("Project name cannot be empty")
+	}
 
 	// Verify project doesn't already exist
 	if _, err := instance().d.getProject(projectName); err == nil {

@@ -50,10 +50,8 @@ type artifactCandidate struct {
 
 func withProjectAgent(projectName string, callback func(agentServices, context.Context) error) error {
 	hostName := projectAgentHost(projectName)
-	if hostName == cg.KLocalhost {
-		if err := ensureLocalAgentStarted(); err != nil {
-			return err
-		}
+	if err := ensureAgentStarted(hostName); err != nil {
+		return err
 	}
 	return stubCallback(callback).executeForHost(hostName)
 }
@@ -66,8 +64,8 @@ func projectAgentHost(projectName string) string {
 	return addressHost(hostName)
 }
 
-func ensureLocalAgentStarted() error {
-	if err := bootstrap.StartAgent(cg.KLocalhost); err != nil {
+func ensureAgentStarted(hostName string) error {
+	if err := bootstrap.StartAgent(hostName); err != nil {
 		if !errors.As(err, &bootstrap.StartOnRunError{}) {
 			return err
 		}
@@ -501,7 +499,7 @@ func clearProjectContainersOnAgent(ctx context.Context, client cdspb.ContainerSe
 			continue
 		}
 		deleteCandidates = append(deleteCandidates, containerName)
-		if _, err := client.DeleteContainer(ctx, &cdspb.DeleteContainerRequest{ContainerName: containerName}); err != nil {
+		if _, err := client.DeleteContainer(ctx, &cdspb.DeleteContainerRequest{ContainerName: containerName, ProjectName: projectName}); err != nil {
 			deleteErrors = append(deleteErrors, cerr.AppendErrorFmt("Failed to delete container %s", err, containerName))
 		}
 	}

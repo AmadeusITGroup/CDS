@@ -37,10 +37,19 @@ type Manifest struct {
 }
 
 func InitCLIConfig() error {
+	if err := migrateLegacyAgentConfig(); err != nil {
+		return err
+	}
+	if err := cenv.CleanupStaleTempFiles(); err != nil {
+		return err
+	}
 	if _, err := cliConfigSource(); err != nil {
 		return err
 	}
 	if _, err := DBSource(); err != nil {
+		return err
+	}
+	if err := normalizeCLIAgentConfig(); err != nil {
 		return err
 	}
 	return nil

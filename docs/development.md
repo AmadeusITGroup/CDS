@@ -43,6 +43,9 @@ The agent uses:
 $HOME/.xcds-agent
 ```
 
+Agent-managed cache, including staged deploy artifacts, lives under
+`.xcds-agent/cache`.
+
 For tests and local validation, prefer an isolated config path:
 
 ```sh
@@ -165,12 +168,12 @@ LOCAL_CFG="$HOME/cds-remote-validation"
 export CDS_CONFIG_PATH="$LOCAL_CFG"
 export PATH="$PWD:$PATH"
 
-mkdir -p "$LOCAL_CFG/.xcds/certs"
+mkdir -p "$LOCAL_CFG/.xcds/certs" "$LOCAL_CFG/.xcds-agent/certs"
 make gencert
 
-ssh "$REMOTE_HOST" "rm -rf ~/$REMOTE_DIR && mkdir -p ~/$REMOTE_DIR/.xcds/certs"
+ssh "$REMOTE_HOST" "rm -rf ~/$REMOTE_DIR && mkdir -p ~/$REMOTE_DIR/.xcds-agent/certs"
 scp cds-api-agent-linux "$REMOTE_HOST:~/$REMOTE_DIR/cds-api-agent"
-scp "$LOCAL_CFG/.xcds/certs/"* "$REMOTE_HOST:~/$REMOTE_DIR/.xcds/certs/"
+scp "$LOCAL_CFG/.xcds-agent/certs/"* "$REMOTE_HOST:~/$REMOTE_DIR/.xcds-agent/certs/"
 ssh "$REMOTE_HOST" \
   "CDS_CONFIG_PATH=\$HOME/$REMOTE_DIR nohup ~/$REMOTE_DIR/cds-api-agent > ~/$REMOTE_DIR/agent.log 2>&1 < /dev/null &"
 

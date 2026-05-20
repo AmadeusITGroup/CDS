@@ -8,7 +8,6 @@ import (
 
 	"github.com/amadeusitgroup/cds/internal/cenv"
 	"github.com/amadeusitgroup/cds/internal/cerr"
-	"github.com/amadeusitgroup/cds/internal/clog"
 	cg "github.com/amadeusitgroup/cds/internal/global"
 	"github.com/amadeusitgroup/cds/internal/shexec"
 )
@@ -29,23 +28,15 @@ var (
 	clientCSR []byte
 )
 
-func init() {
-	if err := cenv.EnsureDir(cenv.ConfigDir(kcertsjsonDir), cg.KPermDir); err != nil {
-		clog.Error("Failed to create certs tmp directory", err)
-	}
-	if err := ensureCertsJsonFiles(); err != nil {
-		clog.Error("Failed to ensure certs json files", err)
-	}
-	if err := cenv.EnsureDir(cenv.ConfigDir(kcertsDir), cg.KPermDir); err != nil {
-		clog.Error("Failed to create certs directory", err)
-	}
+func certsjson(jsonDir, filename string) string {
+	return filepath.Join(jsonDir, filename)
 }
 
-func certsjson(filename string) string {
-	return filepath.Join(cenv.ConfigDir(kcertsjsonDir), filename)
-}
+func ensureCertsJsonFiles(jsonDir string) error {
+	if err := os.MkdirAll(jsonDir, cg.KPermDir); err != nil {
+		return cerr.AppendError("Failed to create certs JSON directory", err)
+	}
 
-func ensureCertsJsonFiles() error {
 	files := []struct {
 		name string
 		data []byte
@@ -57,7 +48,7 @@ func ensureCertsJsonFiles() error {
 	}
 
 	for _, file := range files {
-		if err := os.WriteFile(certsjson(file.name), file.data, cg.KPermFile); err != nil {
+		if err := os.WriteFile(certsjson(jsonDir, file.name), file.data, cg.KPermFile); err != nil {
 			return cerr.AppendError(fmt.Sprintf("Failed to write file %s", file.name), err)
 		}
 	}
@@ -65,21 +56,6 @@ func ensureCertsJsonFiles() error {
 }
 
 func BuildCerts() error {
-	pipes := []shexec.Pipe{
-		{
-			Left:  shexec.Execcmd{Name: "cfssl", Args: []string{"gencert", "-initca", certsjson("ca-csr.json")}},
-			Right: shexec.Execcmd{Name: "cfssljson", Args: []string{"-bare", "ca"}},
-		},
-		{
-			Left:  shexec.Execcmd{Name: "cfssl", Args: []string{"gencert", "-ca=ca.pem", "-ca-key=ca-key.pem", fmt.Sprintf("-config=%s", certsjson("ca-config.json")), "-profile=server", certsjson("server-csr.json")}},
-			Right: shexec.Execcmd{Name: "cfssljson", Args: []string{"-bare", "agent-srv"}},
-		},
-		{
-			Left:  shexec.Execcmd{Name: "cfssl", Args: []string{"gencert", "-ca=ca.pem", "-ca-key=ca-key.pem", fmt.Sprintf("-config=%s", certsjson("ca-config.json")), "-profile=client", certsjson("client-csr.json")}},
-			Right: shexec.Execcmd{Name: "cfssljson", Args: []string{"-bare", "client"}},
-		},
-	}
-
 	var (
 		workDir string
 		err     error
@@ -92,7 +68,25 @@ func BuildCerts() error {
 		_ = os.RemoveAll(workDir)
 	}()
 
-	clog.Debug(fmt.Sprintf("Working directory: %s", workDir))
+	jsonDir := filepath.Join(workDir, kcertsjsonDir)
+	if err := ensureCertsJsonFiles(jsonDir); err != nil {
+		return cerr.AppendError("Failed to prepare certificate templates", err)
+	}
+
+	pipes := []shexec.Pipe{
+		{
+			Left:  shexec.Execcmd{Name: "cfssl", Args: []string{"gencert", "-initca", certsjson(jsonDir, "ca-csr.json")}},
+			Right: shexec.Execcmd{Name: "cfssljson", Args: []string{"-bare", "ca"}},
+		},
+		{
+			Left:  shexec.Execcmd{Name: "cfssl", Args: []string{"gencert", "-ca=ca.pem", "-ca-key=ca-key.pem", fmt.Sprintf("-config=%s", certsjson(jsonDir, "ca-config.json")), "-profile=server", certsjson(jsonDir, "server-csr.json")}},
+			Right: shexec.Execcmd{Name: "cfssljson", Args: []string{"-bare", "agent-srv"}},
+		},
+		{
+			Left:  shexec.Execcmd{Name: "cfssl", Args: []string{"gencert", "-ca=ca.pem", "-ca-key=ca-key.pem", fmt.Sprintf("-config=%s", certsjson(jsonDir, "ca-config.json")), "-profile=client", certsjson(jsonDir, "client-csr.json")}},
+			Right: shexec.Execcmd{Name: "cfssljson", Args: []string{"-bare", "client"}},
+		},
+	}
 
 	for idx, pipe := range pipes {
 		if _, err := shexec.ExecutePipe(pipe, workDir); err != nil {
@@ -100,10 +94,74 @@ func BuildCerts() error {
 		}
 	}
 
-	// wildcard (*), in mv command, needs a shell to be interpreted correctly
-	move := shexec.Execcmd{Name: "sh", Args: []string{"-c", fmt.Sprintf("mv *.pem *.csr %s", cenv.ConfigDir(kcertsDir))}}
-	if out, err := shexec.ExecuteCmd(move, workDir); err != nil {
-		return cerr.AppendError(fmt.Sprintf("Failed to execute command(%s...): %s", move.Name, out), err)
+	if err := installRuntimeCerts(workDir); err != nil {
+		return cerr.AppendError("Failed to install runtime certificates", err)
+	}
+	return nil
+}
+
+func installRuntimeCerts(workDir string) error {
+	clientCertsDir := cenv.ClientConfigDir(kcertsDir)
+	agentCertsDir := cenv.AgentConfigDir(kcertsDir)
+
+	for _, dir := range []string{clientCertsDir, agentCertsDir} {
+		if err := cenv.EnsureDir(dir, cg.KPermDir); err != nil {
+			return err
+		}
+		if err := cleanManagedCertDir(dir); err != nil {
+			return err
+		}
+	}
+
+	certs := []struct {
+		src string
+		dst string
+	}{
+		{src: "ca.pem", dst: filepath.Join(clientCertsDir, "ca.pem")},
+		{src: "client.pem", dst: filepath.Join(clientCertsDir, "client.pem")},
+		{src: "client-key.pem", dst: filepath.Join(clientCertsDir, "client-key.pem")},
+		{src: "ca.pem", dst: filepath.Join(agentCertsDir, "ca.pem")},
+		{src: "agent-srv.pem", dst: filepath.Join(agentCertsDir, "agent-srv.pem")},
+		{src: "agent-srv-key.pem", dst: filepath.Join(agentCertsDir, "agent-srv-key.pem")},
+	}
+
+	for _, cert := range certs {
+		data, err := os.ReadFile(filepath.Join(workDir, cert.src))
+		if err != nil {
+			return cerr.AppendError(fmt.Sprintf("Failed to read generated certificate %s", cert.src), err)
+		}
+		if err := os.WriteFile(cert.dst, data, cg.KPermFile); err != nil {
+			return cerr.AppendError(fmt.Sprintf("Failed to write certificate %s", cert.dst), err)
+		}
+	}
+
+	if err := removeObsoleteCertsJSONDirs(); err != nil {
+		return cerr.AppendError("Failed to remove obsolete certificate template directories", err)
+	}
+
+	return nil
+}
+
+func cleanManagedCertDir(dir string) error {
+	for _, pattern := range []string{"*.pem", "*.csr"} {
+		matches, err := filepath.Glob(filepath.Join(dir, pattern))
+		if err != nil {
+			return cerr.AppendError(fmt.Sprintf("Failed to list managed certificate files in %s", dir), err)
+		}
+		for _, match := range matches {
+			if err := os.Remove(match); err != nil && !os.IsNotExist(err) {
+				return cerr.AppendError(fmt.Sprintf("Failed to remove managed certificate file %s", match), err)
+			}
+		}
+	}
+	return nil
+}
+
+func removeObsoleteCertsJSONDirs() error {
+	for _, dir := range []string{cenv.ClientConfigDir(kcertsjsonDir), cenv.AgentConfigDir(kcertsjsonDir)} {
+		if err := os.RemoveAll(dir); err != nil {
+			return cerr.AppendError(fmt.Sprintf("Failed to remove directory %s", dir), err)
+		}
 	}
 	return nil
 }

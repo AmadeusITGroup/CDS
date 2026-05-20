@@ -310,11 +310,29 @@ func (s *containerServiceServer) DeleteContainer(ctx context.Context, req *cdspb
 	if err := validateRPCName("container_name", req.GetContainerName()); err != nil {
 		return nil, err
 	}
+	if req.GetProjectName() != "" {
+		if err := validateRPCName("project_name", req.GetProjectName()); err != nil {
+			return nil, err
+		}
+	}
 
 	if err := s.ops().DeleteContainer(req.GetContainerName()); err != nil {
 		return nil, status.Errorf(codes.Internal, "delete container %s: %v", req.GetContainerName(), err)
 	}
+	if req.GetProjectName() != "" {
+		if err := s.deleteProjectStaging(req.GetProjectName()); err != nil {
+			return nil, status.Errorf(codes.Internal, "delete cached state for project %s: %v", req.GetProjectName(), err)
+		}
+	}
 	return &cdspb.DeleteContainerResponse{Output: fmt.Sprintf("Container %s deleted", req.GetContainerName())}, nil
+}
+
+func (s *containerServiceServer) deleteProjectStaging(projectName string) error {
+	root, err := projectStagingRoot(s.stagingDir, projectName)
+	if err != nil {
+		return err
+	}
+	return os.RemoveAll(root)
 }
 
 func (s *containerServiceServer) RenameContainer(ctx context.Context, req *cdspb.RenameContainerRequest) (*cdspb.RenameContainerResponse, error) {
