@@ -2,10 +2,14 @@ package host
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
 
 	"github.com/amadeusitgroup/cds/internal/bo"
 	"github.com/amadeusitgroup/cds/internal/cenv"
 	"github.com/amadeusitgroup/cds/internal/cerr"
+	"github.com/amadeusitgroup/cds/internal/cos"
 	"github.com/amadeusitgroup/cds/internal/db"
 	cg "github.com/amadeusitgroup/cds/internal/global"
 	"github.com/amadeusitgroup/cds/internal/shexec"
@@ -184,4 +188,32 @@ func (h *host) Port() int {
 
 func (h *host) Username() string {
 	return h.username
+}
+
+func (h *host) Execute(name string, args ...string) (string, error) {
+	if shexec.IsLocalHost(h.name) {
+		return shexec.ExecuteCmd(shexec.Execcmd{Name: name, Args: args}, cg.EmptyStr)
+	}
+	cmd := name + " " + strings.Join(args, " ")
+	runner := shexec.RunCmd(h)
+	return runner([]shexec.ExecuteEvent{
+		&shexec.DefaultShEvent{ExeCmd: cmd},
+	})
+}
+
+func (h *host) Copy(localPath, remotePath string) error {
+	if shexec.IsLocalHost(h.name) {
+		data, err := os.ReadFile(localPath)
+		if err != nil {
+			return cerr.AppendError("failed to read local file for copy", err)
+		}
+		_, srcFile := filepath.Split(localPath)
+		dstPath := filepath.Join(remotePath, srcFile)
+		dir := filepath.Dir(dstPath)
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			return cerr.AppendError("failed to create target directory", err)
+		}
+		return cos.WriteFile(dstPath, data, 0644)
+	}
+	return shexec.CopyFile(shexec.UsingKey(h), localPath, remotePath)
 }
