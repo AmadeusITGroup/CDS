@@ -31,6 +31,9 @@ func StartAgent(hostname string) error {
 func isAgentRunning(hostName string) (bool, error) {
 	server, err := config.AgentAddress(hostName)
 	if err != nil {
+		if config.IsAgentNotFound(err) {
+			return false, nil
+		}
 		return false, cerr.AppendError("failed to resolve agent address", err)
 	}
 	if server == cg.EmptyStr {

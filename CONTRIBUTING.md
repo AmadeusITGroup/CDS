@@ -11,7 +11,7 @@ First off, thank you for considering contributing to CDS! 🎉 It's people like 
 - [Pull Request Process](#pull-request-process)
 - [Coding Standards](#coding-standards)
 - [Testing Guidelines](#testing-guidelines)
-- [Commit Message Guidelines](#commit-message-guidelines)
+- [Commit Message Guidelines](#commit-message-guidelines)P
 - [Issue Guidelines](#issue-guidelines)
 - [Community](#community)
 
