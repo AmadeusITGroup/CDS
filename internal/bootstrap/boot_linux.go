@@ -23,7 +23,6 @@ var (
 
 func fire() error {
 	clog.Debug("Starting agent on Linux")
-	defer clog.Debug("Agent started on Linux")
 
 	for _, bin := range binaries {
 		if err := ensureBinary(bin); err != nil {
@@ -102,12 +101,10 @@ func startAgent() (string, error) {
 		return cg.EmptyStr, cerr.AppendError("Failed to start agent", err)
 	}
 
-	go func() {
-		clog.Debug("Waiting agent to start...")
-		if err := cmd.Wait(); err != nil {
-			clog.Error("Command finished with error:", err)
-		}
-	}()
+	clog.Debug("Waiting agent to start...")
+	if err := cmd.Wait(); err != nil {
+		clog.Error("Command finished with error:", err)
+	}
 
 	clog.Debug(fmt.Sprintf("Agent started with pid: %d", cmd.Process.Pid))
 	return ":8087", nil

@@ -194,7 +194,7 @@ func (h *host) Execute(name string, args ...string) (string, error) {
 	if shexec.IsLocalHost(h.name) {
 		return shexec.ExecuteCmd(shexec.Execcmd{Name: name, Args: args}, cg.EmptyStr)
 	}
-	cmd := name + " " + strings.Join(args, " ")
+	cmd := fmt.Sprintf("%s %s", name, strings.Join(args, " "))
 	runner := shexec.RunCmd(h)
 	return runner([]shexec.ExecuteEvent{
 		&shexec.DefaultShEvent{ExeCmd: cmd},

@@ -14,6 +14,11 @@ import (
 	"github.com/coreos/go-systemd/v22/unit"
 )
 
+const (
+	socketUnitName  = "cds.socket"
+	serviceUnitName = "cds.service"
+)
+
 func New(ops ...func(*sysD)) *sysD {
 	sysd := &sysD{}
 	for _, op := range ops {
@@ -69,7 +74,7 @@ func (s *sysD) In() bool {
 
 // IsServiceUp checks if the service is running.
 func (s *sysD) IsServiceUp() bool {
-	out, err := s.h.Execute("systemctl", "--user", "is-active", "cds.service")
+	out, err := s.h.Execute("systemctl", "--user", "is-active", serviceUnitName)
 	if err != nil {
 		return false
 	}
@@ -88,7 +93,7 @@ func (s *sysD) StartService() error {
 
 // isUnitReady checks if the systemd unit files exist and are enabled.
 func (s *sysD) isUnitReady() bool {
-	if _, err := s.h.Execute("test", "-f", unitPath("cds.socket")); err != nil {
+	if _, err := s.h.Execute("test", "-f", unitPath(socketUnitName)); err != nil {
 		if !s.h.Defined() {
 			if berr := s.h.Build(); berr != nil {
 				clog.Error("failed to configure host", berr)
@@ -96,7 +101,7 @@ func (s *sysD) isUnitReady() bool {
 		}
 		return false
 	}
-	if _, err := s.h.Execute("test", "-f", unitPath("cds.service")); err != nil {
+	if _, err := s.h.Execute("test", "-f", unitPath(serviceUnitName)); err != nil {
 		if !s.h.Defined() {
 			if berr := s.h.Build(); berr != nil {
 				clog.Error("failed to configure host", berr)
@@ -105,12 +110,12 @@ func (s *sysD) isUnitReady() bool {
 		return false
 	}
 
-	socketOut, err := s.h.Execute("systemctl", "--user", "is-enabled", "cds.socket")
+	socketOut, err := s.h.Execute("systemctl", "--user", "is-enabled", socketUnitName)
 	if err != nil {
 		clog.Error("failed to check socket unit state", err)
 		return false
 	}
-	serviceOut, err := s.h.Execute("systemctl", "--user", "is-enabled", "cds.service")
+	serviceOut, err := s.h.Execute("systemctl", "--user", "is-enabled", serviceUnitName)
 	if err != nil {
 		clog.Error("failed to check service unit state", err)
 		return false
@@ -146,7 +151,7 @@ func (s *sysD) buildUnits(port int) map[string][]byte {
 
 	socketUnitOptions := []*unit.UnitOption{
 		{Section: "Unit", Name: "Description", Value: "cds gRPC Socket (User)"},
-		{Section: "Unit", Name: "PartOf", Value: "cds.service"},
+		{Section: "Unit", Name: "PartOf", Value: serviceUnitName},
 		{Section: "Socket", Name: "ListenStream", Value: strconv.Itoa(port)},
 		{Section: "Socket", Name: "Accept", Value: "No"},
 		{Section: "Socket", Name: "FileDescriptorName", Value: "cds"},
@@ -155,7 +160,7 @@ func (s *sysD) buildUnits(port int) map[string][]byte {
 	serviceUnitOptions := []*unit.UnitOption{
 		{Section: "Unit", Name: "Description", Value: "cds gRPC Service (User)"},
 		{Section: "Unit", Name: "After", Value: "network.target"},
-		{Section: "Unit", Name: "Requires", Value: "cds.socket"},
+		{Section: "Unit", Name: "Requires", Value: socketUnitName},
 		{Section: "Service", Name: "Type", Value: "simple"},
 		{Section: "Service", Name: "ExecStart", Value: binary},
 		{Section: "Install", Name: "WantedBy", Value: "default.target"},
@@ -166,13 +171,13 @@ func (s *sysD) buildUnits(port int) map[string][]byte {
 	if errByte != nil {
 		return nil
 	}
-	unitsBytes["cds.socket"] = socketUnitBytes
+	unitsBytes[socketUnitName] = socketUnitBytes
 
 	serviceUnitBytes, errByte := io.ReadAll(unit.Serialize(serviceUnitOptions))
 	if errByte != nil {
 		return nil
 	}
-	unitsBytes["cds.service"] = serviceUnitBytes
+	unitsBytes[serviceUnitName] = serviceUnitBytes
 
 	return unitsBytes
 }
@@ -198,18 +203,15 @@ func (s *sysD) startUnit() error {
 	if _, err := s.h.Execute("systemctl", "--user", "daemon-reload"); err != nil {
 		return cerr.AppendError("failed to reload systemd daemon", err)
 	}
-	if _, err := s.h.Execute("systemctl", "--user", "enable", "cds.socket", "cds.service"); err != nil {
+	if _, err := s.h.Execute("systemctl", "--user", "enable", "now", socketUnitName, serviceUnitName); err != nil {
 		return cerr.AppendError("failed to enable systemd units", err)
-	}
-	if _, err := s.h.Execute("systemctl", "--user", "start", "cds.socket", "cds.service"); err != nil {
-		return cerr.AppendError("failed to start systemd units", err)
 	}
 	return nil
 }
 
 // StopService stops the systemd service on the target host.
 func (s *sysD) StopService() error {
-	if _, err := s.h.Execute("systemctl", "--user", "stop", "cds.socket", "cds.service"); err != nil {
+	if _, err := s.h.Execute("systemctl", "--user", "stop", socketUnitName, serviceUnitName); err != nil {
 		return cerr.AppendError("failed to stop systemd units", err)
 	}
 	return nil
