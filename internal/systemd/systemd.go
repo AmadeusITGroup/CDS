@@ -1,9 +1,7 @@
 package systemd
 
 import (
-	"fmt"
 	"io"
-	"io/fs"
 	"net"
 	"os"
 	"path/filepath"
@@ -12,12 +10,13 @@ import (
 
 	"github.com/amadeusitgroup/cds/internal/cerr"
 	"github.com/amadeusitgroup/cds/internal/clog"
-	"github.com/amadeusitgroup/cds/internal/cos"
-	cg "github.com/amadeusitgroup/cds/internal/global"
-	"github.com/amadeusitgroup/cds/internal/shexec"
 	"github.com/coreos/go-systemd/v22/activation"
 	"github.com/coreos/go-systemd/v22/unit"
-	"gopkg.in/ini.v1"
+)
+
+const (
+	socketUnitName  = "cds.socket"
+	serviceUnitName = "cds.service"
 )
 
 func New(ops ...func(*sysD)) *sysD {
@@ -34,37 +33,55 @@ func WithTarget(h hostOps) func(*sysD) {
 	}
 }
 
-type sysD struct {
-	h hostOps
+func WithServicePort(port int) func(*sysD) {
+	return func(sd *sysD) {
+		sd.port = port
+	}
 }
+
+func WithServiceBinary(binary string) func(*sysD) {
+	return func(sd *sysD) {
+		sd.binary = binary
+	}
+}
+
+type sysD struct {
+	h      hostOps
+	port   int
+	binary string
+}
+
 type hostOps interface {
-	FQDN() string
 	Defined() bool
 	Build() error
+	Execute(name string, args ...string) (string, error)
+	Copy(localPath, remotePath string) error
 }
 
-// In checks if systemd is used on the specified hostname.
-func (s *sysD) In() bool {
-	// Infering that systemd is used based on distros (rhel and fedora)
+func userUnitDir() string {
+	return filepath.Join(os.Getenv("HOME"), ".config/systemd/user")
+}
 
-	if s.h.FQDN() != cg.KLocalhost {
-		// TODO: add remote command to check if systemd is used
-		return false
-	}
-	cfg, err := ini.Load("/etc/os-release")
+func unitPath(unitName string) string {
+	return filepath.Join(userUnitDir(), unitName)
+}
+
+// In checks if systemd is available on the target host.
+func (s *sysD) In() bool {
+	_, err := s.h.Execute("systemctl", "--user", "--no-pager")
+	return err == nil
+}
+
+// IsServiceUp checks if the service is running.
+func (s *sysD) IsServiceUp() bool {
+	out, err := s.h.Execute("systemctl", "--user", "is-active", serviceUnitName)
 	if err != nil {
 		return false
 	}
-	distro := strings.ToLower(cfg.Section("").Key("ID").String())
-	return strings.Compare(distro, "rhel") == 0 || strings.Compare(distro, "fedora") == 0
+	return strings.TrimSpace(out) == "active"
 }
 
-// IsServiceUp checks if the service is running on the specified host.
-func (s *sysD) IsServiceUp() bool {
-	return false
-}
-
-// StartService starts the service on the specified host.
+// StartService starts the service on the target host.
 func (s *sysD) StartService() error {
 	if !s.isUnitReady() {
 		if err := s.createUnit(); err != nil {
@@ -74,54 +91,50 @@ func (s *sysD) StartService() error {
 	return s.startUnit()
 }
 
-// isUnitReady checks if the systemd unit is ready on the specified hostname.
+// isUnitReady checks if the systemd unit files exist and are enabled.
 func (s *sysD) isUnitReady() bool {
-	if s.h.FQDN() == cg.KLocalhost {
-		socketPath := filepath.Join(os.Getenv("HOME"), ".config/systemd/user/mysrv.socket")
-		servicePath := filepath.Join(os.Getenv("HOME"), ".config/systemd/user/mysrv.service")
-		if _, err := os.Stat(socketPath); os.IsNotExist(err) {
-			return false
-		}
-
-		if _, err := os.Stat(servicePath); os.IsNotExist(err) {
-			return false
-		}
-		socketEnabled := shexec.Execcmd{Name: "sh", Args: []string{"-c", "systemctl", "--user", "is-enabled", "mysrv.socket"}}
-		serviceEnabled := shexec.Execcmd{Name: "sh", Args: []string{"-c", "systemctl", "--user", "is-enabled", "mysrv.service"}}
-
-		socketOut, err := shexec.ExecuteCmd(socketEnabled, cg.EmptyStr)
-		if err != nil {
-			clog.Error("failed to start socket unit", err)
-			return false
-		}
-		serviceOut, err := shexec.ExecuteCmd(serviceEnabled, cg.EmptyStr)
-		if err != nil {
-			clog.Error("failed to start service unit", err)
-			return false
-		}
-
-		return strings.Contains(string(socketOut), "enabled") && strings.Contains(string(serviceOut), "enabled")
-	}
-	// TODO remote use case
-	if !s.h.Defined() {
-		if err := s.h.Build(); err != nil {
-			clog.Error("failed to configure host", err)
+	if _, err := s.h.Execute("test", "-f", unitPath(socketUnitName)); err != nil {
+		if !s.h.Defined() {
+			if berr := s.h.Build(); berr != nil {
+				clog.Error("failed to configure host", berr)
+			}
 		}
 		return false
 	}
-	return false
+	if _, err := s.h.Execute("test", "-f", unitPath(serviceUnitName)); err != nil {
+		if !s.h.Defined() {
+			if berr := s.h.Build(); berr != nil {
+				clog.Error("failed to configure host", berr)
+			}
+		}
+		return false
+	}
+
+	socketOut, err := s.h.Execute("systemctl", "--user", "is-enabled", socketUnitName)
+	if err != nil {
+		clog.Error("failed to check socket unit state", err)
+		return false
+	}
+	serviceOut, err := s.h.Execute("systemctl", "--user", "is-enabled", serviceUnitName)
+	if err != nil {
+		clog.Error("failed to check service unit state", err)
+		return false
+	}
+	return strings.Contains(socketOut, "enabled") &&
+		strings.Contains(serviceOut, "enabled")
 }
 
-// createUnit creates the systemd unit files on the specified hostname.
+// createUnit creates the systemd unit files on the target host.
 func (s *sysD) createUnit() error {
-	// get free port on hostname
-	var port int // TODO
+	port := s.port
+	if port == 0 {
+		port = 8087
+	}
 
-	// create socket unit
 	unitsBytes := s.buildUnits(port)
 	for unitFileName, unitByte := range unitsBytes {
 		if err := s.createUnitFileOnTarget(unitFileName, unitByte); err != nil {
-			return cerr.AppendErrorFmt("faile to build unit file %s", err, unitFileName)
+			return cerr.AppendErrorFmt("failed to build unit file %s", err, unitFileName)
 		}
 	}
 	return nil
@@ -129,12 +142,16 @@ func (s *sysD) createUnit() error {
 
 // buildUnits builds the systemd unit files for the given port.
 func (s *sysD) buildUnits(port int) map[string][]byte {
+	binary := s.binary
+	if binary == "" {
+		binary = "cdssrv"
+	}
 
 	unitsBytes := make(map[string][]byte)
 
 	socketUnitOptions := []*unit.UnitOption{
 		{Section: "Unit", Name: "Description", Value: "cds gRPC Socket (User)"},
-		{Section: "Unit", Name: "PartOf", Value: "cds.service"},
+		{Section: "Unit", Name: "PartOf", Value: serviceUnitName},
 		{Section: "Socket", Name: "ListenStream", Value: strconv.Itoa(port)},
 		{Section: "Socket", Name: "Accept", Value: "No"},
 		{Section: "Socket", Name: "FileDescriptorName", Value: "cds"},
@@ -143,55 +160,60 @@ func (s *sysD) buildUnits(port int) map[string][]byte {
 	serviceUnitOptions := []*unit.UnitOption{
 		{Section: "Unit", Name: "Description", Value: "cds gRPC Service (User)"},
 		{Section: "Unit", Name: "After", Value: "network.target"},
-		{Section: "Unit", Name: "Requires", Value: "myserver.socket"},
+		{Section: "Unit", Name: "Requires", Value: socketUnitName},
 		{Section: "Service", Name: "Type", Value: "simple"},
-		{Section: "Service", Name: "ExecStart", Value: "%h/bin/cds-agent"}, // TODO fix!
+		{Section: "Service", Name: "ExecStart", Value: binary},
 		{Section: "Install", Name: "WantedBy", Value: "default.target"},
 	}
 
-	var socketUnitBytes, serviceUnitBytes []byte
 	var errByte error
-
-	socketUnitBytes, errByte = io.ReadAll(unit.Serialize(socketUnitOptions))
+	socketUnitBytes, errByte := io.ReadAll(unit.Serialize(socketUnitOptions))
 	if errByte != nil {
 		return nil
 	}
-	unitsBytes["cds.socket"] = socketUnitBytes
+	unitsBytes[socketUnitName] = socketUnitBytes
 
-	serviceUnitBytes, errByte = io.ReadAll(unit.Serialize(serviceUnitOptions))
+	serviceUnitBytes, errByte := io.ReadAll(unit.Serialize(serviceUnitOptions))
 	if errByte != nil {
 		return nil
 	}
-	unitsBytes["cds.service"] = serviceUnitBytes
+	unitsBytes[serviceUnitName] = serviceUnitBytes
 
 	return unitsBytes
 }
 
-// createUnitFileOnTarget creates a unit file on the target host with the specified file name and data.
+// createUnitFileOnTarget creates a unit file on the target host.
 func (s *sysD) createUnitFileOnTarget(fileName string, data []byte) error {
-	workDir, errTmpDir := os.MkdirTemp(cg.EmptyStr, "cds")
-	if errTmpDir != nil {
-		return cerr.AppendError("Failed to create temp dir", errTmpDir)
+	tmpDir, err := os.MkdirTemp("", "cds-units")
+	if err != nil {
+		return cerr.AppendError("failed to create temp dir for unit files", err)
 	}
-	defer func() {
-		_ = os.RemoveAll(workDir)
-	}()
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
-	clog.Debug(fmt.Sprintf("Working directory: %s", workDir))
-
-	if err := cos.WriteFile(filepath.Join(workDir, fileName), data, fs.FileMode(0600)); err != nil {
-		return err
+	tmpFile := filepath.Join(tmpDir, fileName)
+	if err := os.WriteFile(tmpFile, data, 0644); err != nil {
+		return cerr.AppendError("failed to write temp unit file", err)
 	}
 
-	// TODO scp file to destination
-	if err := s.h.Build(); err != nil {
-		return err
+	return s.h.Copy(tmpFile, userUnitDir())
+}
+
+// startUnit enables and starts the systemd units on the target host.
+func (s *sysD) startUnit() error {
+	if _, err := s.h.Execute("systemctl", "--user", "daemon-reload"); err != nil {
+		return cerr.AppendError("failed to reload systemd daemon", err)
+	}
+	if _, err := s.h.Execute("systemctl", "--user", "enable", "now", socketUnitName, serviceUnitName); err != nil {
+		return cerr.AppendError("failed to enable systemd units", err)
 	}
 	return nil
 }
 
-// startUnit starts the systemd unit on the specified hostname.
-func (s *sysD) startUnit() error {
+// StopService stops the systemd service on the target host.
+func (s *sysD) StopService() error {
+	if _, err := s.h.Execute("systemctl", "--user", "stop", socketUnitName, serviceUnitName); err != nil {
+		return cerr.AppendError("failed to stop systemd units", err)
+	}
 	return nil
 }
 

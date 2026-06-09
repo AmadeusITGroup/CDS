@@ -96,7 +96,7 @@ func WithDetect(outputFlag string, quiet bool, verbose bool) outputTransformers 
 		case oOpts.noColor:
 			oOpts.mode = ModePlain
 		default:
-			oOpts.mode = ModeUnknown
+			oOpts.mode = ModeInteractive
 		}
 	}
 }

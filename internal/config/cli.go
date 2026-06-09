@@ -2,6 +2,7 @@ package config
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"net"
 	"net/url"
@@ -144,8 +145,23 @@ func AgentAddress(hostname string) (string, error) {
 				return agent.TargetSrv, nil
 			}
 		}
-		return cg.EmptyStr, cerr.NewError(fmt.Sprintf("No agent found with hostname %q", hostname))
+		return cg.EmptyStr, &ErrAgentNotFound{Hostname: hostname}
 	})
+}
+
+// ErrAgentNotFound is returned by AgentAddress when no agent is registered for the given hostname.
+type ErrAgentNotFound struct {
+	Hostname string
+}
+
+func (e *ErrAgentNotFound) Error() string {
+	return fmt.Sprintf("No agent found with hostname %q", e.Hostname)
+}
+
+// IsAgentNotFound reports whether err is an ErrAgentNotFound.
+func IsAgentNotFound(err error) bool {
+	var target *ErrAgentNotFound
+	return errors.As(err, &target)
 }
 
 func readCLIAgentData() (cliAgentData, error) {

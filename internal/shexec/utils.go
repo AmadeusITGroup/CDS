@@ -105,7 +105,7 @@ func (re *recoverErr) Error() string {
 	return re.Message
 }
 
-func isLocalHost(hostName string) bool {
+func IsLocalHost(hostName string) bool {
 	if hostName == cg.KLocalhost {
 		return true
 	}

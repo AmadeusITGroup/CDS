@@ -58,7 +58,7 @@ func CloseAllSSHClients() {
 
 func RunCmds(t target) func([]ExecuteEvent) error {
 	hostName := t.FQDN()
-	if isLocalHost(hostName) {
+	if IsLocalHost(hostName) {
 		return RunLocalCmds
 	}
 	if err := CheckValidSSHKeyPairExistence(t); err != nil {
@@ -100,7 +100,7 @@ func RunCmds(t target) func([]ExecuteEvent) error {
 
 func RunCmd(t target) func([]ExecuteEvent) (string, error) {
 	hostName := t.FQDN()
-	if isLocalHost(hostName) {
+	if IsLocalHost(hostName) {
 		return RunLocalCmdWithOutput
 	}
 	if err := CheckValidSSHKeyPairExistence(t); err != nil {
