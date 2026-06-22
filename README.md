@@ -93,6 +93,11 @@ Before installing CDS, ensure you have the following dependencies:
   - Linux/macOS: Usually pre-installed
   - Windows: Use [Git Bash](https://git-scm.com/downloads) or [WSL](https://docs.microsoft.com/en-us/windows/wsl/install)
 - **OpenSSL**: For TLS certificate operations (usually pre-installed on Linux/macOS)
+- **Podman**: Container runtime for running DevContainers on a local host ([Installation](https://podman.io/docs/installation)). On macOS, also initialise and start the Podman machine:
+  ```bash
+  podman machine init   # first time only
+  podman machine start
+  ```
 
 ### Optional Tools
 
@@ -169,8 +174,10 @@ cds project init
 # Initialize a new space
 cds space init
 
-# Bootstrap an agent host
-cds space host add
+# Register the local machine as a DevContainer host (detects Podman)
+cds space host add localhost
+
+# Bootstrap a remote agent host
 cds space host add https://agent.example:8443
 
 # Manage configured agent hosts

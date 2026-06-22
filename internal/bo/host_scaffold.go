@@ -24,3 +24,9 @@ type RegistryInfo struct {
 	State string `json:"status"`
 	Port  int    `json:"port"`
 }
+
+// RuntimeInfo describes the container runtime detected on a host.
+type RuntimeInfo struct {
+	Engine  string `json:"engine"`
+	Version string `json:"version"`
+}

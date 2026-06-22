@@ -42,8 +42,6 @@ type context struct {
 	ProjectContext string `json:"project"`
 }
 
-
-
 // //////////////////////////////////////////////////////////////////
 //
 //	Project Struct
@@ -111,7 +109,14 @@ type host struct {
 	InUse             bool              `json:"inUse"`
 	IsDefault         bool              `json:"default"`
 	OrchestrationInfo orchestrationInfo `json:"orchestrationInfo"`
+	RuntimeInfo       runtimeInfo       `json:"runtimeInfo,omitempty,omitzero"`
 	sshInfo
+}
+
+// runtimeInfo records the container runtime detected on the host.
+type runtimeInfo struct {
+	Engine  string `json:"engine,omitempty,omitzero"`
+	Version string `json:"version,omitempty,omitzero"`
 }
 
 type orchestrationInfo struct {
