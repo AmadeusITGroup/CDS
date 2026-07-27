@@ -61,6 +61,13 @@ func resetContent() {
 	dbSrc = nil
 }
 
+// ResetForTest clears the in-memory store so a subsequent Load re-reads from its
+// source. Intended for tests in other packages that need an isolated db between
+// runs; it is a no-op concern in production where the store is loaded once.
+func ResetForTest() {
+	resetContent()
+}
+
 func getDBContent() (*store, error) {
 	if sStore == nil {
 		sStore = newDB()

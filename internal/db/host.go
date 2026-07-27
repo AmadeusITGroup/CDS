@@ -263,3 +263,30 @@ func GetRegistryInfoFromHost(hostName string) bo.RegistryInfo {
 	}
 	return value.(bo.RegistryInfo)
 }
+
+func SetHostRuntime(hostName string, info bo.RuntimeInfo) error {
+	var fn decorateHost = func(h *host) {
+		h.RuntimeInfo = runtimeInfo{
+			Engine:  info.Engine,
+			Version: info.Version,
+		}
+	}
+	if err := fn.update(hostName); err != nil {
+		return cerr.AppendErrorFmt("Failed to update runtime info for host %s", err, hostName)
+	}
+	return nil
+}
+
+func GetHostRuntime(hostName string) bo.RuntimeInfo {
+	var fn visitHost = func(h *host) any {
+		return bo.RuntimeInfo{
+			Engine:  h.RuntimeInfo.Engine,
+			Version: h.RuntimeInfo.Version,
+		}
+	}
+	value, err := fn.get(hostName)
+	if err != nil {
+		return bo.RuntimeInfo{}
+	}
+	return value.(bo.RuntimeInfo)
+}

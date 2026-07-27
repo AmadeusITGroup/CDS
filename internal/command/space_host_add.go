@@ -7,12 +7,20 @@ import (
 	"net/url"
 	"strings"
 
+	"github.com/amadeusitgroup/cds/internal/bo"
 	"github.com/amadeusitgroup/cds/internal/bootstrap"
+	"github.com/amadeusitgroup/cds/internal/cenv"
 	"github.com/amadeusitgroup/cds/internal/cerr"
+	"github.com/amadeusitgroup/cds/internal/containerruntime"
+	"github.com/amadeusitgroup/cds/internal/db"
 	cg "github.com/amadeusitgroup/cds/internal/global"
 	"github.com/amadeusitgroup/cds/internal/output"
 	"github.com/spf13/cobra"
 )
+
+// detectRuntime is the container-runtime detector used during local host
+// registration. It is a package variable so tests can substitute a fake.
+var detectRuntime = containerruntime.Detect
 
 type spcHostAdd struct {
 	defaultCmd
@@ -60,9 +68,22 @@ func (s *spcHostAdd) runE(cmd *cobra.Command, args []string) error {
 		alreadyRunning = true
 	}
 
-	// TODO: Persist or refresh the CLI host entry once bootstrap exposes the resolved endpoint and credentials again.
-	// TODO: Honor the full --target-server value during registration instead of only deriving the bootstrap hostname.
-	// TODO: Reintroduce local port selection once bootstrap accepts launch options directly.
+	// For a local host, detect the container runtime and register the host as a
+	// DevContainer deploy target. Detection failures (no Podman, machine not
+	// running) abort registration with an actionable message. The same predicate
+	// as bootstrap.StartAgent is used so a given target is treated as local by
+	// both the agent launch and the host registration.
+	if isLocalTarget(hostName) {
+		info, err := registerLocalHost(hostName)
+		if err != nil {
+			return err
+		}
+		o := output.FromContext(cmd.Context())
+		return output.Render(o, output.SimpleResult{
+			Message: fmt.Sprintf("Registered local host %q with runtime %s %s",
+				hostName, info.Engine, info.Version),
+		})
+	}
 
 	message := fmt.Sprintf("Bootstrapped host %q", hostName)
 	if alreadyRunning {
@@ -71,6 +92,40 @@ func (s *spcHostAdd) runE(cmd *cobra.Command, args []string) error {
 
 	o := output.FromContext(cmd.Context())
 	return output.Render(o, output.SimpleResult{Message: message})
+}
+
+// isLocalTarget reports whether hostName denotes the local machine, matching the
+// decision bootstrap.StartAgent makes between fire() and fireRemote().
+func isLocalTarget(hostName string) bool {
+	return hostName == cg.KLocalhost
+}
+
+// registerLocalHost detects the local container runtime and records the host in
+// the CLI state as a target for DevContainer deployment. It is idempotent: an
+// existing host entry is updated in place rather than duplicated. It returns the
+// detected runtime so the caller can report what was registered. The persisted
+// state is flushed to disk by the caller (main defers db.Save()).
+func registerLocalHost(hostName string) (containerruntime.Info, error) {
+	// Return the detection error as-is: it already carries an actionable message,
+	// and not wrapping it preserves the typed sentinels (containerruntime.Err*)
+	// so callers can branch with errors.Is.
+	info, err := detectRuntime()
+	if err != nil {
+		return containerruntime.Info{}, err
+	}
+
+	if !db.HasHost(hostName) {
+		db.AddHost(hostName, cenv.GetUsernameFromEnv())
+	}
+
+	if err := db.SetHostRuntime(hostName, bo.RuntimeInfo{
+		Engine:  info.Engine,
+		Version: info.Version,
+	}); err != nil {
+		return containerruntime.Info{}, err
+	}
+
+	return info, nil
 }
 
 func bootstrapHostName(targetServer string) (string, error) {
