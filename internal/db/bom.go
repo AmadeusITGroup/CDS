@@ -110,6 +110,7 @@ type host struct {
 	IsDefault         bool              `json:"default"`
 	OrchestrationInfo orchestrationInfo `json:"orchestrationInfo"`
 	RuntimeInfo       runtimeInfo       `json:"runtimeInfo,omitempty,omitzero"`
+	AgentOwnership    agentOwnership    `json:"agentOwnership,omitempty,omitzero"`
 	sshInfo
 }
 
@@ -117,6 +118,14 @@ type host struct {
 type runtimeInfo struct {
 	Engine  string `json:"engine,omitempty,omitzero"`
 	Version string `json:"version,omitempty,omitzero"`
+}
+
+// agentOwnership records the local agent process that this CDS registration owns.
+type agentOwnership struct {
+	PID     int    `json:"pid,omitempty,omitzero"`
+	Address string `json:"address,omitempty,omitzero"`
+	Binary  string `json:"binary,omitempty,omitzero"`
+	Manager string `json:"manager,omitempty,omitzero"`
 }
 
 type orchestrationInfo struct {

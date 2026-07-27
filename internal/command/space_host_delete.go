@@ -3,7 +3,9 @@ package command
 import (
 	"fmt"
 
+	"github.com/amadeusitgroup/cds/internal/bootstrap"
 	"github.com/amadeusitgroup/cds/internal/config"
+	"github.com/amadeusitgroup/cds/internal/db"
 	"github.com/amadeusitgroup/cds/internal/output"
 	"github.com/spf13/cobra"
 )
@@ -34,15 +36,28 @@ func (s *spcHostDelete) subCommands() []baseCmd {
 }
 
 func (s *spcHostDelete) runE(cmd *cobra.Command, args []string) error {
-	target := args[0]
-	// TODO delete the agent from the host
-	// bootstrap package looks to be only in charge of the startup of the agents which leave a gap in functionality for the management of the registered agents (listing, deletion...).
-	// I think we should move the responsibility of managing the registered agents to a dedicated package.
-	// bootstrap would either be included in this package or called by this package when starting an agent.
-	// Like `agentManager.(Start|Stop|List|Delete)Agent(...)` with start relying on bootstrap ?
-	if err := config.DeleteAgentFromConfig(target); err != nil {
+	hostName, err := bootstrapHostName(args[0])
+	if err != nil {
 		return err
 	}
+
+	// Unregister is the mirror of `host add`: stop the local agent while the CLI
+	// config still knows its address, remove the agent from the CLI config, and
+	// for a local host also drop the db.json host entry that registration wrote
+	// (runtimeInfo). Deleting from the config is the source of truth, so its
+	// failure aborts; the db cleanup only runs for a host we actually track.
+	if isLocalTarget(hostName) {
+		if err := bootstrap.StopAgent(hostName); err != nil {
+			return err
+		}
+	}
+	if err := config.DeleteAgentFromConfig(args[0]); err != nil {
+		return err
+	}
+	if isLocalTarget(hostName) && db.HasHost(hostName) {
+		db.RemoveHostFromHostList(hostName)
+	}
+
 	o := output.FromContext(cmd.Context())
-	return output.Render(o, output.SimpleResult{Message: fmt.Sprintf("Deleted host %q", target)})
+	return output.Render(o, output.SimpleResult{Message: fmt.Sprintf("Deleted host %q", hostName)})
 }

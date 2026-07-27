@@ -217,6 +217,36 @@ func TestProfileReader_ResolvesWithoutInit(t *testing.T) {
 	assert.Equal(t, `{"name":"default"}`, string(content))
 }
 
+func TestOptionalProfileReader_MissingProfileIsNotAnError(t *testing.T) {
+	cos.Fs = afero.NewMemMapFs()
+	defer cos.SetRealFileSystem()
+
+	t.Setenv("CDS_CONFIG_PATH", "/tmp/testconfig")
+
+	r, exists, err := OptionalProfileReader()
+
+	require.NoError(t, err)
+	assert.False(t, exists)
+	assert.Nil(t, r)
+}
+
+func TestOptionalProfileReader_ReadsExistingProfile(t *testing.T) {
+	cos.Fs = afero.NewMemMapFs()
+	defer cos.SetRealFileSystem()
+
+	t.Setenv("CDS_CONFIG_PATH", "/tmp/testconfig")
+	require.NoError(t, cos.Fs.MkdirAll("/tmp/testconfig/.xcds", 0755))
+	require.NoError(t, cos.WriteFile("/tmp/testconfig/.xcds/profile.json", []byte(`{"name":"default"}`), 0600))
+
+	r, exists, err := OptionalProfileReader()
+
+	require.NoError(t, err)
+	assert.True(t, exists)
+	content, err := io.ReadAll(r)
+	require.NoError(t, err)
+	assert.Equal(t, `{"name":"default"}`, string(content))
+}
+
 func TestDBSource_ResolvesWithoutInit(t *testing.T) {
 	cos.Fs = afero.NewMemMapFs()
 	defer cos.SetRealFileSystem()

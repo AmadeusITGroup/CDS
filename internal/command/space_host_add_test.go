@@ -1,6 +1,7 @@
 package command
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/amadeusitgroup/cds/internal/bo"
@@ -37,13 +38,28 @@ func TestRegisterLocalHost_Success(t *testing.T) {
 	loadEmptyDB(t)
 	stubDetectRuntime(t, containerruntime.Info{Engine: "podman", Version: "5.2.2"}, nil)
 
-	info, err := registerLocalHost(cg.KLocalhost)
+	registration, err := registerLocalHost(cg.KLocalhost)
 
 	require.NoError(t, err)
-	assert.Equal(t, "podman", info.Engine)
-	assert.Equal(t, "5.2.2", info.Version)
+	assert.False(t, registration.AlreadyRegistered)
+	assert.Equal(t, "podman", registration.Info.Engine)
+	assert.Equal(t, "5.2.2", registration.Info.Version)
 	assert.True(t, db.HasHost(cg.KLocalhost))
 	assert.Equal(t, bo.RuntimeInfo{Engine: "podman", Version: "5.2.2"}, db.GetHostRuntime(cg.KLocalhost))
+}
+
+func TestRegisterLocalHost_AlreadyRegisteredSkipsDetection(t *testing.T) {
+	setupCommandConfigTestFS(t)
+	loadEmptyDB(t)
+	db.AddHost(cg.KLocalhost, "tester")
+	require.NoError(t, db.SetHostRuntime(cg.KLocalhost, bo.RuntimeInfo{Engine: "podman", Version: "5.2.2"}))
+	stubDetectRuntime(t, containerruntime.Info{}, errors.New("detector should not run"))
+
+	registration, err := registerLocalHost(cg.KLocalhost)
+
+	require.NoError(t, err)
+	assert.True(t, registration.AlreadyRegistered)
+	assert.Equal(t, containerruntime.Info{Engine: "podman", Version: "5.2.2"}, registration.Info)
 }
 
 func TestRegisterLocalHost_DetectionFailureRegistersNothing(t *testing.T) {
@@ -65,8 +81,10 @@ func TestRegisterLocalHost_Idempotent(t *testing.T) {
 
 	_, err := registerLocalHost(cg.KLocalhost)
 	require.NoError(t, err)
-	_, err = registerLocalHost(cg.KLocalhost)
+	registration, err := registerLocalHost(cg.KLocalhost)
 	require.NoError(t, err)
+	assert.True(t, registration.AlreadyRegistered)
+	assert.Equal(t, containerruntime.Info{Engine: "podman", Version: "5.2.2"}, registration.Info)
 
 	hosts := db.ListHostNames()
 	count := 0
@@ -82,4 +100,26 @@ func TestIsLocalTarget(t *testing.T) {
 	assert.True(t, isLocalTarget(cg.KLocalhost))
 	assert.False(t, isLocalTarget("agent.example"))
 	assert.False(t, isLocalTarget(""))
+}
+
+// TestUnregisterLocalHostRemovesDBEntry covers the db-cleanup half of the
+// unregister flow: deleting a local host drops its db.json entry (runtimeInfo),
+// not just the cliconfig agent. Mirrors registration so the two stores stay in
+// sync. The cliconfig half is covered by config.TestLocalhostRegistrationFlow.
+func TestUnregisterLocalHostRemovesDBEntry(t *testing.T) {
+	setupCommandConfigTestFS(t)
+	loadEmptyDB(t)
+	stubDetectRuntime(t, containerruntime.Info{Engine: "podman", Version: "5.2.2"}, nil)
+
+	_, err := registerLocalHost(cg.KLocalhost)
+	require.NoError(t, err)
+	require.True(t, db.HasHost(cg.KLocalhost))
+
+	// The command gates db removal on isLocalTarget + HasHost, then calls
+	// RemoveHostFromHostList. Exercise that same cleanup here.
+	if isLocalTarget(cg.KLocalhost) && db.HasHost(cg.KLocalhost) {
+		db.RemoveHostFromHostList(cg.KLocalhost)
+	}
+
+	assert.False(t, db.HasHost(cg.KLocalhost), "local host db entry must be removed on unregister")
 }

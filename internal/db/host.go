@@ -290,3 +290,38 @@ func GetHostRuntime(hostName string) bo.RuntimeInfo {
 	}
 	return value.(bo.RuntimeInfo)
 }
+
+func SetHostAgentOwnership(hostName string, ownership bo.AgentOwnership) error {
+	var fn decorateHost = func(h *host) {
+		h.AgentOwnership = agentOwnership{
+			PID:     ownership.PID,
+			Address: ownership.Address,
+			Binary:  ownership.Binary,
+			Manager: ownership.Manager,
+		}
+	}
+	if err := fn.update(hostName); err != nil {
+		return cerr.AppendErrorFmt("Failed to update agent ownership for host %s", err, hostName)
+	}
+	return nil
+}
+
+func GetHostAgentOwnership(hostName string) bo.AgentOwnership {
+	var fn visitHost = func(h *host) any {
+		return bo.AgentOwnership{
+			PID:     h.AgentOwnership.PID,
+			Address: h.AgentOwnership.Address,
+			Binary:  h.AgentOwnership.Binary,
+			Manager: h.AgentOwnership.Manager,
+		}
+	}
+	value, err := fn.get(hostName)
+	if err != nil {
+		return bo.AgentOwnership{}
+	}
+	return value.(bo.AgentOwnership)
+}
+
+func ClearHostAgentOwnership(hostName string) error {
+	return SetHostAgentOwnership(hostName, bo.AgentOwnership{})
+}
