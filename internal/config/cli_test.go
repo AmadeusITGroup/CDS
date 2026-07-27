@@ -132,3 +132,31 @@ func TestAgentCRUDHelpersWithoutInit(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, agents)
 }
+
+// TestLocalhostRegistrationFlow covers the full `host add/get/delete localhost`
+// path: adding is idempotent by hostname (no duplicate :8087), and get/delete
+// resolve `localhost` to the stored port-only target. Regression for the two
+// bugs brought over from feat/agent-services.
+func TestLocalhostRegistrationFlow(t *testing.T) {
+	setupConfigTestFS(t)
+	require.NoError(t, cos.Fs.MkdirAll("/tmp/testconfig/.xcds", 0755))
+
+	add := func() error {
+		return AddAgentToConfig(NewAgent(WithTargetAddress(":8087")))
+	}
+	require.NoError(t, add())
+	require.NoError(t, add()) // second add must not duplicate
+
+	agents, err := RegisteredAgents()
+	require.NoError(t, err)
+	assert.Len(t, agents, 1)
+
+	got, err := RegisteredAgent("localhost")
+	require.NoError(t, err)
+	assert.Equal(t, ":8087", got.TargetSrv)
+
+	require.NoError(t, DeleteAgentFromConfig("localhost"))
+	agents, err = RegisteredAgents()
+	require.NoError(t, err)
+	assert.Empty(t, agents)
+}

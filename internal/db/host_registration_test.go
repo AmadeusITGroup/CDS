@@ -49,8 +49,22 @@ func TestSetAndGetHostRuntime(t *testing.T) {
 	}
 }
 
+func TestSetGetAndClearHostAgentOwnership(t *testing.T) {
+	tearDown := setupTest(t, data{hosts: hosts{Hosts: []*host{{Name: "localhost"}}}})
+	defer tearDown()
+
+	ownership := bo.AgentOwnership{PID: 1234, Address: ":8087", Binary: "cds-api-agent", Manager: "process"}
+
+	assert.NoError(t, SetHostAgentOwnership("localhost", ownership))
+	assert.Equal(t, ownership, GetHostAgentOwnership("localhost"))
+
+	assert.NoError(t, ClearHostAgentOwnership("localhost"))
+	assert.Equal(t, bo.AgentOwnership{}, GetHostAgentOwnership("localhost"))
+}
+
 // TestHostRuntimeBackwardCompatible ensures a db.json written before the
-// runtimeInfo field existed still loads, with the new field zero-valued.
+// runtimeInfo and agentOwnership fields existed still loads, with the new fields
+// zero-valued.
 func TestHostRuntimeBackwardCompatible(t *testing.T) {
 	legacy := `{"hosts":[{"name":"localhost","username":"dev"}]}`
 
@@ -63,4 +77,5 @@ func TestHostRuntimeBackwardCompatible(t *testing.T) {
 
 	assert.True(t, HasHost("localhost"))
 	assert.Equal(t, bo.RuntimeInfo{}, GetHostRuntime("localhost"))
+	assert.Equal(t, bo.AgentOwnership{}, GetHostAgentOwnership("localhost"))
 }

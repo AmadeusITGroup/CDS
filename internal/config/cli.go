@@ -44,6 +44,14 @@ func updateCLIAgentData(f func(*cliAgentData) error) error {
 // AddAgentToConfig appends an agent entry to the CLI config and persists the change back to the stored source.
 func AddAgentToConfig(a agent) error {
 	return updateCLIAgentData(func(c *cliAgentData) error {
+		// Idempotent by hostname: a second `host add localhost` replaces the
+		// existing entry instead of appending a duplicate :8087. Brought from
+		// feat/agent-services (findAgentHostIndex + host-keyed upsert).
+		host := targetServerHostname(a.TargetSrv)
+		if i := findAgentHostIndex(c.Agents, host); i >= 0 {
+			c.Agents[i] = a
+			return nil
+		}
 		c.Agents = append(c.Agents, a)
 		return nil
 	})
@@ -66,13 +74,23 @@ func RegisteredAgent(targetServer string) (agent, error) {
 	}
 
 	return invokeWithCLIAgentData(func(c cliAgentData) (agent, error) {
-		index := findAgentIndex(c.Agents, normalizedTarget)
+		index := resolveAgentIndex(c.Agents, normalizedTarget)
 		if index < 0 {
 			return agent{}, cerr.NewError(fmt.Sprintf("agent %q does not exist", normalizedTarget))
 		}
 
 		return c.Agents[index], nil
 	})
+}
+
+// resolveAgentIndex finds an agent by exact target address, falling back to a
+// hostname match so `localhost` resolves a stored `:8087`. Without the fallback,
+// `host get/delete localhost` cannot find the entry `host add` wrote.
+func resolveAgentIndex(agents []agent, target string) int {
+	if i := findAgentIndex(agents, target); i >= 0 {
+		return i
+	}
+	return findAgentHostIndex(agents, targetServerHostname(target))
 }
 
 // CreateAgentInConfig creates a new agent entry in the CLI config.
@@ -126,7 +144,7 @@ func DeleteAgentFromConfig(targetServer string) error {
 	}
 
 	return updateCLIAgentData(func(c *cliAgentData) error {
-		index := findAgentIndex(c.Agents, normalizedTarget)
+		index := resolveAgentIndex(c.Agents, normalizedTarget)
 		if index < 0 {
 			return cerr.NewError(fmt.Sprintf("agent %q does not exist", normalizedTarget))
 		}
@@ -252,6 +270,12 @@ func normalizeTargetServer(targetServer string) (string, error) {
 
 func findAgentIndex(agents []agent, targetServer string) int {
 	return slices.IndexFunc(agents, func(a agent) bool { return strings.TrimSpace(a.TargetSrv) == targetServer })
+}
+
+// findAgentHostIndex locates an agent by hostname rather than raw target address,
+// so `localhost` matches a stored `:8087`. Brought from feat/agent-services.
+func findAgentHostIndex(agents []agent, hostname string) int {
+	return slices.IndexFunc(agents, func(a agent) bool { return targetServerHostname(a.TargetSrv) == hostname })
 }
 
 func targetServerHostname(targetServer string) string {

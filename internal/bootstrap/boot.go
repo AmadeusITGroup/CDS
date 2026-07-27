@@ -3,6 +3,7 @@ package bootstrap
 import (
 	"net"
 
+	"github.com/amadeusitgroup/cds/internal/bo"
 	"github.com/amadeusitgroup/cds/internal/cerr"
 	"github.com/amadeusitgroup/cds/internal/clog"
 	"github.com/amadeusitgroup/cds/internal/config"
@@ -11,20 +12,20 @@ import (
 	"github.com/amadeusitgroup/cds/internal/systemd"
 )
 
-func StartAgent(hostname string) error {
+func StartAgent(hostname string) (bo.AgentOwnership, error) {
 	// check if agent is already running
 	running, err := isAgentRunning(hostname)
 	if err != nil {
-		return cerr.AppendErrorFmt("failed to check for agent running on %s", err, hostname)
+		return bo.AgentOwnership{}, cerr.AppendErrorFmt("failed to check for agent running on %s", err, hostname)
 	}
 	if running {
 		clog.Debug("Agent is already running")
-		return StartOnRunError{}
+		return bo.AgentOwnership{}, StartOnRunError{}
 	}
 	if hostname == cg.KLocalhost {
 		return fire()
 	}
-	return fireRemote(hostname)
+	return bo.AgentOwnership{}, fireRemote(hostname)
 
 }
 

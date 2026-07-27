@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"strings"
 
 	"github.com/amadeusitgroup/cds/internal/bootstrap"
 	"github.com/amadeusitgroup/cds/internal/cenv"
@@ -39,22 +40,11 @@ func init() {
 		return
 	}
 
-	// Bootstrap local agent
-	if err = bootstrap.StartAgent(cg.KLocalhost); err != nil {
-		if _, ok := err.(bootstrap.StartOnRunError); ok {
-			err = nil
-			clog.Debug("Agent is already running")
-		} else {
-			err = cerr.AppendError("Failed to start local agent", err)
-		}
-		return
-	}
-
-	// Init profile from config-resolved reader
-	r, profileErr := config.ProfileReader()
+	// Init profile from config-resolved reader when an optional profile exists.
+	r, profileExists, profileErr := config.OptionalProfileReader()
 	if profileErr != nil {
 		clog.Warn("Failed to read profile source, skipping", profileErr)
-	} else {
+	} else if profileExists {
 		profile.New(profile.WithReader(r))
 	}
 }
@@ -74,19 +64,64 @@ func main() {
 		clog.Error("Failed to load state from database", err)
 		os.Exit(1)
 	}
-	var saveConfigErr error
+	exitCode := 0
 	defer func() {
-		saveConfigErr = db.Save()
-		if saveConfigErr != nil {
+		if saveConfigErr := db.Save(); saveConfigErr != nil {
 			clog.Error("Failed to save state to database", saveConfigErr)
-			os.Exit(1)
+			exitCode = 1
+		}
+		if exitCode != 0 {
+			os.Exit(exitCode)
 		}
 	}()
 
+	if err := startRegisteredLocalAgent(os.Args[1:]); err != nil {
+		clog.Error("Failed to start local agent", err)
+		exitCode = 1
+		return
+	}
+
 	if err := root.Execute(); err != nil {
 		clog.Error(fmt.Sprintf("Failed to execute command: %v", err))
-		os.Exit(1)
+		exitCode = 1
+		return
 	}
+}
+
+func startRegisteredLocalAgent(args []string) error {
+	if isLocalHostDeleteCommand(args) {
+		return nil
+	}
+	if !db.HasHost(cg.KLocalhost) {
+		return nil
+	}
+	if _, addrErr := config.AgentAddress(cg.KLocalhost); addrErr != nil {
+		return nil
+	}
+	ownership, err := bootstrap.StartAgent(cg.KLocalhost)
+	if err != nil {
+		if _, ok := err.(bootstrap.StartOnRunError); ok {
+			clog.Debug("Agent is already running")
+			return nil
+		}
+		return err
+	}
+	if ownership.Manager != cg.EmptyStr && db.HasHost(cg.KLocalhost) {
+		return db.SetHostAgentOwnership(cg.KLocalhost, ownership)
+	}
+	return nil
+}
+
+func isLocalHostDeleteCommand(args []string) bool {
+	if len(args) < 4 || args[0] != "space" || args[1] != "host" {
+		return false
+	}
+	subcommand := args[2]
+	if subcommand != "delete" && subcommand != "remove" && subcommand != "rm" {
+		return false
+	}
+	target := strings.TrimSpace(args[3])
+	return target == cg.KLocalhost || strings.HasPrefix(target, ":")
 }
 
 // TODO:BK: refactor - logging implementation details exposed into the wild

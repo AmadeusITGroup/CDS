@@ -30,3 +30,11 @@ type RuntimeInfo struct {
 	Engine  string `json:"engine"`
 	Version string `json:"version"`
 }
+
+// AgentOwnership records the local agent process that CDS started and may stop.
+type AgentOwnership struct {
+	PID     int    `json:"pid"`
+	Address string `json:"address"`
+	Binary  string `json:"binary"`
+	Manager string `json:"manager"`
+}

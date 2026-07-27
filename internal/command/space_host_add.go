@@ -22,6 +22,11 @@ import (
 // registration. It is a package variable so tests can substitute a fake.
 var detectRuntime = containerruntime.Detect
 
+type localHostRegistration struct {
+	Info              containerruntime.Info
+	AlreadyRegistered bool
+}
+
 type spcHostAdd struct {
 	defaultCmd
 }
@@ -56,33 +61,53 @@ func (s *spcHostAdd) runE(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	// TODO: fix::bootstrap, There is a mix of responsibilities between the command and the bootstrap agent regarding host management and registration.
-	// Currently the bootstrap package registers the agent in the config. I believe it should be the responsibility of the command to manage the config entries,
-	// while the bootstrap package should focus on launching and managing the agent process.
-	err = bootstrap.StartAgent(hostName)
-	alreadyRunning := false
-	if err != nil {
-		if !errors.As(err, &bootstrap.StartOnRunError{}) {
-			return err
-		}
-		alreadyRunning = true
-	}
-
 	// For a local host, detect the container runtime and register the host as a
 	// DevContainer deploy target. Detection failures (no Podman, machine not
 	// running) abort registration with an actionable message. The same predicate
 	// as bootstrap.StartAgent is used so a given target is treated as local by
 	// both the agent launch and the host registration.
 	if isLocalTarget(hostName) {
-		info, err := registerLocalHost(hostName)
+		registration, err := registerLocalHost(hostName)
 		if err != nil {
 			return err
 		}
+		ownership, err := bootstrap.StartAgent(hostName)
+		if err != nil {
+			if !errors.As(err, &bootstrap.StartOnRunError{}) {
+				if !registration.AlreadyRegistered && db.HasHost(hostName) {
+					db.RemoveHostFromHostList(hostName)
+				}
+				return err
+			}
+		}
+		if ownership.Manager != cg.EmptyStr {
+			if err := db.SetHostAgentOwnership(hostName, ownership); err != nil {
+				if stopErr := bootstrap.StopManagedAgent(ownership); stopErr != nil {
+					return cerr.AppendError("failed to rollback started local agent after ownership persistence failure", stopErr)
+				}
+				return err
+			}
+		}
+		message := fmt.Sprintf("Registered local host %q with runtime %s %s",
+			hostName, registration.Info.Engine, registration.Info.Version)
+		if registration.AlreadyRegistered {
+			message = fmt.Sprintf("Local host %q is already registered with runtime %s %s",
+				hostName, registration.Info.Engine, registration.Info.Version)
+		}
 		o := output.FromContext(cmd.Context())
-		return output.Render(o, output.SimpleResult{
-			Message: fmt.Sprintf("Registered local host %q with runtime %s %s",
-				hostName, info.Engine, info.Version),
-		})
+		return output.Render(o, output.SimpleResult{Message: message})
+	}
+
+	// TODO: fix::bootstrap, There is a mix of responsibilities between the command and the bootstrap agent regarding host management and registration.
+	// Currently the bootstrap package registers the agent in the config. I believe it should be the responsibility of the command to manage the config entries,
+	// while the bootstrap package should focus on launching and managing the agent process.
+	_, err = bootstrap.StartAgent(hostName)
+	alreadyRunning := false
+	if err != nil {
+		if !errors.As(err, &bootstrap.StartOnRunError{}) {
+			return err
+		}
+		alreadyRunning = true
 	}
 
 	message := fmt.Sprintf("Bootstrapped host %q", hostName)
@@ -100,21 +125,34 @@ func isLocalTarget(hostName string) bool {
 	return hostName == cg.KLocalhost
 }
 
-// registerLocalHost detects the local container runtime and records the host in
-// the CLI state as a target for DevContainer deployment. It is idempotent: an
-// existing host entry is updated in place rather than duplicated. It returns the
-// detected runtime so the caller can report what was registered. The persisted
+// registerLocalHost records the local host as a target for DevContainer
+// deployment. It is idempotent: an existing host with runtime info is reported
+// as already registered instead of re-detecting or duplicating it. The persisted
 // state is flushed to disk by the caller (main defers db.Save()).
-func registerLocalHost(hostName string) (containerruntime.Info, error) {
+func registerLocalHost(hostName string) (localHostRegistration, error) {
+	if db.HasHost(hostName) {
+		runtimeInfo := db.GetHostRuntime(hostName)
+		if runtimeInfo.Engine != cg.EmptyStr || runtimeInfo.Version != cg.EmptyStr {
+			return localHostRegistration{
+				Info: containerruntime.Info{
+					Engine:  runtimeInfo.Engine,
+					Version: runtimeInfo.Version,
+				},
+				AlreadyRegistered: true,
+			}, nil
+		}
+	}
+
 	// Return the detection error as-is: it already carries an actionable message,
 	// and not wrapping it preserves the typed sentinels (containerruntime.Err*)
 	// so callers can branch with errors.Is.
 	info, err := detectRuntime()
 	if err != nil {
-		return containerruntime.Info{}, err
+		return localHostRegistration{}, err
 	}
 
-	if !db.HasHost(hostName) {
+	alreadyRegistered := db.HasHost(hostName)
+	if !alreadyRegistered {
 		db.AddHost(hostName, cenv.GetUsernameFromEnv())
 	}
 
@@ -122,10 +160,10 @@ func registerLocalHost(hostName string) (containerruntime.Info, error) {
 		Engine:  info.Engine,
 		Version: info.Version,
 	}); err != nil {
-		return containerruntime.Info{}, err
+		return localHostRegistration{}, err
 	}
 
-	return info, nil
+	return localHostRegistration{Info: info, AlreadyRegistered: alreadyRegistered}, nil
 }
 
 func bootstrapHostName(targetServer string) (string, error) {

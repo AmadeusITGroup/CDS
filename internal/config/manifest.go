@@ -57,6 +57,27 @@ func ProfileReader() (io.Reader, error) {
 	return src.Read()
 }
 
+// OptionalProfileReader returns a profile reader when the configured optional
+// profile file exists. A missing profile is not an error.
+func OptionalProfileReader() (io.Reader, bool, error) {
+	src, err := profileSource()
+	if err != nil {
+		return nil, false, err
+	}
+	exists, err := src.Exists()
+	if err != nil {
+		return nil, false, err
+	}
+	if !exists {
+		return nil, false, nil
+	}
+	r, err := src.Read()
+	if err != nil {
+		return nil, false, err
+	}
+	return r, true, nil
+}
+
 // DBSource returns the resolved source for the state database.
 // The db package accepts source.Source directly so callers can pass
 // the return value through without importing source themselves.

@@ -2,6 +2,7 @@ package command
 
 import (
 	"github.com/amadeusitgroup/cds/internal/config"
+	cg "github.com/amadeusitgroup/cds/internal/global"
 	"github.com/amadeusitgroup/cds/internal/output"
 	"github.com/spf13/cobra"
 )
@@ -40,7 +41,7 @@ func (s *spcHostList) runE(cmd *cobra.Command, args []string) error {
 	agentEntries := make([]agentListEntry, 0, len(agents))
 	for _, a := range agents {
 		agentEntries = append(agentEntries, agentListEntry{
-			Hostname:  a.TargetSrv,
+			Hostname:  displayAgentTarget(a.TargetSrv),
 			SSHTunnel: a.SshTunnel,
 			TLS:       a.Certs.CA != "",
 		})
@@ -59,6 +60,13 @@ type agentListEntry struct {
 	Hostname  string
 	SSHTunnel bool
 	TLS       bool
+}
+
+func displayAgentTarget(targetServer string) string {
+	if len(targetServer) > 0 && targetServer[0] == ':' {
+		return cg.KLocalhost + targetServer
+	}
+	return targetServer
 }
 
 func prepareHostListOutput(agents []agentListEntry) output.TableResult {
