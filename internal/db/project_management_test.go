@@ -88,6 +88,27 @@ func Test_AddProjectUsingConfDir(t *testing.T) {
 	assert.Equal(t, "/path/to/.devcontainer", confDir)
 }
 
+func Test_AddProjectUsingConfDir_NormalizesProjectName(t *testing.T) {
+	bom := data{projects: projects{Projects: []*project{}}}
+	tearDown := setupTest(t, bom)
+	defer tearDown()
+
+	err := AddProjectUsingConfDir("  newproj  ", "/path/to/.devcontainer")
+	assert.NoError(t, err)
+	assert.True(t, HasProject("newproj"))
+	assert.False(t, HasProject("  newproj  "))
+}
+
+func Test_AddProjectUsingConfDir_EmptyProjectName(t *testing.T) {
+	bom := data{projects: projects{Projects: []*project{}}}
+	tearDown := setupTest(t, bom)
+	defer tearDown()
+
+	err := AddProjectUsingConfDir("   ", "/path")
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "Project name cannot be empty")
+}
+
 func Test_AddProjectUsingConfDir_AlreadyExists(t *testing.T) {
 	bom := data{projects: projects{Projects: []*project{{Name: "existing"}}}}
 	tearDown := setupTest(t, bom)
@@ -107,6 +128,27 @@ func Test_AddProjectUsingFlavour(t *testing.T) {
 	assert.True(t, HasProject("flproj"))
 	assert.True(t, IsProjectConfiguredWithFlavour("flproj"))
 	assert.Equal(t, "my-flavour", ProjectFlavourName("flproj"))
+}
+
+func Test_AddProjectUsingFlavour_NormalizesProjectName(t *testing.T) {
+	bom := data{projects: projects{Projects: []*project{}}}
+	tearDown := setupTest(t, bom)
+	defer tearDown()
+
+	err := AddProjectUsingFlavour("  flproj  ", "my-flavour", "/override")
+	assert.NoError(t, err)
+	assert.True(t, HasProject("flproj"))
+	assert.False(t, HasProject("  flproj  "))
+}
+
+func Test_AddProjectUsingFlavour_EmptyProjectName(t *testing.T) {
+	bom := data{projects: projects{Projects: []*project{}}}
+	tearDown := setupTest(t, bom)
+	defer tearDown()
+
+	err := AddProjectUsingFlavour("   ", "flavour", "")
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "Project name cannot be empty")
 }
 
 func Test_AddProjectUsingFlavour_AlreadyExists(t *testing.T) {
