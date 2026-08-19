@@ -70,11 +70,19 @@ func CreateTempFileWithContent(dir, pattern string, r io.Reader) (string, error)
 	if err != nil {
 		return "", err
 	}
+	cleanup := true
+	defer func() {
+		if cleanup {
+			_ = Fs.Remove(tmpFile.Name())
+		}
+	}()
 	if _, err := io.Copy(tmpFile, r); err != nil {
+		_ = tmpFile.Close()
 		return "", err
 	}
 	if err := tmpFile.Close(); err != nil {
 		return "", err
 	}
+	cleanup = false
 	return tmpFile.Name(), nil
 }

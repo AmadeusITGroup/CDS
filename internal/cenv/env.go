@@ -14,14 +14,32 @@ const (
 
 	kClientConfigDirName = ".xcds"
 	kAgentConfigDirName  = ".xcds-agent"
+
+	kCacheDirName = "cache"
 )
 
 var (
 	sDataDir = kClientConfigDirName
 )
 
+// SetConfigDirForClient makes config paths resolve under the CLI config directory.
+func SetConfigDirForClient() {
+	sDataDir = kClientConfigDirName
+}
+
+// SetConfigDirForAgent makes config paths resolve under the agent config directory.
 func SetConfigDirForAgent() {
 	sDataDir = kAgentConfigDirName
+}
+
+// ClientConfigDir returns a path under the CLI config directory regardless of the current process mode.
+func ClientConfigDir(dirname string) string {
+	return configPathFor(kClientConfigDirName, dirname)
+}
+
+// AgentConfigDir returns a path under the agent config directory regardless of the current process mode.
+func AgentConfigDir(dirname string) string {
+	return configPathFor(kAgentConfigDirName, dirname)
 }
 
 func ConfigFile(filename string) string {
@@ -36,15 +54,23 @@ func GlobalConfigPath() string {
 	return ConfigDir(cg.EmptyStr)
 }
 
+func CacheDir() string {
+	return ConfigDir(kCacheDirName)
+}
+
 func configPath(filename string) string {
+	return configPathFor(sDataDir, filename)
+}
+
+func configPathFor(dataDir, filename string) string {
 	if dir := os.Getenv(kConfigPathEnvVar); dir != "" {
-		return filepath.Join(dir, sDataDir, filename)
+		return filepath.Join(dir, dataDir, filename)
 	}
 	homedir, err := os.UserHomeDir()
 	if err != nil {
 		panic(err)
 	}
-	return filepath.Join(homedir, sDataDir, filename)
+	return filepath.Join(homedir, dataDir, filename)
 }
 
 // determines the users based on local ENV variables

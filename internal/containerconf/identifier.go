@@ -21,6 +21,13 @@ func resourceIdentifier(kind, logicalName string) (string, error) {
 	return path.Join(ResourceNamespace, normalizedKind, url.PathEscape(logicalName)), nil
 }
 
+// ResourceIdentifier returns the canonical identifier for one logical deploy
+// resource. Callers outside containerconf use this to share the same staging and
+// lookup policy as artifact collectors.
+func ResourceIdentifier(kind, logicalName string) (string, error) {
+	return resourceIdentifier(kind, logicalName)
+}
+
 // SingletonIdentifier returns the canonical identifier for resources whose
 // logical runtime name is the same as their kind, such as auth and SSH key
 // artifacts.
@@ -101,6 +108,11 @@ func normalizeIdentifier(identifier string) (string, error) {
 	}
 
 	return normalized, nil
+}
+
+// NormalizeIdentifier validates and canonicalizes a logical artifact identifier.
+func NormalizeIdentifier(identifier string) (string, error) {
+	return normalizeIdentifier(identifier)
 }
 
 func normalizeResourceKind(kind string) (string, error) {

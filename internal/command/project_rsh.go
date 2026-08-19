@@ -1,13 +1,15 @@
 package command
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/spf13/cobra"
 
 	"github.com/amadeusitgroup/cds/internal/cerr"
-	"github.com/amadeusitgroup/cds/internal/clog"
 	"github.com/amadeusitgroup/cds/internal/db"
+	"github.com/amadeusitgroup/cds/internal/host"
+	"github.com/amadeusitgroup/cds/internal/shexec"
 )
 
 var _ baseCmd = (*projectRsh)(nil)
@@ -57,14 +59,43 @@ func (prsh *projectRsh) execute(cmd *cobra.Command, args []string) error {
 			getTipSsh(projectName))
 	}
 
-	// TODO: Agent Service interaction needed — remote shell into container:
-	// 1. Align container statuses via engine (alignContainerStatuses)
-	// 2. Verify running containers exist
-	// 3. Get first running container info
-	// 4. Build target host with SSH key paths
-	// 5. Resolve session user (--user flag or db.ProjectContainerRemoteUser)
-	// 6. Build remote execution engine with K_ACTION_EXE and K_EXEC_CMD_RSH
-	// 7. Attach process using key (shexec.AttachProcessUsingKey)
-	clog.Info(fmt.Sprintf("Project '%s' has containers configured. Agent service required for remote shell access.", projectName))
-	return cerr.NewError("TODO: Agent service not yet implemented — cannot execute 'rsh' operation")
+	if err := withProjectAgent(projectName, func(services agentServices, ctx context.Context) error {
+		return syncProjectContainersFromAgent(ctx, services.container, projectName, containers, false)
+	}); err != nil {
+		return err
+	}
+
+	containers = db.ProjectContainersName(projectName)
+	if len(containers) == 0 {
+		return cerr.NewError("No containers to open remote shell into.\n" +
+			getTipRun(projectName))
+	}
+	containerName := containers[0]
+	port := db.ContainerSSHPort(projectName, containerName)
+	if port <= 0 {
+		return cerr.NewError(fmt.Sprintf("Container %q does not expose an SSH port", containerName))
+	}
+
+	remoteUser := prsh.user
+	if remoteUser == "" {
+		remoteUser = db.ProjectContainerRemoteUser(projectName, containerName)
+	}
+	if remoteUser == "" {
+		return cerr.NewError(fmt.Sprintf("Container %q does not have a configured remote user", containerName))
+	}
+
+	privateKeyPath, publicKeyPath, err := projectSSHKeyPair(projectName)
+	if err != nil {
+		return err
+	}
+	target := host.New(
+		host.WithName(projectAgentHost(projectName)),
+		host.WithUsername(remoteUser),
+		host.WithPort(port),
+		host.WithKeyPair(host.NewKeyPair(
+			host.WithPathToPrv(privateKeyPath),
+			host.WithPathToPub(publicKeyPath),
+		)),
+	)
+	return shexec.AttachShellUsingKey(target)
 }

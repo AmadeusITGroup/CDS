@@ -1,6 +1,7 @@
 package command
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/spf13/cobra"
@@ -40,21 +41,33 @@ func (punshare *projectUnshare) subCommands() []baseCmd {
 func (punshare *projectUnshare) execute(cmd *cobra.Command, args []string) error {
 	projectName := getProjectNameFromArgsOrContext(args)
 
-	// TODO: Leverage ContainerConf package once implemented — validate devcontainer configuration
-	clog.Debug("Skipping devcontainer configuration validation — ContainerConf not yet implemented")
-
 	containers := db.ProjectContainersName(projectName)
 	if len(containers) == 0 {
 		return cerr.NewError("No containers to unshare.\n" +
 			getTipRun(projectName))
 	}
 
-	// TODO: Agent Service interaction needed — unshare container access:
-	// 1. Align container statuses via engine (alignContainerStatuses)
-	// 2. Verify running containers exist
-	// 3. Get first running container info
-	// 4. Delete shared keys from container authorized_keys (engine.DeleteSharedKeys)
-	// 5. Remove temporary keypair directory (os.RemoveAll on shared keys path)
-	clog.Info(fmt.Sprintf("Project '%s' unshare requires agent service to proceed.", projectName))
-	return cerr.NewError("TODO: Agent service not yet implemented — cannot execute 'unshare' operation")
+	if err := syncProjectContainers(projectName); err != nil {
+		return err
+	}
+
+	publicKey, keyPair, err := existingProjectSharedPublicKey(projectName)
+	if err != nil {
+		return err
+	}
+
+	return withProjectAgent(projectName, func(services agentServices, ctx context.Context) error {
+		containerName, remoteUser, err := projectPrimaryContainer(projectName)
+		if err != nil {
+			return err
+		}
+		if _, err := executeProjectContainerCommand(ctx, services.container, projectName, removeSharedKeyCommand(remoteUser, publicKey), projectSharedKeyUser); err != nil {
+			return cerr.AppendErrorFmt("Failed to remove shared SSH key from container %s", err, containerName)
+		}
+
+		removeProjectSharedKeyPair(projectName)
+		clog.Info(fmt.Sprintf("Project '%s' is no longer shared through container '%s'.", projectName, containerName))
+		clog.Info(fmt.Sprintf("Removed shared key pair rooted at %s", keyPair.PathToPrv))
+		return nil
+	})
 }

@@ -4,6 +4,8 @@ coverage.out
 *.pem
 .DS_Store
 .vscode
+.xcds/
+.xcds-agent/
 *.exe
 tarball-deliv
 **/api/**/*.pb.go

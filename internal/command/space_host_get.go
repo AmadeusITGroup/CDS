@@ -55,25 +55,26 @@ func (r spaceHostGetResult) MachineReadable() any {
 }
 
 func (s *spcHostGet) runE(cmd *cobra.Command, args []string) error {
-	agent, err := config.RegisteredAgent(args[0])
+	hostName, err := bootstrapHostName(args[0])
+	if err != nil {
+		return err
+	}
+	targetAddress, err := config.AgentAddress(hostName)
+	if err != nil {
+		return err
+	}
+	agent, err := config.RegisteredAgent(targetAddress)
 	if err != nil {
 		return err
 	}
 
-	// TODO: Sync agent status.
-	reachable := func() bool {
-		return false
-	}()
-
-	// TODO: Do the actual RPC call to the agent to know its version
-	version := func() string {
-		return "0.0.0-unimplemented"
-	}
+	version, versionErr := agentVersionForHost(hostName)
+	reachable := versionErr == nil
 
 	o := output.FromContext(cmd.Context())
 	return output.Render(o, spaceHostGetResult{
 		Hostname:  agent.TargetSrv,
 		Reachable: reachable,
-		Version:   version(),
+		Version:   version,
 	})
 }

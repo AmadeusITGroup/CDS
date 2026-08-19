@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/amadeusitgroup/cds/internal/cerr"
 	"github.com/amadeusitgroup/cds/internal/clog"
@@ -18,7 +19,13 @@ import (
 const (
 	kTmp        = "tmp"
 	kTmpPattern = "tmp-file-*"
+	kTmpMaxAge  = 24 * time.Hour
 )
+
+var managedTmpPrefixes = []string{
+	strings.TrimSuffix(kTmpPattern, "*"),
+	"cds-tmp-",
+}
 
 func EnsureDir(path string, perm fs.FileMode) error {
 	if fs.FileMode(0100)&perm == 0 {
@@ -191,10 +198,62 @@ func CopyFile(src, dst string) error {
 }
 
 func CreateTempFileWithContent(reader io.Reader) (string, error) {
-	tmpFilePath, err := cos.CreateTempFileWithContent(ConfigDir(kTmp), kTmpPattern, reader)
+	tmpDir := ConfigDir(kTmp)
+	if err := EnsureDir(tmpDir, cg.KPermDir); err != nil {
+		return "", cerr.AppendErrorFmt("Failed ensuring tmp directory %s", err, tmpDir)
+	}
+	tmpFilePath, err := cos.CreateTempFileWithContent(tmpDir, kTmpPattern, reader)
 	if err != nil {
-		return "", cerr.AppendErrorFmt("Failed creating tmp file in local (%s,%s)", err, ConfigDir(kTmp), kTmpPattern)
+		return "", cerr.AppendErrorFmt("Failed creating tmp file in local (%s,%s)", err, tmpDir, kTmpPattern)
 	}
 
 	return tmpFilePath, nil
+}
+
+func RemoveTempFile(path string) error {
+	tmpDir := filepath.Clean(ConfigDir(kTmp))
+	cleanPath := filepath.Clean(path)
+	relPath, err := filepath.Rel(tmpDir, cleanPath)
+	if err != nil || relPath == "." || strings.HasPrefix(relPath, ".."+string(os.PathSeparator)) || relPath == ".." || filepath.IsAbs(relPath) {
+		return cerr.NewError(fmt.Sprintf("refusing to remove non-temp file %s", path))
+	}
+	if err := cos.Fs.Remove(cleanPath); err != nil && !os.IsNotExist(err) {
+		return cerr.AppendError(fmt.Sprintf("Failed to remove temporary file %s", cleanPath), err)
+	}
+	return nil
+}
+
+func CleanupStaleTempFiles() error {
+	return cleanupStaleTempFiles(time.Now(), kTmpMaxAge)
+}
+
+func cleanupStaleTempFiles(now time.Time, maxAge time.Duration) error {
+	tmpDir := ConfigDir(kTmp)
+	entries, err := cos.ReadDir(tmpDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return cerr.AppendError(fmt.Sprintf("Failed to read temporary directory %s", tmpDir), err)
+	}
+
+	cutoff := now.Add(-maxAge)
+	for _, entry := range entries {
+		if entry.IsDir() || !isManagedTempFile(entry.Name()) || entry.ModTime().After(cutoff) {
+			continue
+		}
+		if err := cos.Fs.Remove(filepath.Join(tmpDir, entry.Name())); err != nil && !os.IsNotExist(err) {
+			return cerr.AppendError(fmt.Sprintf("Failed to remove stale temporary file %s", entry.Name()), err)
+		}
+	}
+	return nil
+}
+
+func isManagedTempFile(name string) bool {
+	for _, prefix := range managedTmpPrefixes {
+		if strings.HasPrefix(name, prefix) {
+			return true
+		}
+	}
+	return false
 }

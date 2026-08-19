@@ -14,7 +14,7 @@ import (
 )
 
 // const (
-// 	artifactoryUrl = "https://repository.rnd.fix.me"
+// 	artifactoryUrl = "https://repository.example.com"
 // )
 
 // callbacks to obtain credentials from outside of this package

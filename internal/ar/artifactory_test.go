@@ -56,7 +56,7 @@ const (
 		  "uri" : "/devbox",
 		  "folder" : true
 		} ],
-		"uri" : "https://https://repository.rnd.fix.me:443/artifactory/api/storage/devenv-generic-prod-devenv-exp"
+		"uri" : "https://https://repository.example.com:443/artifactory/api/storage/my-generic-repo"
 	  }`
 	validToken        = "ACCESS_TOKEN"
 	validRefreshToken = "REFRESH_TOKEN"
@@ -131,7 +131,7 @@ var _ = ginkgo.Describe("net/artifactory", func() {
 	// 			return httpmock.NewStringResponse(200, versionResponse), nil
 	// 		})
 
-	// 		httpmock.RegisterResponder("GET", fmt.Sprintf("%v/api/storage/devenv-generic-prod-devenv-exp", artifactoryUrl), func(r *http.Request) (*http.Response, error) {
+	// 		httpmock.RegisterResponder("GET", fmt.Sprintf("%v/api/storage/my-generic-repo", artifactoryUrl), func(r *http.Request) (*http.Response, error) {
 	// 			return httpmock.NewStringResponse(200, devenvGenericProdStorageResponse), nil
 	// 		})
 	// 	})
@@ -140,7 +140,7 @@ var _ = ginkgo.Describe("net/artifactory", func() {
 	// 		am.tkn = ""
 	// 		client, err := NewArtifactoryClient("rnd")
 	// 		gomega.Expect(err).ToNot(gomega.HaveOccurred())
-	// 		fileList, err := client.ListDirectories("devenv-generic-prod-devenv-exp", "")
+	// 		fileList, err := client.ListDirectories("my-generic-repo", "")
 	// 		gomega.Expect(err).ToNot(gomega.HaveOccurred())
 
 	// 		gomega.Expect(fileList).To(gomega.ContainElement("xdlc"))

@@ -68,6 +68,15 @@ func TestAgentAddressDoesNotFallbackToHardcodedLocalhostPort(t *testing.T) {
 	assert.Contains(t, err.Error(), `No agent found with hostname "localhost"`)
 }
 
+func TestAgentAddressIfRegisteredReturnsMissingWithoutError(t *testing.T) {
+	setupConfigTestFS(t)
+
+	address, found, err := AgentAddressIfRegistered("localhost")
+	require.NoError(t, err)
+	assert.False(t, found)
+	assert.Empty(t, address)
+}
+
 func TestAddAgentToConfigPersistsAgentsWithoutInit(t *testing.T) {
 	setupConfigTestFS(t)
 
@@ -133,30 +142,64 @@ func TestAgentCRUDHelpersWithoutInit(t *testing.T) {
 	assert.Empty(t, agents)
 }
 
-// TestLocalhostRegistrationFlow covers the full `host add/get/delete localhost`
-// path: adding is idempotent by hostname (no duplicate :8087), and get/delete
-// resolve `localhost` to the stored port-only target. Regression for the two
-// bugs brought over from feat/agent-services.
-func TestLocalhostRegistrationFlow(t *testing.T) {
+func TestRegisteredAgentsDeduplicatesSameHostEntries(t *testing.T) {
 	setupConfigTestFS(t)
-	require.NoError(t, cos.Fs.MkdirAll("/tmp/testconfig/.xcds", 0755))
 
-	add := func() error {
-		return AddAgentToConfig(NewAgent(WithTargetAddress(":8087")))
-	}
-	require.NoError(t, add())
-	require.NoError(t, add()) // second add must not duplicate
+	require.NoError(t, cos.Fs.MkdirAll("/tmp/testconfig/.xcds", 0755))
+	require.NoError(t, cos.WriteFile("/tmp/testconfig/.xcds/cliconfig.yaml", []byte(`apiVersion: v1
+agents:
+  - targetServer: localhost:8087
+    tls:
+      ca: /tmp/old-ca.pem
+  - targetServer: :9091
+    tls:
+      ca: /tmp/new-ca.pem
+  - targetServer: https://remote.example.com:8443
+  - targetServer: REMOTE.example.com:9443
+`), 0600))
 
 	agents, err := RegisteredAgents()
 	require.NoError(t, err)
-	assert.Len(t, agents, 1)
+	require.Len(t, agents, 2)
+	assert.Equal(t, ":9091", agents[0].TargetSrv)
+	assert.Equal(t, "/tmp/new-ca.pem", agents[0].Certs.CA)
+	assert.Equal(t, "remote.example.com:9443", agents[1].TargetSrv)
+}
 
-	got, err := RegisteredAgent("localhost")
-	require.NoError(t, err)
-	assert.Equal(t, ":8087", got.TargetSrv)
+func TestCreateAgentInConfigRejectsSameHostVariant(t *testing.T) {
+	setupConfigTestFS(t)
 
-	require.NoError(t, DeleteAgentFromConfig("localhost"))
-	agents, err = RegisteredAgents()
+	require.NoError(t, CreateAgentInConfig(NewAgent(WithTargetAddress("localhost:8087"))))
+
+	err := CreateAgentInConfig(NewAgent(WithTargetAddress(":9091")))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `agent host "localhost" already exists`)
+}
+
+func TestUpsertAgentForHostInConfigReplacesExistingHostEntry(t *testing.T) {
+	setupConfigTestFS(t)
+
+	require.NoError(t, CreateAgentInConfig(NewAgent(
+		WithTargetAddress(":9091"),
+		WithAgentTLS(NewTlssecret(WithCA("/tmp/old-ca.pem"))),
+	)))
+
+	require.NoError(t, UpsertAgentForHostInConfig("localhost", NewAgent(
+		WithTargetAddress(":8087"),
+		WithAgentTLS(NewTlssecret(
+			WithCA("/tmp/ca.pem"),
+			WithCert("/tmp/client.pem"),
+			WithKey("/tmp/client-key.pem"),
+		)),
+	)))
+
+	agents, err := RegisteredAgents()
 	require.NoError(t, err)
-	assert.Empty(t, agents)
+	require.Len(t, agents, 1)
+	assert.Equal(t, ":8087", agents[0].TargetSrv)
+	assert.Equal(t, "/tmp/ca.pem", agents[0].Certs.CA)
+
+	address, err := AgentAddress("localhost")
+	require.NoError(t, err)
+	assert.Equal(t, ":8087", address)
 }

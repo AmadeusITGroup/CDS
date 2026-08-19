@@ -1,11 +1,11 @@
 package command
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/spf13/cobra"
 
-	"github.com/amadeusitgroup/cds/internal/cerr"
 	"github.com/amadeusitgroup/cds/internal/clog"
 	"github.com/amadeusitgroup/cds/internal/db"
 )
@@ -49,21 +49,15 @@ func (pc *projectClear) initSubCommands() {
 
 // projectClearMain is the core of the 'clear' command, reused by the 'drain' and 'delete' commands.
 func projectClearMain(projectName string) error {
-	// TODO: Agent Service interaction needed — full clear sequence:
-	// 1. Sync container statuses with reality (safeSyncContainerInConfig)
-	// 2. Stop running containers via engine
-	// 3. Re-align container statuses
-	// 4. Remove containers via engine
-	// 5. Re-align container statuses
-	// 6. Verify no containers remain
-
 	containers := db.ProjectContainersName(projectName)
 	if len(containers) == 0 {
 		clog.Warn("No containers found in configuration, nothing to clear.")
 		return nil
 	}
 
-	return cerr.NewError("TODO: Agent service not yet implemented — cannot execute clear (stop + remove containers) operation")
+	return withProjectAgent(projectName, func(services agentServices, ctx context.Context) error {
+		return clearProjectContainersOnAgent(ctx, services.container, projectName)
+	})
 }
 
 func (pc *projectClear) execute(cmd *cobra.Command, args []string) error {

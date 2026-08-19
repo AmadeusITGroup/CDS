@@ -7,6 +7,16 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// displayAgentTarget renders a stored agent target for the host list. A bare
+// port such as ":8087" is shown as "localhost:8087" so a locally-registered
+// agent is recognizable by hostname.
+func displayAgentTarget(targetServer string) string {
+	if len(targetServer) > 0 && targetServer[0] == ':' {
+		return cg.KLocalhost + targetServer
+	}
+	return targetServer
+}
+
 type spcHostList struct {
 	defaultCmd
 }
@@ -60,13 +70,6 @@ type agentListEntry struct {
 	Hostname  string
 	SSHTunnel bool
 	TLS       bool
-}
-
-func displayAgentTarget(targetServer string) string {
-	if len(targetServer) > 0 && targetServer[0] == ':' {
-		return cg.KLocalhost + targetServer
-	}
-	return targetServer
 }
 
 func prepareHostListOutput(agents []agentListEntry) output.TableResult {

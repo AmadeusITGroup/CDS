@@ -198,6 +198,53 @@ func TestEnsureSourceWithDefault_Exists(t *testing.T) {
 	assert.Equal(t, "existing", string(data))
 }
 
+func TestInitCLIConfig_DoesNotResolveProfileSource(t *testing.T) {
+	cos.Fs = afero.NewMemMapFs()
+	defer cos.SetRealFileSystem()
+
+	t.Setenv("CDS_CONFIG_PATH", "/tmp/testconfig")
+
+	manifestPath := "/tmp/testconfig/.xcds/" + kManifestFileName
+	require.NoError(t, cos.Fs.MkdirAll("/tmp/testconfig/.xcds", 0755))
+	require.NoError(t, cos.WriteFile(manifestPath, []byte(`apiVersion: v1
+sources:
+  cliagentconfig:
+    type: localfs
+    ref: /tmp/testconfig/.xcds/cliconfig.yaml
+  profile:
+    type: unsupported
+    ref: ignored
+  db:
+    type: localfs
+    ref: /tmp/testconfig/.xcds/db.json
+`), 0600))
+
+	require.NoError(t, InitCLIConfig())
+	assert.False(t, cos.Exists("/tmp/testconfig/.xcds/profile.json"))
+}
+
+func TestInitCLIConfigMigratesLegacyAgentConfigOutOfClientDir(t *testing.T) {
+	cos.Fs = afero.NewMemMapFs()
+	defer cos.SetRealFileSystem()
+
+	t.Setenv("CDS_CONFIG_PATH", "/tmp/testconfig")
+
+	require.NoError(t, cos.Fs.MkdirAll("/tmp/testconfig/.xcds", 0755))
+	require.NoError(t, cos.WriteFile("/tmp/testconfig/.xcds/aconfig.yaml", []byte(`apiVersion: v1
+clients:
+  - name: legacy-client
+`), 0600))
+	require.NoError(t, cos.WriteFile("/tmp/testconfig/.xcds/aconfig", []byte("legacy"), 0600))
+
+	require.NoError(t, InitCLIConfig())
+
+	content, err := cos.ReadFile("/tmp/testconfig/.xcds-agent/aconfig.yaml")
+	require.NoError(t, err)
+	assert.Contains(t, string(content), "legacy-client")
+	assert.False(t, cos.Exists("/tmp/testconfig/.xcds/aconfig.yaml"))
+	assert.False(t, cos.Exists("/tmp/testconfig/.xcds/aconfig"))
+}
+
 func TestProfileReader_ResolvesWithoutInit(t *testing.T) {
 	cos.Fs = afero.NewMemMapFs()
 	defer cos.SetRealFileSystem()

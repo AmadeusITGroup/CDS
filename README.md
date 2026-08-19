@@ -191,7 +191,9 @@ cds version
 
 ### Configuration
 
-CDS configuration is stored in ~/.cds/ directory. You can customize settings through:
+CDS CLI configuration is stored in `~/.xcds/` by default. Agent configuration
+and agent-managed cache are stored in `~/.xcds-agent/` by default. You can
+customize settings through:
 - Configuration files
 - Environment variables
 - Command-line flags
@@ -208,11 +210,13 @@ make scaffold
 Generate and manage TLS certificates for secure communication:
 
 ```bash
+CFG="${CDS_CONFIG_PATH:-$HOME/cdstmp}"
+
 # Verify certificates
-openssl verify -CAfile ca_cert.pem server_cert.pem
+openssl verify -CAfile "$CFG/.xcds/certs/ca.pem" "$CFG/.xcds-agent/certs/agent-srv.pem"
 
 # Inspect certificate details
-openssl x509 -in server_cert.pem -text -noout
+openssl x509 -in "$CFG/.xcds-agent/certs/agent-srv.pem" -text -noout
 ```
 
 ---
@@ -263,6 +267,12 @@ CDS/
 ### Building from Source
 
 ```bash
+# Show available developer targets
+make help
+
+# Fast inner-loop build without generation, tidy, or lint
+make build-fast
+
 # Build all binaries
 make build
 
@@ -279,22 +289,23 @@ When modifying .proto files:
 make build-pb
 ```
 
-Or manually:
-
-```bash
-protoc --go_out=. --go_opt=paths=source_relative \
-       --go-grpc_out=. --go-grpc_opt=paths=source_relative \
-       internal/api/v1/*.proto
-```
+The generated Go files under `internal/api/v1/cdspb` are regenerated for local
+validation but are ignored by the repository.
 
 ### Code Quality
 
 ```bash
+# Run the recommended local pre-PR flow
+make check
+
 # Run linter
 make lint
 
-# Run linter with auto-fix
+# Run a weaker lint pass that excludes unused-code findings
 make lint-weak
+
+# Run fast package tests during development
+make test-fast
 
 # Run tests
 make test
@@ -306,9 +317,17 @@ make coverage
 ### Dependency Management
 
 ```bash
+# Install pinned Go-based build tools
+make setup-tools
+
 # Tidy dependencies
 make go-tidy
 ```
+
+For a detailed local and remote development workflow, see
+[`docs/development.md`](docs/development.md). For common setup, TLS, SSH,
+Podman, and agent issues, see
+[`docs/troubleshooting.md`](docs/troubleshooting.md).
 
 ### Platform-Specific Notes
 
@@ -350,10 +369,11 @@ We welcome contributions from the community! Here's how you can help:
 
 ### Code Style
 
-This project uses golangci-lint to enforce code quality. Run the linter before submitting:
+This project uses golangci-lint to enforce code quality. Run the full local
+pre-PR flow before submitting:
 
 ```bash
-make lint
+make check
 ```
 
 ### Testing

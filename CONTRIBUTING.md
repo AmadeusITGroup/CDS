@@ -58,26 +58,24 @@ Before you begin, ensure you have the following installed:
 # Download Go module dependencies
 go mod download
 
-# Install Protocol Buffer Go plugins
-go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
-go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
-
-# Install golangci-lint (if not already installed)
-go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+# Install pinned Go-based build tools
+make setup-tools
 ```
 
 ### 2. Verify Your Setup
 
 ```bash
-# Run tests to ensure everything is working
-make test
+# Run the recommended local pre-PR flow
+make check
 
-# Run linter
-make lint
-
-# Build the project
-make build
+# Show faster inner-loop commands
+make help
 ```
+
+When iterating on the client/agent flow locally, `make build-fast` builds both
+`./cds` and `./cds-api-agent`. The client can start the local agent directly
+from the repository root, from the directory containing the client binary, or
+from `CDS_API_AGENT_PATH`; adding `cds-api-agent` to `PATH` is optional.
 
 ### 3. Project Structure Overview
 

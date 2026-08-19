@@ -1,7 +1,10 @@
 package bootstrap
 
-import "github.com/amadeusitgroup/cds/internal/bo"
+import "os/exec"
 
-func fire() (bo.AgentOwnership, error) {
-	return bo.AgentOwnership{}, nil
+func fire() error {
+	return fireLocalAgent("Windows")
+}
+
+func prepareAgentCommand(cmd *exec.Cmd) {
 }

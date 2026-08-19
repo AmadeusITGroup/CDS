@@ -9,18 +9,54 @@ import (
 )
 
 func TestInitAgentConfigCreatesClientsRegistry(t *testing.T) {
-	setupConfigTestFS(t)
+	setupAgentConfigTestFS(t)
 
 	require.NoError(t, InitAgentConfig())
 
-	content, err := cos.ReadFile("/tmp/testconfig/.xcds/aconfig.yaml")
+	content, err := cos.ReadFile("/tmp/testconfig/.xcds-agent/aconfig.yaml")
 	require.NoError(t, err)
 	assert.Contains(t, string(content), "clients:")
 	assert.NotContains(t, string(content), "agents:")
 }
 
+func TestInitAgentConfigMigratesLegacyClientDirConfig(t *testing.T) {
+	setupAgentConfigTestFS(t)
+
+	require.NoError(t, cos.Fs.MkdirAll("/tmp/testconfig/.xcds", 0755))
+	require.NoError(t, cos.WriteFile("/tmp/testconfig/.xcds/aconfig.yaml", []byte(`apiVersion: v1
+clients:
+  - name: legacy-client
+`), 0600))
+	require.NoError(t, cos.WriteFile("/tmp/testconfig/.xcds/aconfig", []byte("legacy"), 0600))
+
+	require.NoError(t, InitAgentConfig())
+
+	content, err := cos.ReadFile("/tmp/testconfig/.xcds-agent/aconfig.yaml")
+	require.NoError(t, err)
+	assert.Contains(t, string(content), "legacy-client")
+	assert.False(t, cos.Exists("/tmp/testconfig/.xcds/aconfig.yaml"))
+	assert.False(t, cos.Exists("/tmp/testconfig/.xcds/aconfig"))
+}
+
+func TestInitAgentConfigRemovesObsoleteAgentState(t *testing.T) {
+	setupAgentConfigTestFS(t)
+
+	require.NoError(t, cos.Fs.MkdirAll("/tmp/testconfig/.xcds-agent/artifacts/stale", 0755))
+	require.NoError(t, cos.Fs.MkdirAll("/tmp/testconfig/.xcds-agent/containers/stale", 0755))
+	require.NoError(t, cos.Fs.MkdirAll("/tmp/testconfig/.xcds-agent/certsjson", 0755))
+	require.NoError(t, cos.WriteFile("/tmp/testconfig/.xcds-agent/aconfig", []byte("legacy"), 0600))
+
+	require.NoError(t, InitAgentConfig())
+
+	assert.False(t, cos.Exists("/tmp/testconfig/.xcds-agent/artifacts"))
+	assert.False(t, cos.Exists("/tmp/testconfig/.xcds-agent/containers"))
+	assert.False(t, cos.Exists("/tmp/testconfig/.xcds-agent/certsjson"))
+	assert.False(t, cos.Exists("/tmp/testconfig/.xcds-agent/aconfig"))
+	assert.True(t, cos.Exists("/tmp/testconfig/.xcds-agent/aconfig.yaml"))
+}
+
 func TestAddClientToConfigPersistsClientsWithoutInit(t *testing.T) {
-	setupConfigTestFS(t)
+	setupAgentConfigTestFS(t)
 
 	require.NoError(t, AddClientToConfig(NewClient(
 		WithClientName("my-laptop"),
@@ -39,10 +75,10 @@ func TestAddClientToConfigPersistsClientsWithoutInit(t *testing.T) {
 }
 
 func TestRegisteredClientsLoadsClientsWithoutInit(t *testing.T) {
-	setupConfigTestFS(t)
+	setupAgentConfigTestFS(t)
 
-	require.NoError(t, cos.Fs.MkdirAll("/tmp/testconfig/.xcds", 0755))
-	require.NoError(t, cos.WriteFile("/tmp/testconfig/.xcds/aconfig.yaml", []byte(`apiVersion: v1
+	require.NoError(t, cos.Fs.MkdirAll("/tmp/testconfig/.xcds-agent", 0755))
+	require.NoError(t, cos.WriteFile("/tmp/testconfig/.xcds-agent/aconfig.yaml", []byte(`apiVersion: v1
 clients:
   - name: my-laptop
     tls:

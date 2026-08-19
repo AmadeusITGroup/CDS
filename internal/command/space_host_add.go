@@ -11,10 +11,12 @@ import (
 	"github.com/amadeusitgroup/cds/internal/bootstrap"
 	"github.com/amadeusitgroup/cds/internal/cenv"
 	"github.com/amadeusitgroup/cds/internal/cerr"
+	"github.com/amadeusitgroup/cds/internal/config"
 	"github.com/amadeusitgroup/cds/internal/containerruntime"
 	"github.com/amadeusitgroup/cds/internal/db"
 	cg "github.com/amadeusitgroup/cds/internal/global"
 	"github.com/amadeusitgroup/cds/internal/output"
+	cdstls "github.com/amadeusitgroup/cds/internal/tls"
 	"github.com/spf13/cobra"
 )
 
@@ -61,47 +63,27 @@ func (s *spcHostAdd) runE(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	// For a local host, detect the container runtime and register the host as a
-	// DevContainer deploy target. Detection failures (no Podman, machine not
-	// running) abort registration with an actionable message. The same predicate
-	// as bootstrap.StartAgent is used so a given target is treated as local by
-	// both the agent launch and the host registration.
+	// For a local target, detect and record the container runtime (Podman) so
+	// the host is registered as a DevContainer deploy target. Detection failures
+	// (no Podman, machine not running) abort with an actionable message.
+	runtimeSuffix := ""
 	if isLocalTarget(hostName) {
-		registration, err := registerLocalHost(hostName)
-		if err != nil {
-			return err
+		registration, regErr := registerLocalHost(hostName)
+		if regErr != nil {
+			return regErr
 		}
-		ownership, err := bootstrap.StartAgent(hostName)
-		if err != nil {
-			if !errors.As(err, &bootstrap.StartOnRunError{}) {
-				if !registration.AlreadyRegistered && db.HasHost(hostName) {
-					db.RemoveHostFromHostList(hostName)
-				}
-				return err
-			}
-		}
-		if ownership.Manager != cg.EmptyStr {
-			if err := db.SetHostAgentOwnership(hostName, ownership); err != nil {
-				if stopErr := bootstrap.StopManagedAgent(ownership); stopErr != nil {
-					return cerr.AppendError("failed to rollback started local agent after ownership persistence failure", stopErr)
-				}
-				return err
-			}
-		}
-		message := fmt.Sprintf("Registered local host %q with runtime %s %s",
-			hostName, registration.Info.Engine, registration.Info.Version)
 		if registration.AlreadyRegistered {
-			message = fmt.Sprintf("Local host %q is already registered with runtime %s %s",
-				hostName, registration.Info.Engine, registration.Info.Version)
+			runtimeSuffix = fmt.Sprintf(" (runtime %s %s, already registered)", registration.Info.Engine, registration.Info.Version)
+		} else {
+			runtimeSuffix = fmt.Sprintf(" (runtime %s %s)", registration.Info.Engine, registration.Info.Version)
 		}
-		o := output.FromContext(cmd.Context())
-		return output.Render(o, output.SimpleResult{Message: message})
 	}
 
-	// TODO: fix::bootstrap, There is a mix of responsibilities between the command and the bootstrap agent regarding host management and registration.
-	// Currently the bootstrap package registers the agent in the config. I believe it should be the responsibility of the command to manage the config entries,
-	// while the bootstrap package should focus on launching and managing the agent process.
-	_, err = bootstrap.StartAgent(hostName)
+	if err := ensureAgentRegistered(args[0], hostName); err != nil {
+		return err
+	}
+
+	err = bootstrap.StartAgent(hostName)
 	alreadyRunning := false
 	if err != nil {
 		if !errors.As(err, &bootstrap.StartOnRunError{}) {
@@ -110,9 +92,9 @@ func (s *spcHostAdd) runE(cmd *cobra.Command, args []string) error {
 		alreadyRunning = true
 	}
 
-	message := fmt.Sprintf("Bootstrapped host %q", hostName)
+	message := fmt.Sprintf("Bootstrapped host %q%s", hostName, runtimeSuffix)
 	if alreadyRunning {
-		message = fmt.Sprintf("Host %q is already running", hostName)
+		message = fmt.Sprintf("Host %q is already running%s", hostName, runtimeSuffix)
 	}
 
 	o := output.FromContext(cmd.Context())
@@ -120,15 +102,14 @@ func (s *spcHostAdd) runE(cmd *cobra.Command, args []string) error {
 }
 
 // isLocalTarget reports whether hostName denotes the local machine, matching the
-// decision bootstrap.StartAgent makes between fire() and fireRemote().
+// decision bootstrap.StartAgent makes between a local and remote agent.
 func isLocalTarget(hostName string) bool {
 	return hostName == cg.KLocalhost
 }
 
 // registerLocalHost records the local host as a target for DevContainer
 // deployment. It is idempotent: an existing host with runtime info is reported
-// as already registered instead of re-detecting or duplicating it. The persisted
-// state is flushed to disk by the caller (main defers db.Save()).
+// as already registered instead of re-detecting or duplicating it.
 func registerLocalHost(hostName string) (localHostRegistration, error) {
 	if db.HasHost(hostName) {
 		runtimeInfo := db.GetHostRuntime(hostName)
@@ -151,8 +132,11 @@ func registerLocalHost(hostName string) (localHostRegistration, error) {
 		return localHostRegistration{}, err
 	}
 
-	alreadyRegistered := db.HasHost(hostName)
-	if !alreadyRegistered {
+	// Reaching here means no runtime was registered for this host yet (the
+	// early return above handles the already-registered case). The host row may
+	// still exist because normalization re-creates it from referencing projects,
+	// so add it only when truly absent, but always report a fresh registration.
+	if !db.HasHost(hostName) {
 		db.AddHost(hostName, cenv.GetUsernameFromEnv())
 	}
 
@@ -163,7 +147,39 @@ func registerLocalHost(hostName string) (localHostRegistration, error) {
 		return localHostRegistration{}, err
 	}
 
-	return localHostRegistration{Info: info, AlreadyRegistered: alreadyRegistered}, nil
+	return localHostRegistration{Info: info, AlreadyRegistered: false}, nil
+}
+
+func ensureAgentRegistered(targetServer, hostName string) error {
+	if _, err := config.AgentAddress(hostName); err == nil {
+		return nil
+	}
+
+	return config.CreateAgentInConfig(config.NewAgent(
+		config.WithTargetAddress(defaultAgentTargetAddress(targetServer, hostName)),
+		config.WithAgentTLS(config.NewTlssecret(
+			config.WithCA(cdstls.CAFilePath()),
+			config.WithCert(cdstls.ClientCertFilePath()),
+			config.WithKey(cdstls.ClientKeyFilePath()),
+		)),
+	))
+}
+
+func defaultAgentTargetAddress(targetServer, hostName string) string {
+	normalizedTarget := strings.TrimSpace(targetServer)
+	if normalizedTarget == cg.EmptyStr || strings.HasPrefix(normalizedTarget, ":") {
+		return ":8087"
+	}
+	if strings.Contains(normalizedTarget, "://") {
+		return normalizedTarget
+	}
+	if _, _, err := net.SplitHostPort(normalizedTarget); err == nil {
+		return normalizedTarget
+	}
+	if hostName == cg.KLocalhost {
+		return ":8087"
+	}
+	return net.JoinHostPort(hostName, "8087")
 }
 
 func bootstrapHostName(targetServer string) (string, error) {

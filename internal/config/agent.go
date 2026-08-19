@@ -2,9 +2,12 @@ package config
 
 import (
 	"bytes"
+	"fmt"
+	"path/filepath"
 
 	"github.com/amadeusitgroup/cds/internal/cenv"
 	"github.com/amadeusitgroup/cds/internal/cerr"
+	"github.com/amadeusitgroup/cds/internal/cos"
 	cg "github.com/amadeusitgroup/cds/internal/global"
 	"github.com/amadeusitgroup/cds/internal/source"
 	"gopkg.in/yaml.v3"
@@ -22,6 +25,15 @@ type agentClientData struct {
 }
 
 func InitAgentConfig() error {
+	if err := migrateLegacyAgentConfig(); err != nil {
+		return err
+	}
+	if err := cleanupObsoleteAgentState(); err != nil {
+		return err
+	}
+	if err := cenv.CleanupStaleTempFiles(); err != nil {
+		return err
+	}
 	if _, err := agentConfigSource(); err != nil {
 		return err
 	}
@@ -116,4 +128,44 @@ func agentConfigSource() (source.Source, error) {
 		return nil, cerr.AppendError("failed to ensure agent config exists", err)
 	}
 	return src, nil
+}
+
+func migrateLegacyAgentConfig() error {
+	legacyConfigPath := cenv.ClientConfigDir(kAgentFileName)
+	currentConfigPath := cenv.AgentConfigDir(kAgentFileName)
+	if cos.Exists(legacyConfigPath) && !cos.Exists(currentConfigPath) {
+		data, err := cos.ReadFile(legacyConfigPath)
+		if err != nil {
+			return cerr.AppendError(fmt.Sprintf("failed to read legacy agent config %s", legacyConfigPath), err)
+		}
+		currentConfigDir := filepath.Dir(currentConfigPath)
+		if err := cenv.EnsureDir(currentConfigDir, cg.KPermDir); err != nil {
+			return cerr.AppendError(fmt.Sprintf("failed to create agent config directory %s", currentConfigDir), err)
+		}
+		if err := cos.WriteFile(currentConfigPath, data, cg.KPermFile); err != nil {
+			return cerr.AppendError(fmt.Sprintf("failed to migrate legacy agent config to %s", currentConfigPath), err)
+		}
+	}
+
+	for _, path := range []string{legacyConfigPath, cenv.ClientConfigDir("aconfig")} {
+		if err := cos.Fs.RemoveAll(path); err != nil {
+			return cerr.AppendError(fmt.Sprintf("failed to remove legacy agent config %s", path), err)
+		}
+	}
+	return nil
+}
+
+func cleanupObsoleteAgentState() error {
+	obsoletePaths := []string{
+		cenv.AgentConfigDir("aconfig"),
+		cenv.AgentConfigDir("artifacts"),
+		cenv.AgentConfigDir("containers"),
+		cenv.AgentConfigDir("certsjson"),
+	}
+	for _, path := range obsoletePaths {
+		if err := cos.Fs.RemoveAll(path); err != nil {
+			return cerr.AppendError(fmt.Sprintf("failed to remove obsolete agent state %s", path), err)
+		}
+	}
+	return nil
 }

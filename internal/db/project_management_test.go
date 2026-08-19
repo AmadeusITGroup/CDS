@@ -96,7 +96,9 @@ func Test_AddProjectUsingConfDir_NormalizesProjectName(t *testing.T) {
 	err := AddProjectUsingConfDir("  newproj  ", "/path/to/.devcontainer")
 	assert.NoError(t, err)
 	assert.True(t, HasProject("newproj"))
-	assert.False(t, HasProject("  newproj  "))
+	// The stored name is normalized (trimmed) on add; lookups are also
+	// normalized, so verify the persisted name directly.
+	assert.Equal(t, []string{"newproj"}, ListProjects())
 }
 
 func Test_AddProjectUsingConfDir_EmptyProjectName(t *testing.T) {
@@ -138,7 +140,9 @@ func Test_AddProjectUsingFlavour_NormalizesProjectName(t *testing.T) {
 	err := AddProjectUsingFlavour("  flproj  ", "my-flavour", "/override")
 	assert.NoError(t, err)
 	assert.True(t, HasProject("flproj"))
-	assert.False(t, HasProject("  flproj  "))
+	// The stored name is normalized (trimmed) on add; lookups are also
+	// normalized, so verify the persisted name directly.
+	assert.Equal(t, []string{"flproj"}, ListProjects())
 }
 
 func Test_AddProjectUsingFlavour_EmptyProjectName(t *testing.T) {

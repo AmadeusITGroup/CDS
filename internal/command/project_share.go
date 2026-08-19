@@ -1,6 +1,7 @@
 package command
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/spf13/cobra"
@@ -40,22 +41,34 @@ func (pshare *projectShare) subCommands() []baseCmd {
 func (pshare *projectShare) execute(cmd *cobra.Command, args []string) error {
 	projectName := getProjectNameFromArgsOrContext(args)
 
-	// TODO: Leverage ContainerConf package once implemented — validate devcontainer configuration
-	clog.Debug("Skipping devcontainer configuration validation — ContainerConf not yet implemented")
-
 	containers := db.ProjectContainersName(projectName)
 	if len(containers) == 0 {
 		return cerr.NewError("No containers to share.\n" +
 			getTipRun(projectName))
 	}
 
-	// TODO: Agent Service interaction needed — share container access:
-	// 1. Align container statuses via engine (alignContainerStatuses)
-	// 2. Verify running containers exist
-	// 3. Get first running container info
-	// 4. Generate temporary SSH keypair (shexec.GenerateSharedKeys)
-	// 5. Add temporary shared keys to container authorized_keys (engine.AddTempSharedKeys)
-	// 6. Display private key content and connection instructions to user
-	clog.Info(fmt.Sprintf("Project '%s' share requires agent service to proceed.", projectName))
-	return cerr.NewError("TODO: Agent service not yet implemented — cannot execute 'share' operation")
+	if err := syncProjectContainers(projectName); err != nil {
+		return err
+	}
+
+	publicKey, keyPair, err := projectSharedPublicKey(projectName)
+	if err != nil {
+		return err
+	}
+
+	return withProjectAgent(projectName, func(services agentServices, ctx context.Context) error {
+		containerName, remoteUser, err := projectPrimaryContainer(projectName)
+		if err != nil {
+			return err
+		}
+		if _, err := executeProjectContainerCommand(ctx, services.container, projectName, installSharedKeyCommand(remoteUser, publicKey), projectSharedKeyUser); err != nil {
+			return cerr.AppendErrorFmt("Failed to install shared SSH key in container %s", err, containerName)
+		}
+
+		sshPort := db.ContainerSSHPort(projectName, containerName)
+		clog.Info(fmt.Sprintf("Project '%s' is shared through container '%s'.", projectName, containerName))
+		clog.Info(fmt.Sprintf("Share private key: %s", keyPair.PathToPrv))
+		clog.Info(fmt.Sprintf("Connection command: ssh -i %s -p %d %s@%s", keyPair.PathToPrv, sshPort, remoteUser, projectAgentHost(projectName)))
+		return nil
+	})
 }

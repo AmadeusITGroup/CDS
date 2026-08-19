@@ -2,9 +2,11 @@ package db
 
 import (
 	"fmt"
+	"slices"
 
 	"github.com/amadeusitgroup/cds/internal/bo"
 	"github.com/amadeusitgroup/cds/internal/cerr"
+	"github.com/amadeusitgroup/cds/internal/clog"
 	cg "github.com/amadeusitgroup/cds/internal/global"
 )
 
@@ -48,8 +50,22 @@ func ListHostNames() []string {
 // From caller's perspective, if you want to set a new host as default, 1st AddHost() then SetHostDefualt()
 func AddHost(hostName, username string) {
 	var fn decorateHostList = func(hList *hosts) {
+		normalizedHostName := normalizeHostName(hostName)
+		if normalizedHostName == "" {
+			clog.Warn("Cannot add host with empty name")
+			return
+		}
+		if existingHost, found := cg.FindElemFromSlice(hList.Hosts, func(h *host) bool {
+			return normalizeHostName(h.Name) == normalizedHostName
+		}); found {
+			existingHost.Name = normalizedHostName
+			if username != "" {
+				existingHost.Username = username
+			}
+			return
+		}
 		newHost := &host{
-			Name:    hostName,
+			Name:    normalizedHostName,
 			sshInfo: sshInfo{Username: username},
 		}
 		hList.Hosts = append(hList.Hosts, newHost)
@@ -59,7 +75,8 @@ func AddHost(hostName, username string) {
 
 func RemoveHostFromHostList(hostName string) { //TODO: Rename to 'RemoveHost' once 'RemoveHostFromConfig' has been removed.
 	var fn decorateHostList = func(hList *hosts) {
-		myList := cg.FilterSlice(hList.Hosts, func(h *host) bool { return h.Name != hostName })
+		normalizedHostName := normalizeHostName(hostName)
+		myList := cg.FilterSlice(hList.Hosts, func(h *host) bool { return normalizeHostName(h.Name) != normalizedHostName })
 		hList.Hosts = myList
 	}
 	fn.update()
@@ -79,8 +96,13 @@ func GetDefaultHostName() string {
 
 func SetHostToDefault(hostName string) {
 	var fn decorateHostList = func(hList *hosts) {
+		normalizedHostName := normalizeHostName(hostName)
+		if !slices.ContainsFunc(hList.Hosts, func(h *host) bool { return normalizeHostName(h.Name) == normalizedHostName }) {
+			clog.Warn(fmt.Sprintf("Cannot set unknown host %q as default", hostName))
+			return
+		}
 		for _, h := range hList.Hosts {
-			h.IsDefault = h.Name == hostName
+			h.IsDefault = normalizeHostName(h.Name) == normalizedHostName
 		}
 	}
 	fn.update()
@@ -117,7 +139,8 @@ func (v visitHost) get(hostName string) (any, error) {
 }
 
 func (d *data) getHost(hostName string) (*host, error) {
-	h, found := cg.FindElemFromSlice(d.Hosts, func(h *host) bool { return h.Name == hostName })
+	normalizedHostName := normalizeHostName(hostName)
+	h, found := cg.FindElemFromSlice(d.Hosts, func(h *host) bool { return normalizeHostName(h.Name) == normalizedHostName })
 	if !found {
 		return nil, cerr.NewError((fmt.Sprintf("Failed to get host %s ", hostName)))
 	}
@@ -179,7 +202,12 @@ func ProjectNamesFromHost(hostName string) []string {
 
 func RemoveProjectFromHost(hostName string, projectName string) error {
 	var fn decorateHost = func(h *host) {
-		h.Projects = cg.RemoveElemFromSlice(h.Projects, projectName)
+		normalizedProjectName := normalizeProjectName(projectName)
+		h.Projects = cg.RemoveElemFromSlice(h.Projects, normalizedProjectName)
+		if h.Projects == nil {
+			h.Projects = []string{}
+		}
+		h.InUse = len(h.Projects) > 0
 	}
 	if err := fn.update(hostName); err != nil {
 		return cerr.AppendErrorFmt("Failed to update host %s", err, projectName)
@@ -189,13 +217,19 @@ func RemoveProjectFromHost(hostName string, projectName string) error {
 }
 
 func RegisterProjectInHost(hostName, projectName string) error {
-	var fn decorateHost = func(h *host) {
-		h.InUse = true
-		h.Projects = cg.AddElementToSliceIfNotExists(h.Projects, projectName)
+	normalizedProjectName := normalizeProjectName(projectName)
+	instance().Lock()
+	defer instance().Unlock()
+
+	if _, err := instance().d.getProject(normalizedProjectName); err != nil {
+		return cerr.AppendErrorFmt("Failed to register project %s in host %s", err, normalizedProjectName, hostName)
 	}
-	if err := fn.update(hostName); err != nil {
+	host, err := instance().d.getHost(hostName)
+	if err != nil {
 		return cerr.AppendErrorFmt("Failed to add register project in host: %s", err, hostName)
 	}
+	host.InUse = true
+	host.Projects = cg.AddElementToSliceIfNotExists(host.Projects, normalizedProjectName)
 	return nil
 }
 

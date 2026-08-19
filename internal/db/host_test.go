@@ -21,7 +21,7 @@ func TestListHostNames(t *testing.T) {
 		{
 			name:            "Multiple host added in Config",
 			bom:             data{hosts: hosts{Hosts: []*host{{Name: "myHost1", InUse: true}, {Name: "myHost2"}}}},
-			hostNamesWanted: []string{"myHost1", "myHost2"},
+			hostNamesWanted: []string{"myhost1", "myhost2"},
 		},
 	}
 
@@ -374,13 +374,13 @@ func TestProjectNamesFromHost(t *testing.T) {
 	}{
 		{
 			name:              "Get projects for existing host",
-			initialData:       data{hosts: hosts{Hosts: []*host{{Name: "host1", Projects: []string{"project1", "project2"}}, {Name: "host2", Projects: []string{"project3"}}}}},
+			initialData:       data{projects: projects{Projects: []*project{{Name: "project1"}, {Name: "project2"}, {Name: "project3"}}}, hosts: hosts{Hosts: []*host{{Name: "host1", Projects: []string{"project1", "project2"}}, {Name: "host2", Projects: []string{"project3"}}}}},
 			hostToGetProjects: "host1",
 			expectedProjects:  []string{"project1", "project2"},
 		},
 		{
 			name:              "Get projects for non-existing host",
-			initialData:       data{hosts: hosts{Hosts: []*host{{Name: "host1", Projects: []string{"project1", "project2"}}, {Name: "host2", Projects: []string{"project3"}}}}},
+			initialData:       data{projects: projects{Projects: []*project{{Name: "project1"}, {Name: "project2"}, {Name: "project3"}}}, hosts: hosts{Hosts: []*host{{Name: "host1", Projects: []string{"project1", "project2"}}, {Name: "host2", Projects: []string{"project3"}}}}},
 			hostToGetProjects: "host3",
 			expectedProjects:  []string{},
 		},
@@ -413,7 +413,7 @@ func TestRemoveProjectFromHost(t *testing.T) {
 	}{
 		{
 			name:             "Remove existing project from host",
-			initialData:      data{hosts: hosts{Hosts: []*host{{Name: "host1", Projects: []string{"project1", "project2"}}, {Name: "host2", Projects: []string{"project3"}}}}},
+			initialData:      data{projects: projects{Projects: []*project{{Name: "project1"}, {Name: "project2"}, {Name: "project3"}}}, hosts: hosts{Hosts: []*host{{Name: "host1", Projects: []string{"project1", "project2"}}, {Name: "host2", Projects: []string{"project3"}}}}},
 			hostToUpdate:     "host1",
 			projectToRemove:  "project1",
 			expectedProjects: []string{"project2"},
@@ -421,7 +421,7 @@ func TestRemoveProjectFromHost(t *testing.T) {
 		},
 		{
 			name:             "Remove non-existing project from host",
-			initialData:      data{hosts: hosts{Hosts: []*host{{Name: "host1", Projects: []string{"project1", "project2"}}, {Name: "host2", Projects: []string{"project3"}}}}},
+			initialData:      data{projects: projects{Projects: []*project{{Name: "project1"}, {Name: "project2"}, {Name: "project3"}}}, hosts: hosts{Hosts: []*host{{Name: "host1", Projects: []string{"project1", "project2"}}, {Name: "host2", Projects: []string{"project3"}}}}},
 			hostToUpdate:     "host1",
 			projectToRemove:  "project3",
 			expectedProjects: []string{"project1", "project2"},
@@ -429,7 +429,7 @@ func TestRemoveProjectFromHost(t *testing.T) {
 		},
 		{
 			name:             "Remove project from non-existing host",
-			initialData:      data{hosts: hosts{Hosts: []*host{{Name: "host1", Projects: []string{"project1", "project2"}}, {Name: "host2", Projects: []string{"project3"}}}}},
+			initialData:      data{projects: projects{Projects: []*project{{Name: "project1"}, {Name: "project2"}, {Name: "project3"}}}, hosts: hosts{Hosts: []*host{{Name: "host1", Projects: []string{"project1", "project2"}}, {Name: "host2", Projects: []string{"project3"}}}}},
 			hostToUpdate:     "host3",
 			projectToRemove:  "project1",
 			expectedProjects: []string{},
@@ -437,7 +437,7 @@ func TestRemoveProjectFromHost(t *testing.T) {
 		},
 		{
 			name:             "Remove project from host with empty project list",
-			initialData:      data{hosts: hosts{Hosts: []*host{{Name: "host1", Projects: []string{}}, {Name: "host2", Projects: []string{"project3"}}}}},
+			initialData:      data{projects: projects{Projects: []*project{{Name: "project1"}, {Name: "project3"}}}, hosts: hosts{Hosts: []*host{{Name: "host1", Projects: []string{}}, {Name: "host2", Projects: []string{"project3"}}}}},
 			hostToUpdate:     "host1",
 			projectToRemove:  "project1",
 			expectedProjects: []string{},
@@ -475,7 +475,7 @@ func TestRegisterProjectInHost(t *testing.T) {
 	}{
 		{
 			name:              "Register new project to existing host",
-			initialData:       data{hosts: hosts{Hosts: []*host{{Name: "host1", Projects: []string{"project1"}}, {Name: "host2", Projects: []string{"project3"}}}}},
+			initialData:       data{projects: projects{Projects: []*project{{Name: "project1"}, {Name: "project2"}, {Name: "project3"}}}, hosts: hosts{Hosts: []*host{{Name: "host1", Projects: []string{"project1"}}, {Name: "host2", Projects: []string{"project3"}}}}},
 			hostToUpdate:      "host1",
 			projectToRegister: "project2",
 			expectedProjects:  []string{"project1", "project2"},
@@ -483,7 +483,7 @@ func TestRegisterProjectInHost(t *testing.T) {
 		},
 		{
 			name:              "Register existing project to existing host",
-			initialData:       data{hosts: hosts{Hosts: []*host{{Name: "host1", Projects: []string{"project1", "project2"}}, {Name: "host2", Projects: []string{"project3"}}}}},
+			initialData:       data{projects: projects{Projects: []*project{{Name: "project1"}, {Name: "project2"}, {Name: "project3"}}}, hosts: hosts{Hosts: []*host{{Name: "host1", Projects: []string{"project1", "project2"}}, {Name: "host2", Projects: []string{"project3"}}}}},
 			hostToUpdate:      "host1",
 			projectToRegister: "project2",
 			expectedProjects:  []string{"project1", "project2"},
@@ -491,7 +491,7 @@ func TestRegisterProjectInHost(t *testing.T) {
 		},
 		{
 			name:              "Register project to non-existing host",
-			initialData:       data{hosts: hosts{Hosts: []*host{{Name: "host1", Projects: []string{"project1"}}, {Name: "host2", Projects: []string{"project3"}}}}},
+			initialData:       data{projects: projects{Projects: []*project{{Name: "project1"}, {Name: "project3"}}}, hosts: hosts{Hosts: []*host{{Name: "host1", Projects: []string{"project1"}}, {Name: "host2", Projects: []string{"project3"}}}}},
 			hostToUpdate:      "host3",
 			projectToRegister: "project1",
 			expectedProjects:  []string{},
@@ -499,7 +499,7 @@ func TestRegisterProjectInHost(t *testing.T) {
 		},
 		{
 			name:              "Register project to host with empty project list",
-			initialData:       data{hosts: hosts{Hosts: []*host{{Name: "host1", Projects: []string{}}, {Name: "host2", Projects: []string{"project3"}}}}},
+			initialData:       data{projects: projects{Projects: []*project{{Name: "project1"}, {Name: "project3"}}}, hosts: hosts{Hosts: []*host{{Name: "host1", Projects: []string{}}, {Name: "host2", Projects: []string{"project3"}}}}},
 			hostToUpdate:      "host1",
 			projectToRegister: "project1",
 			expectedProjects:  []string{"project1"},

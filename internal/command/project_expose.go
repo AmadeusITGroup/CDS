@@ -2,6 +2,7 @@ package command
 
 import (
 	"fmt"
+	"net"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -9,6 +10,7 @@ import (
 	"github.com/amadeusitgroup/cds/internal/cerr"
 	"github.com/amadeusitgroup/cds/internal/clog"
 	"github.com/amadeusitgroup/cds/internal/db"
+	"github.com/amadeusitgroup/cds/internal/shexec"
 )
 
 var _ baseCmd = (*projectExpose)(nil)
@@ -55,22 +57,37 @@ func (pexpose *projectExpose) initFlags() {
 func (pexpose *projectExpose) execute(cmd *cobra.Command, args []string) error {
 	projectName := getProjectNameFromArgsOrContext(args)
 
-	// TODO: Leverage ContainerConf package once implemented — validate devcontainer configuration
-	clog.Debug("Skipping devcontainer configuration validation — ContainerConf not yet implemented")
-
 	containers := db.ProjectContainersName(projectName)
 	if len(containers) == 0 {
 		return cerr.NewError("No containers to expose services from.\n" +
 			getTipRun(projectName))
 	}
 
-	// TODO: Agent Service interaction needed — expose service via port forwarding:
-	// 1. Align container statuses via engine (alignContainerStatuses)
-	// 2. Verify running containers exist
-	// 3. Get first running container info (including SSH port mapping)
-	// 4. Build target host with SSH key paths
-	// 5. Resolve exposure: handle KinD service (patch local kubeconfig) or direct port forward
-	// 6. Forward port via shexec.ForwardPort with timeout
-	clog.Info(fmt.Sprintf("Project '%s' has containers configured. Agent service required for port forwarding.", projectName))
-	return cerr.NewError("TODO: Agent service not yet implemented — cannot execute 'expose' operation")
+	remote := pexpose.service.remote
+	if pexpose.service.serviceName != "" {
+		if _, _, err := net.SplitHostPort(pexpose.service.serviceName); err != nil {
+			return cerr.NewError("service name lookup is not available through the agent yet; provide --remote HOST:PORT")
+		}
+		remote = pexpose.service.serviceName
+	}
+	if remote == "" {
+		return cerr.NewError("remote address is required; provide --remote HOST:PORT")
+	}
+	if _, _, err := net.SplitHostPort(pexpose.service.local); err != nil {
+		return cerr.AppendError(fmt.Sprintf("invalid local address %q", pexpose.service.local), err)
+	}
+	if _, _, err := net.SplitHostPort(remote); err != nil {
+		return cerr.AppendError(fmt.Sprintf("invalid remote address %q", remote), err)
+	}
+
+	if err := syncProjectContainers(projectName); err != nil {
+		return err
+	}
+	target, containerName, err := projectContainerSSHTarget(projectName)
+	if err != nil {
+		return err
+	}
+
+	clog.Info(fmt.Sprintf("Forwarding %s to %s through container %s.", pexpose.service.local, remote, containerName))
+	return shexec.ForwardPort(target, pexpose.service.local, remote, pexpose.timeout)
 }

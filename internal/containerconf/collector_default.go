@@ -13,9 +13,10 @@ import (
 
 const (
 	defaultAuthorizedKeysFileName = "authorized_keys"
-	defaultPublicKeyFileName      = "id_rsa.pub"
 	registryAuthFileEnv           = "REGISTRY_AUTH_FILE"
 )
+
+var defaultPublicKeyFileNames = []string{"id_rsa.pub", "id_ed25519.pub"}
 
 // sourceFactory resolves a default singleton artifact source. The bool return
 // tells the collector whether the optional source exists and should be emitted.
@@ -110,11 +111,19 @@ func defaultAuthorizedKeysSource(collectContext) (SourceRef, bool, error) {
 	}
 
 	// TODO: Feature: Generate the Key pair per host / per container, instead of relying on the user to have a pre-existing public key.
-	publicKeyPath := filepath.Join(homeDir, ".ssh", defaultPublicKeyFileName)
-	info, err := cos.Fs.Stat(publicKeyPath)
-	if os.IsNotExist(err) {
+	publicKeyPath := ""
+	for _, fileName := range defaultPublicKeyFileNames {
+		candidatePath := filepath.Join(homeDir, ".ssh", fileName)
+		if cos.Exists(candidatePath) {
+			publicKeyPath = candidatePath
+			break
+		}
+	}
+	if publicKeyPath == "" {
 		return SourceRef{}, false, nil
 	}
+
+	info, err := cos.Fs.Stat(publicKeyPath)
 	if err != nil {
 		return SourceRef{}, false, err
 	}
