@@ -29,23 +29,12 @@ var (
 	clientCSR []byte
 )
 
-func init() {
-	if err := cenv.EnsureDir(cenv.ConfigDir(kcertsjsonDir), cg.KPermDir); err != nil {
-		clog.Error("Failed to create certs tmp directory", err)
+// writeCertsJsonFiles writes the embedded cfssl templates into jsonDir.
+func writeCertsJsonFiles(jsonDir string) error {
+	if err := os.MkdirAll(jsonDir, cg.KPermDir); err != nil {
+		return cerr.AppendErrorFmt("Failed to create directory %s", err, jsonDir)
 	}
-	if err := ensureCertsJsonFiles(); err != nil {
-		clog.Error("Failed to ensure certs json files", err)
-	}
-	if err := cenv.EnsureDir(cenv.ConfigDir(kcertsDir), cg.KPermDir); err != nil {
-		clog.Error("Failed to create certs directory", err)
-	}
-}
 
-func certsjson(filename string) string {
-	return filepath.Join(cenv.ConfigDir(kcertsjsonDir), filename)
-}
-
-func ensureCertsJsonFiles() error {
 	files := []struct {
 		name string
 		data []byte
@@ -57,14 +46,39 @@ func ensureCertsJsonFiles() error {
 	}
 
 	for _, file := range files {
-		if err := os.WriteFile(certsjson(file.name), file.data, cg.KPermFile); err != nil {
-			return cerr.AppendError(fmt.Sprintf("Failed to write file %s", file.name), err)
+		if err := os.WriteFile(filepath.Join(jsonDir, file.name), file.data, cg.KPermFile); err != nil {
+			return cerr.AppendErrorFmt("Failed to write file %s", err, file.name)
 		}
 	}
 	return nil
 }
 
+// BuildCerts generates the CA, agent server and client certificates with cfssl
+// and moves them into the certs directory of the active configuration directory.
+// cfssl templates only live in a temporary working directory.
 func BuildCerts() error {
+	var (
+		workDir string
+		err     error
+	)
+
+	if workDir, err = os.MkdirTemp(cg.EmptyStr, "cds"); err != nil {
+		return cerr.AppendError("Failed to create temp dir", err)
+	}
+	defer func() {
+		_ = os.RemoveAll(workDir)
+	}()
+
+	clog.Debug(fmt.Sprintf("Working directory: %s", workDir))
+
+	jsonDir := filepath.Join(workDir, kcertsjsonDir)
+	if err := writeCertsJsonFiles(jsonDir); err != nil {
+		return cerr.AppendError("Failed to prepare certificate templates", err)
+	}
+	certsjson := func(filename string) string {
+		return filepath.Join(jsonDir, filename)
+	}
+
 	pipes := []shexec.Pipe{
 		{
 			Left:  shexec.Execcmd{Name: "cfssl", Args: []string{"gencert", "-initca", certsjson("ca-csr.json")}},
@@ -80,28 +94,19 @@ func BuildCerts() error {
 		},
 	}
 
-	var (
-		workDir string
-		err     error
-	)
-
-	if workDir, err = os.MkdirTemp(cg.EmptyStr, "cds"); err != nil {
-		return cerr.AppendError("Failed to create temp dir", err)
-	}
-	defer func() {
-		_ = os.RemoveAll(workDir)
-	}()
-
-	clog.Debug(fmt.Sprintf("Working directory: %s", workDir))
-
 	for idx, pipe := range pipes {
 		if _, err := shexec.ExecutePipe(pipe, workDir); err != nil {
 			return cerr.AppendError(fmt.Sprintf("Failed to execute pipe[%d](%s...)", idx, pipe.Left.Name), err)
 		}
 	}
 
+	certsDir := cenv.ConfigDir(kcertsDir)
+	if err := cenv.EnsureDir(certsDir, cg.KPermDir); err != nil {
+		return cerr.AppendErrorFmt("Failed to create certs directory %s", err, certsDir)
+	}
+
 	// wildcard (*), in mv command, needs a shell to be interpreted correctly
-	move := shexec.Execcmd{Name: "sh", Args: []string{"-c", fmt.Sprintf("mv *.pem *.csr %s", cenv.ConfigDir(kcertsDir))}}
+	move := shexec.Execcmd{Name: "sh", Args: []string{"-c", fmt.Sprintf("mv *.pem *.csr %s", certsDir)}}
 	if out, err := shexec.ExecuteCmd(move, workDir); err != nil {
 		return cerr.AppendError(fmt.Sprintf("Failed to execute command(%s...): %s", move.Name, out), err)
 	}

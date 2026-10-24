@@ -83,7 +83,7 @@ var agentVersion stubCallback = func(c agentServices, ctx context.Context) error
 	reply, err := c.info.GetVersion(ctx, &cdspb.GetVersionRequest{})
 
 	if err != nil {
-		return cerr.NewError("Failed to get agent version")
+		return cerr.AppendError("Failed to get agent version", err)
 	}
 
 	clog.Info(fmt.Sprintf("Agent server version: %s", reply.GetCurrent()))

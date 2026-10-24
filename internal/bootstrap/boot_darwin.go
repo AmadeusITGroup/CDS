@@ -14,7 +14,7 @@ import (
 )
 
 var (
-	binaries = []binary{cfsslbin{n: "cfssl"}, cfssljsonbin{n: "cfssljson"}, cdsagentbin{n: "cds-api-agent"}}
+	binaries = []binary{cfsslbin{n: "cfssl"}, cfssljsonbin{n: "cfssljson"}, cdsagentbin{n: kAgentBinaryName}}
 )
 
 func fire() error {
@@ -49,9 +49,9 @@ func fire() error {
 		config.WithTargetAddress(addr.String()),
 		config.WithAgentTLS(
 			config.NewTlssecret(
-				config.WithCA(cdstls.CAFilePath),
-				config.WithCert(cdstls.ClientCertFilePath),
-				config.WithKey(cdstls.ClientKeyFilePath)),
+				config.WithCA(cdstls.CAFilePath()),
+				config.WithCert(cdstls.ClientCertFilePath()),
+				config.WithKey(cdstls.ClientKeyFilePath())),
 		),
 	)); err != nil {
 		return cerr.AppendError("failed to add agent to CLI config", err)
@@ -60,7 +60,7 @@ func fire() error {
 }
 
 func startAgent() (string, error) {
-	cmd := exec.Command("cds-api-agent")
+	cmd := exec.Command(kAgentBinaryName)
 	cmd.SysProcAttr = &syscall.SysProcAttr{
 		Setpgid: true,
 	}

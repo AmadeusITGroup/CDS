@@ -6,7 +6,6 @@ import (
 
 	"github.com/amadeusitgroup/cds/internal/api/v1/cdspb"
 	"github.com/amadeusitgroup/cds/internal/cerr"
-	"github.com/amadeusitgroup/cds/internal/clog"
 	"github.com/amadeusitgroup/cds/internal/config"
 	cg "github.com/amadeusitgroup/cds/internal/global"
 	cdstls "github.com/amadeusitgroup/cds/internal/tls"
@@ -27,9 +26,9 @@ func (s stubCallback) execute() error {
 		return cerr.AppendError("Failed to get agent server address", err)
 	}
 
-	clientTLSConfig, errTLS := cdstls.SetupTLSConfig(cdstls.TLSConfig{CAFile: cdstls.CAFilePath,
-		CertFile: cdstls.ClientCertFilePath,
-		KeyFile:  cdstls.ClientKeyFilePath,
+	clientTLSConfig, errTLS := cdstls.SetupTLSConfig(cdstls.TLSConfig{CAFile: cdstls.CAFilePath(),
+		CertFile: cdstls.ClientCertFilePath(),
+		KeyFile:  cdstls.ClientKeyFilePath(),
 	})
 	if errTLS != nil {
 		return cerr.AppendError("Failed to setup TLS config", errTLS)
@@ -38,7 +37,7 @@ func (s stubCallback) execute() error {
 	clientCreds := credentials.NewTLS(clientTLSConfig)
 	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(clientCreds))
 	if err != nil {
-		clog.Error("Failed to connect", err)
+		return cerr.AppendErrorFmt("Failed to create agent client for %s", err, addr)
 	}
 	defer func() {
 		_ = conn.Close()

@@ -11,6 +11,9 @@ import (
 	"github.com/amadeusitgroup/cds/internal/systemd"
 )
 
+// kAgentBinaryName is the name of the agent binary, as built by `make build-api-agent`.
+const kAgentBinaryName = "cds-api-agent"
+
 func StartAgent(hostname string) error {
 	// check if agent is already running
 	running, err := isAgentRunning(hostname)

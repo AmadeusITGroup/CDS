@@ -18,7 +18,7 @@ import (
 )
 
 var (
-	binaries = []binary{cfsslbin{n: "cfssl"}, cfssljsonbin{n: "cfssljson"}, cdsagentbin{n: "cdssrv"}}
+	binaries = []binary{cfsslbin{n: "cfssl"}, cfssljsonbin{n: "cfssljson"}, cdsagentbin{n: kAgentBinaryName}}
 )
 
 func fire() error {
@@ -37,9 +37,9 @@ func fire() error {
 	port := agentPort()
 	addr := fmt.Sprintf(":%d", port)
 
-	agentPath, err := exec.LookPath("cdssrv")
+	agentPath, err := exec.LookPath(kAgentBinaryName)
 	if err != nil {
-		return cerr.AppendError("cdssrv not found on PATH", err)
+		return cerr.AppendErrorFmt("%s not found on PATH", err, kAgentBinaryName)
 	}
 
 	sysd := systemd.New(
@@ -55,7 +55,7 @@ func fire() error {
 		}
 	}
 
-	if _, err := startAgent(); err != nil {
+	if err := startAgent(agentPath, port); err != nil {
 		return cerr.AppendError("Failed to start agent", err)
 	}
 	return registerAgentInConfig(addr)
@@ -80,9 +80,9 @@ func registerAgentInConfig(server string) error {
 		config.WithTargetAddress(addr.String()),
 		config.WithAgentTLS(
 			config.NewTlssecret(
-				config.WithCA(cdstls.CAFilePath),
-				config.WithCert(cdstls.ClientCertFilePath),
-				config.WithKey(cdstls.ClientKeyFilePath)),
+				config.WithCA(cdstls.CAFilePath()),
+				config.WithCert(cdstls.ClientCertFilePath()),
+				config.WithKey(cdstls.ClientKeyFilePath())),
 		),
 	)); err != nil {
 		return cerr.AppendError("failed to add agent to CLI config", err)
@@ -90,24 +90,27 @@ func registerAgentInConfig(server string) error {
 	return nil
 }
 
-func startAgent() (string, error) {
-	cmd := exec.Command("cdssrv")
+// startAgent starts the agent as a detached process listening on port.
+// It does not wait for the agent to exit: the agent is a long running process.
+func startAgent(agentPath string, port int) error {
+	cmd := exec.Command(agentPath, "-port", strconv.Itoa(port))
 	cmd.SysProcAttr = &syscall.SysProcAttr{
 		Setpgid: true,
 	}
 
 	clog.Debug("Start agent...")
 	if err := cmd.Start(); err != nil {
-		return cg.EmptyStr, cerr.AppendError("Failed to start agent", err)
+		return cerr.AppendError("Failed to start agent", err)
 	}
 
-	clog.Debug("Waiting agent to start...")
-	if err := cmd.Wait(); err != nil {
-		clog.Error("Command finished with error:", err)
-	}
+	go func() {
+		if err := cmd.Wait(); err != nil {
+			clog.Error("Agent process finished with error:", err)
+		}
+	}()
 
 	clog.Debug(fmt.Sprintf("Agent started with pid: %d", cmd.Process.Pid))
-	return ":8087", nil
+	return nil
 }
 
 // func onRemoteLinux(hostName string) ([]byte, error) {

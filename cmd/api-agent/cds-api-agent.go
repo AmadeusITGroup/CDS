@@ -14,8 +14,6 @@ import (
 	"github.com/amadeusitgroup/cds/internal/cerr"
 	"github.com/amadeusitgroup/cds/internal/clog"
 	"github.com/amadeusitgroup/cds/internal/config"
-	cg "github.com/amadeusitgroup/cds/internal/global"
-	"github.com/amadeusitgroup/cds/internal/host"
 	"github.com/amadeusitgroup/cds/internal/systemd"
 	cdstls "github.com/amadeusitgroup/cds/internal/tls"
 	"google.golang.org/grpc"
@@ -41,22 +39,22 @@ var (
 func main() {
 
 	lis, err := listener()
-
 	if err != nil {
-		clog.Error(fmt.Sprintf("Failed to listen to port %d", *port), err)
+		clog.Error("Failed to create listener", err)
+		os.Exit(1)
 	}
 
 	agentTLSConfig, errTLS := cdstls.SetupTLSConfig(cdstls.TLSConfig{
-		CertFile:      cdstls.AgentServerCertFilePath,
-		KeyFile:       cdstls.AgentServerKeyFilePath,
-		CAFile:        cdstls.CAFilePath,
+		CertFile:      cdstls.AgentServerCertFilePath(),
+		KeyFile:       cdstls.AgentServerKeyFilePath(),
+		CAFile:        cdstls.CAFilePath(),
 		ServerAddress: lis.Addr().String(),
 		Server:        true, // Setting Server attribute to true enable authentication of clients at server side. Mutual TLS authentication use case
 	})
 
 	if errTLS != nil {
-		clog.Error("Failed to setup TLS config", err)
-		return
+		clog.Error("Failed to setup TLS config", errTLS)
+		os.Exit(1)
 	}
 	agentCreds := credentials.NewTLS(agentTLSConfig)
 	agentSrv, _ := agent.NewAgent(
@@ -167,28 +165,33 @@ func createAgentLogger() *slog.Logger {
 	)
 }
 
+// listener returns the systemd socket activation listener when the agent is
+// socket activated, otherwise it listens on the -port flag.
+// Being on a systemd host is not enough: the agent may have been started by
+// the exec fallback, in which case no listener is passed.
 func listener() (net.Listener, error) {
+	listeners, err := systemd.Listeners()
+	if err != nil {
+		return nil, cerr.AppendError("cannot retrieve socket activation listeners", err)
+	}
 
-	if systemd.New(systemd.WithTarget(host.New(host.WithName(cg.KLocalhost)))).In() {
-		// systemd use case
-		listeners, err := systemd.Listeners()
+	switch len(listeners) {
+	case 0:
+		// bootstrap usecase
+		flag.Parse()
+		lis, err := net.Listen("tcp", fmt.Sprintf(":%d", *port))
 		if err != nil {
-			return nil, cerr.AppendError("cannot retrieve listeners", err)
+			return nil, cerr.AppendErrorFmt("failed to listen to port %d", err, *port)
 		}
-
-		if len(listeners) != 1 {
-			return nil, cerr.NewError(fmt.Sprintf("expected 1 socket activation listener but got %d", len(listeners)))
-		}
-
+		return lis, nil
+	case 1:
+		// systemd use case
 		lis := listeners[0]
-
 		if tcpAddr, ok := lis.Addr().(*net.TCPAddr); ok {
 			clog.Debug(fmt.Sprintf("server listening on port %d", tcpAddr.Port))
 		}
-		return lis, err
+		return lis, nil
+	default:
+		return nil, cerr.NewError(fmt.Sprintf("expected 1 socket activation listener but got %d", len(listeners)))
 	}
-
-	// bootstrap usecase
-	flag.Parse()
-	return net.Listen("tcp", fmt.Sprintf(":%d", *port))
 }
