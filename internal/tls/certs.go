@@ -100,15 +100,41 @@ func BuildCerts() error {
 		}
 	}
 
-	certsDir := cenv.ConfigDir(kcertsDir)
-	if err := cenv.EnsureDir(certsDir, cg.KPermDir); err != nil {
-		return cerr.AppendErrorFmt("Failed to create certs directory %s", err, certsDir)
+	if err := installCerts(workDir); err != nil {
+		return cerr.AppendError("Failed to install certificates", err)
+	}
+	return nil
+}
+
+// installCerts copies the generated material from workDir into the client and
+// agent certs directories, each one receiving only what it needs.
+// The CA key stays on the client side, which is the trust root issuing certificates.
+func installCerts(workDir string) error {
+	clientCertsDir := cenv.ClientConfigDir(kcertsDir)
+	agentCertsDir := cenv.AgentConfigDir(kcertsDir)
+
+	installs := []struct {
+		dir   string
+		files []string
+	}{
+		{dir: clientCertsDir, files: []string{"ca.pem", "ca-key.pem", "client.pem", "client-key.pem"}},
+		{dir: agentCertsDir, files: []string{"ca.pem", "agent-srv.pem", "agent-srv-key.pem"}},
 	}
 
-	// wildcard (*), in mv command, needs a shell to be interpreted correctly
-	move := shexec.Execcmd{Name: "sh", Args: []string{"-c", fmt.Sprintf("mv *.pem *.csr %s", certsDir)}}
-	if out, err := shexec.ExecuteCmd(move, workDir); err != nil {
-		return cerr.AppendError(fmt.Sprintf("Failed to execute command(%s...): %s", move.Name, out), err)
+	for _, install := range installs {
+		if err := os.MkdirAll(install.dir, cg.KPermDir); err != nil {
+			return cerr.AppendErrorFmt("Failed to create certs directory %s", err, install.dir)
+		}
+		for _, file := range install.files {
+			data, err := os.ReadFile(filepath.Join(workDir, file))
+			if err != nil {
+				return cerr.AppendErrorFmt("Failed to read generated certificate %s", err, file)
+			}
+			dst := filepath.Join(install.dir, file)
+			if err := os.WriteFile(dst, data, cg.KPermFile); err != nil {
+				return cerr.AppendErrorFmt("Failed to write certificate %s", err, dst)
+			}
+		}
 	}
 	return nil
 }

@@ -1,0 +1,14 @@
+syntax = "proto3";
+
+package api.v1.container;
+option go_package = "github.com/amadeusitgroup/cds/cdspb";
+
+// RenameContainerRequest identifies the container to rename.
+message RenameContainerRequest {
+  // container_name is the current container identifier.
+  string container_name = 1;
+
+  // new_container_name is the replacement container identifier.
+  string new_container_name = 2;
+}
+

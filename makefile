@@ -120,7 +120,7 @@ scaffold: \
 
 init:
 	@$(ECHO) "$(ECHO_BEFORE)Creating certs directory$(ECHO_AFTER)"
-	mkdir -p $(TEST_FOLDER) $(CDS_CONFIG_PATH)/.xcds/certs
+	mkdir -p $(TEST_FOLDER) $(CDS_CONFIG_PATH)/.xcds/certs $(CDS_CONFIG_PATH)/.xcds-agent/certs
 
 gencert: init
 	CDS_CONFIG_PATH=${HOME_DIR}/cdstmp
@@ -141,7 +141,9 @@ gencert: init
 		-config=$(TEST_FOLDER)ca-config.json \
 		-profile=client \
 		$(TEST_FOLDER)client-csr.json | cfssljson -bare client
-	mv *.pem *.csr $(CDS_CONFIG_PATH)/.xcds/certs
+	cp ca.pem agent-srv.pem agent-srv-key.pem $(CDS_CONFIG_PATH)/.xcds-agent/certs
+	mv ca.pem ca-key.pem client.pem client-key.pem $(CDS_CONFIG_PATH)/.xcds/certs
+	rm -f agent-srv.pem agent-srv-key.pem *.csr
 
 go-tidy: build-pb
 	@$(ECHO) "$(ECHO_BEFORE)Executing go mod tidy$(ECHO_AFTER)"

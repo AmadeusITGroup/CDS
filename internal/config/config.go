@@ -48,14 +48,14 @@ func WithKey(key string) func(*tlssecret) {
 //   - targetServer: localhost:1337
 //     ssh-tunnel: true
 
-// aconfig.yaml example:
+// aconfig.yaml example (owned by the agent, under .xcds-agent):
 // apiVersion: v1
 // clients:
 //   - name: my-laptop
 //     tls:
-//       ca: /Users/me/.xcds/certs/ca.pem
-//       certificate: /Users/me/.xcds/certs/client.pem
-//       key: /Users/me/.xcds/certs/client-key.pem
+//       ca: /Users/me/.xcds-agent/certs/ca.pem
+//       certificate: /path/to/registered-client.pem
+//       key: /path/to/registered-client-key.pem
 
 // defaultCLIAgentConfig returns the default content for cliconfig.yaml.
 func defaultCLIAgentConfig() io.Reader {

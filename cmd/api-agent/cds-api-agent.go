@@ -11,6 +11,7 @@ import (
 	"syscall"
 
 	"github.com/amadeusitgroup/cds/internal/agent"
+	"github.com/amadeusitgroup/cds/internal/cenv"
 	"github.com/amadeusitgroup/cds/internal/cerr"
 	"github.com/amadeusitgroup/cds/internal/clog"
 	"github.com/amadeusitgroup/cds/internal/config"
@@ -25,6 +26,9 @@ var logger *slog.Logger
 func init() {
 
 	logger = createAgentLogger()
+
+	// the agent owns its own configuration directory, distinct from the CLI one
+	cenv.SetConfigDirForAgent()
 
 	if err := config.InitAgentConfig(); err != nil {
 		clog.Error("Failed to initialize cds' agent configuration", err)

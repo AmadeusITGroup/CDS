@@ -191,9 +191,13 @@ func CopyFile(src, dst string) error {
 }
 
 func CreateTempFileWithContent(reader io.Reader) (string, error) {
-	tmpFilePath, err := cos.CreateTempFileWithContent(ConfigDir(kTmp), kTmpPattern, reader)
+	tmpDir := ConfigDir(kTmp)
+	if err := EnsureDir(tmpDir, cg.KPermDir); err != nil {
+		return "", cerr.AppendErrorFmt("Failed ensuring tmp directory %s", err, tmpDir)
+	}
+	tmpFilePath, err := cos.CreateTempFileWithContent(tmpDir, kTmpPattern, reader)
 	if err != nil {
-		return "", cerr.AppendErrorFmt("Failed creating tmp file in local (%s,%s)", err, ConfigDir(kTmp), kTmpPattern)
+		return "", cerr.AppendErrorFmt("Failed creating tmp file in local (%s,%s)", err, tmpDir, kTmpPattern)
 	}
 
 	return tmpFilePath, nil

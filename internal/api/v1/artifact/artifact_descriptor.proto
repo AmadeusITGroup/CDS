@@ -3,21 +3,20 @@ syntax = "proto3";
 package api.v1.artifact;
 option go_package = "github.com/amadeusitgroup/cds/cdspb";
 
-
-// ArtifactDescriptor is the metedata of a transfered artifact
+// ArtifactDescriptor describes one staged deploy artifact.
 message ArtifactDescriptor {
-  // type identifies the type of the data transfered
-  // examples : "text/plain", "application/json" 
+  // type identifies the uploaded data content type.
+  // Examples: "text/plain", "application/json".
   string type = 1;
 
-  // content identifier to avoid duplication or verify integrity
+  // digest is the optional sha256:<hex> content digest used to verify integrity.
   string digest = 2;
 
-  // size is the file size.
+  // size is the artifact byte size when known.
   int64 size = 3;
 
   // identifier identifies which deploy input binding this artifact satisfies.
   // It is derived from CDS resource analysis, for example
-  // "resource/user_config/my-bashrc" or "resource/dockerfile/Dockerfile".
+  // "resource/auth/auth" or "resource/dockerfile/Dockerfile".
   string identifier = 4;
 }

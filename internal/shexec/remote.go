@@ -373,7 +373,7 @@ func connectSSHKey(host target) (*ssh.Client, error) {
 
 	// Create client config
 	config := &ssh.ClientConfig{
-		User: host.FQDN(),
+		User: host.Username(),
 		Auth: []ssh.AuthMethod{
 			authMethod,
 		},

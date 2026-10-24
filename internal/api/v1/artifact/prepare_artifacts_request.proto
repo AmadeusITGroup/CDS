@@ -5,11 +5,11 @@ option go_package = "github.com/amadeusitgroup/cds/cdspb";
 
 import "internal/api/v1/artifact/artifact_descriptor.proto";
 
-// PrepareArtifactsRequest advertises all the artifacts that the client wants to bind to the project for the upcoming deploy flow.
+// PrepareArtifactsRequest advertises all artifacts required by the next deploy.
 message PrepareArtifactsRequest {
-    // descriptors are all the ArtifactDescriptor prepared after configuration analysis.
+    // descriptors are the artifacts found during configuration analysis.
     repeated ArtifactDescriptor descriptors = 1;
 
-    // project_name identifies to which project this ressource is attached to.
+    // project_name scopes artifacts to one project staging area.
     string project_name = 2;
 }
