@@ -3,6 +3,7 @@ package shexec
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -42,24 +43,10 @@ func RunLocalCmds(cmds []ExecuteEvent) error {
 // run single command and return its output
 // if the command fails, error is captured and (stderr, exe.Run's error) are returned
 func RunLocalCmdWithOutput(cmd []ExecuteEvent) (string, error) {
-	var shell string
-	var args []string
-
-	switch runtime.GOOS {
-	case "windows":
-		shell = "cmd.exe"
-		args = []string{"/c"}
-	default:
-		shell = "bash"
-		args = []string{"-c"}
-	}
-
-	args = append(args, cmd[0].Cmd())
-
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 
-	exeCmd := exec.Command(shell, args...)
+	exeCmd := localShellCmd(cmd[0].Cmd())
 	exeCmd.Stdout = &stdout
 	exeCmd.Stderr = &stderr
 
@@ -74,6 +61,34 @@ func RunLocalCmdWithOutput(cmd []ExecuteEvent) (string, error) {
 	}
 
 	return stdout.String(), nil
+}
+
+// RunLocalCmdWithExitCode runs a single command and returns its combined
+// stdout/stderr output and its exit code. A non-zero exit code is not an error:
+// the returned error is only set when the command could not be run at all.
+func RunLocalCmdWithExitCode(cmd ExecuteEvent) (string, int, error) {
+	var output bytes.Buffer
+	exeCmd := localShellCmd(cmd.Cmd())
+	exeCmd.Stdout = &output
+	exeCmd.Stderr = &output
+
+	err := exeCmd.Run()
+	var exitErr *exec.ExitError
+	switch {
+	case err == nil:
+		return output.String(), 0, nil
+	case errors.As(err, &exitErr):
+		return output.String(), exitErr.ExitCode(), nil
+	default:
+		return output.String(), -1, cerr.AppendErrorFmt("Failed to execute command locally (%v)", err, cmd.Cmd())
+	}
+}
+
+func localShellCmd(command string) *exec.Cmd {
+	if runtime.GOOS == "windows" {
+		return exec.Command("cmd.exe", "/c", command)
+	}
+	return exec.Command("bash", "-c", command)
 }
 
 // attach the terminal to a ssh session, the assumption here is that

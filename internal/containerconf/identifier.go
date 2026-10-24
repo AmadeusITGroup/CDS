@@ -103,6 +103,12 @@ func normalizeIdentifier(identifier string) (string, error) {
 	return normalized, nil
 }
 
+// NormalizeIdentifier validates and canonicalizes a logical artifact identifier.
+// It is the single policy shared by artifact collectors and the agent staging.
+func NormalizeIdentifier(identifier string) (string, error) {
+	return normalizeIdentifier(identifier)
+}
+
 func normalizeResourceKind(kind string) (string, error) {
 	normalized := strings.TrimSpace(kind)
 	switch {

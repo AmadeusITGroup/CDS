@@ -103,9 +103,8 @@ const (
 	K_NETWORK_UPDATE
 )
 
-// This deployment file comes from official nginx deployment file: https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.10.1/deploy/static/provider/kind/deploy.yaml
-// In case a new version of the deployment is released, you just need to upload it to A1 artifactory in the following path.
-const KIngressDeploymentFile = "https://repository.rnd.amadeus.net:443/artifactory/devenv-generic-prod-devenv-exp-nce/xdlc/devenv/cds_dependencies/ingress-deployment.yaml"
+// Official nginx ingress deployment file for kind: https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.10.1/deploy/static/provider/kind/deploy.yaml
+const KIngressDeploymentFile = "https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.10.1/deploy/static/provider/kind/deploy.yaml"
 
 const (
 	K_CP_DEFAULT Copy_t = iota
@@ -133,7 +132,8 @@ const (
 var (
 	executeMap = map[Execute_t]RunEvent{
 		K_EXEC_CMD_SSH: {
-			cmd:       `/bin/sh -c 'mkdir -p ~%[1]v/.ssh && chmod 700 ~%[1]v/.ssh && { [ -f ~%[1]v/.ssh/authorized_keys ] && [ -n "$(tail -c 1 ~%[1]v/.ssh/authorized_keys)" ] && echo >> ~%[1]v/.ssh/authorized_keys || true; } && echo "%v" >> ~%[1]v/.ssh/authorized_keys && chmod 600 ~%[1]v/.ssh/authorized_keys'`,
+			// user and keys are passed as positional parameters to avoid any shell interpolation
+			cmd:       `/bin/sh -c %s sh %s %s`,
 			eventInfo: "Install SSH public key in container",
 		},
 		K_EXEC_CMD_HOMEDIR: {
@@ -241,7 +241,7 @@ var (
 			eventInfo: "Create namespace",
 		},
 		K_EXEC_CUSTOM_CMD: {
-			cmd:       `/bin/sh -c '%s'`,
+			cmd:       `/bin/sh -c %s`,
 			eventInfo: "",
 		},
 		K_EXEC_CMD_GET_ENV_VARIABLE: {

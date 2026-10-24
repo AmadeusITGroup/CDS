@@ -16,5 +16,8 @@ message DeployContainerRequest {
 
   // devcontainer_config contains the raw devcontainer.json bytes. File
   // references declared by the config are resolved from staged artifacts.
-  bytes devcontainer_config = 4; 
+  bytes devcontainer_config = 4;
+
+  // override_image_tag optionally replaces the tag of the devcontainer image.
+  string override_image_tag = 5;
 }

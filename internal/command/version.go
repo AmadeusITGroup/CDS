@@ -7,13 +7,8 @@ import (
 	"github.com/amadeusitgroup/cds/internal/api/v1/cdspb"
 	"github.com/amadeusitgroup/cds/internal/cerr"
 	"github.com/amadeusitgroup/cds/internal/clog"
+	cg "github.com/amadeusitgroup/cds/internal/global"
 	"github.com/spf13/cobra"
-)
-
-var (
-	// override version during build with ldflags, eg:
-	// go build -ldflags="-X github.com/amadeusitgroup/cds/commands.appVersion=0.0.1"
-	appVersion string = "develop"
 )
 
 type version struct {
@@ -35,7 +30,7 @@ func (v *version) initSubCommands() {
 
 func (v *version) runE(cmd *cobra.Command, args []string) error {
 	// biz logic on client side
-	clog.Info(fmt.Sprintf("cds CLI version: %s", appVersion))
+	clog.Info(fmt.Sprintf("cds CLI version: %s", cg.Version))
 
 	// biz logic on server side
 	if err := agentVersion.execute(); err != nil {

@@ -111,7 +111,7 @@ func testServerVersion(t *testing.T, client cdspb.AgentInfoServiceClient, config
 	ctx := context.Background()
 	reply, err := client.GetVersion(ctx, &cdspb.GetVersionRequest{})
 	assert.NoError(t, err)
-	want := "9.9.9"
-	assert.Equal(t, want, reply.GetCurrent(), "they should be equal")
+	// the configured manager is used, not replaced by the default one
+	assert.Equal(t, "99.99.99", reply.GetCurrent())
 
 }

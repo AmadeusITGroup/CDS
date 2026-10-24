@@ -54,3 +54,27 @@ func TestCreateTempFileWithContentEnsuresTempDirectory(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "content", string(content))
 }
+
+func TestCacheDirFollowsProcessMode(t *testing.T) {
+	root := setupCenvTest(t)
+
+	SetConfigDirForAgent()
+	assert.Equal(t, filepath.Join(root, ".xcds-agent", "cache"), CacheDir())
+}
+
+func TestRemoveTempFile(t *testing.T) {
+	root := setupCenvTest(t)
+	path, err := CreateTempFileWithContent(strings.NewReader("content"))
+	require.NoError(t, err)
+
+	require.NoError(t, RemoveTempFile(path))
+	assert.False(t, cos.Exists(path))
+	require.NoError(t, RemoveTempFile(path), "removing an already removed temp file is not an error")
+
+	configFile := filepath.Join(root, ".xcds", "cliconfig.yaml")
+	require.NoError(t, cos.WriteFile(configFile, []byte("content"), 0600))
+	for _, outside := range []string{configFile, ConfigDir(kTmp), filepath.Join(ConfigDir(kTmp), "..", "cliconfig.yaml")} {
+		assert.Error(t, RemoveTempFile(outside), outside)
+	}
+	assert.True(t, cos.Exists(configFile))
+}

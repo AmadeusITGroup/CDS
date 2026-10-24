@@ -202,3 +202,18 @@ func CreateTempFileWithContent(reader io.Reader) (string, error) {
 
 	return tmpFilePath, nil
 }
+
+// RemoveTempFile removes a file created by CreateTempFileWithContent.
+// It refuses to remove anything outside of the tmp directory.
+func RemoveTempFile(path string) error {
+	tmpDir := filepath.Clean(ConfigDir(kTmp))
+	cleanPath := filepath.Clean(path)
+	relPath, err := filepath.Rel(tmpDir, cleanPath)
+	if err != nil || relPath == "." || relPath == ".." || strings.HasPrefix(relPath, ".."+string(filepath.Separator)) {
+		return cerr.NewError(fmt.Sprintf("refusing to remove non-temp file %s", path))
+	}
+	if err := cos.Fs.Remove(cleanPath); err != nil && !os.IsNotExist(err) {
+		return cerr.AppendErrorFmt("Failed to remove temporary file %s", err, cleanPath)
+	}
+	return nil
+}

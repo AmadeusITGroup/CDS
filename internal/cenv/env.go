@@ -14,6 +14,8 @@ const (
 
 	kClientConfigDirName = ".xcds"
 	kAgentConfigDirName  = ".xcds-agent"
+
+	kCacheDirName = "cache"
 )
 
 var (
@@ -50,6 +52,11 @@ func ConfigDir(dirname string) string {
 
 func GlobalConfigPath() string {
 	return ConfigDir(cg.EmptyStr)
+}
+
+// CacheDir returns the cache directory of the active configuration directory.
+func CacheDir() string {
+	return ConfigDir(kCacheDirName)
 }
 
 func configPath(filename string) string {
