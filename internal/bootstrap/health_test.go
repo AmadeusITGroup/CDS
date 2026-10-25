@@ -1,0 +1,112 @@
+package bootstrap
+
+import (
+	"context"
+	"net"
+	"path/filepath"
+	"testing"
+
+	"github.com/amadeusitgroup/cds/internal/api/v1/cdspb"
+	"github.com/amadeusitgroup/cds/internal/config"
+	cg "github.com/amadeusitgroup/cds/internal/global"
+	cdstls "github.com/amadeusitgroup/cds/internal/tls"
+	"github.com/amadeusitgroup/cds/internal/tls/tlstest"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
+)
+
+type fakeAgentInfo struct {
+	cdspb.UnimplementedAgentInfoServiceServer
+	version string
+}
+
+func (f fakeAgentInfo) GetVersion(context.Context, *cdspb.GetVersionRequest) (*cdspb.GetVersionResponse, error) {
+	return &cdspb.GetVersionResponse{Current: f.version}, nil
+}
+
+// startFakeAgent serves the agent info service over mutual TLS with the test
+// certificates (valid for localhost and 127.0.0.1) and returns its address.
+func startFakeAgent(t *testing.T, version string) string {
+	t.Helper()
+	t.Setenv("CDS_CONFIG_PATH", t.TempDir())
+	certsDir := filepath.Dir(cdstls.CAFilePath())
+	tlstest.WriteCerts(t, certsDir)
+
+	tlsConfig, err := cdstls.SetupTLSConfig(cdstls.TLSConfig{
+		CAFile:   cdstls.CAFilePath(),
+		CertFile: filepath.Join(certsDir, "agent-srv.pem"),
+		KeyFile:  filepath.Join(certsDir, "agent-srv-key.pem"),
+		Server:   true,
+	})
+	require.NoError(t, err)
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	server := grpc.NewServer(grpc.Creds(credentials.NewTLS(tlsConfig)))
+	cdspb.RegisterAgentInfoServiceServer(server, fakeAgentInfo{version: version})
+	go func() { _ = server.Serve(lis) }()
+	t.Cleanup(server.Stop)
+	return lis.Addr().String()
+}
+
+func TestIsAgentRunning(t *testing.T) {
+	t.Run("not registered", func(t *testing.T) {
+		startFakeAgent(t, cg.Version)
+		running, err := isAgentRunning("127.0.0.1")
+		require.NoError(t, err)
+		assert.False(t, running)
+	})
+
+	t.Run("healthy agent", func(t *testing.T) {
+		address := startFakeAgent(t, cg.Version)
+		require.NoError(t, registerAgent("127.0.0.1", address))
+
+		running, err := isAgentRunning("127.0.0.1")
+		require.NoError(t, err)
+		assert.True(t, running)
+		require.NoError(t, waitForHealthyAgent(address, "127.0.0.1"))
+	})
+
+	t.Run("certificate not issued for the host", func(t *testing.T) {
+		address := startFakeAgent(t, cg.Version)
+		require.NoError(t, config.UpsertAgentForHostInConfig("other.example.com", config.NewAgent(config.WithTargetAddress(address))))
+
+		running, err := isAgentRunning("other.example.com")
+		require.NoError(t, err)
+		assert.False(t, running, "the agent certificate must be valid for the host")
+	})
+
+	t.Run("remote agent with another version is updated", func(t *testing.T) {
+		address := startFakeAgent(t, "other-version")
+		require.NoError(t, registerAgent("127.0.0.1", address))
+
+		running, err := isAgentRunning("127.0.0.1")
+		require.NoError(t, err)
+		assert.False(t, running)
+	})
+
+	t.Run("local agent with another version is kept", func(t *testing.T) {
+		address := startFakeAgent(t, "other-version")
+		_, port, err := net.SplitHostPort(address)
+		require.NoError(t, err)
+		require.NoError(t, registerAgent(cg.KLocalhost, net.JoinHostPort(cg.KLocalhost, port)))
+
+		running, err := isAgentRunning(cg.KLocalhost)
+		require.NoError(t, err)
+		assert.True(t, running)
+	})
+
+	t.Run("registered agent not listening", func(t *testing.T) {
+		startFakeAgent(t, cg.Version)
+		lis, err := net.Listen("tcp", "127.0.0.1:0")
+		require.NoError(t, err)
+		address := lis.Addr().String()
+		require.NoError(t, lis.Close())
+		require.NoError(t, registerAgent("127.0.0.1", address))
+
+		running, err := isAgentRunning("127.0.0.1")
+		require.NoError(t, err)
+		assert.False(t, running)
+	})
+}

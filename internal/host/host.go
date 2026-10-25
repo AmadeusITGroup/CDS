@@ -72,6 +72,22 @@ func (h *host) IsValid() bool {
 	return len(h.name) > 0
 }
 
+// Load returns the host registered in the db under name, with its SSH access
+// (username and key pair), and whether it was found.
+func Load(name string) (*host, bool) {
+	if !db.HasHost(name) {
+		return New(WithName(name)), false
+	}
+	return New(
+		WithName(name),
+		WithUsername(db.GetHostUsername(name)),
+		WithKeyPair(NewKeyPair(
+			WithPathToPub(db.GetHostPubKey(name)),
+			WithPathToPrv(db.GetHostKey(name)),
+		)),
+	), true
+}
+
 type keyPair struct {
 	pathToPub string
 	pathToPrv string

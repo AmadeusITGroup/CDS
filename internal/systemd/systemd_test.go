@@ -15,8 +15,6 @@ import (
 // from outputs (keyed by the full command line); unknown commands succeed
 // with an empty output unless listed in failures.
 type fakeHost struct {
-	defined  bool
-	built    bool
 	outputs  map[string]string
 	failures map[string]bool
 	executed []string
@@ -25,20 +23,12 @@ type fakeHost struct {
 
 func newFakeHost() *fakeHost {
 	return &fakeHost{
-		defined: true,
 		outputs: map[string]string{
 			"systemd-path user-configuration": "/home/remote-user/.config\n",
 		},
 		failures: map[string]bool{},
 		copied:   map[string]string{},
 	}
-}
-
-func (f *fakeHost) Defined() bool { return f.defined }
-
-func (f *fakeHost) Build() error {
-	f.built = true
-	return nil
 }
 
 func (f *fakeHost) Execute(name string, args ...string) (string, error) {
@@ -94,7 +84,6 @@ func TestStartServiceCreatesUnitsInTargetDirAndEnablesThemNow(t *testing.T) {
 		"systemctl --user daemon-reload",
 		"systemctl --user enable --now " + socketUnitName + " " + serviceUnitName,
 	}, h.executed[len(h.executed)-2:])
-	assert.False(t, h.built, "a defined host must not be rebuilt")
 }
 
 func TestIsUnitReady(t *testing.T) {
@@ -149,4 +138,14 @@ func TestBuildUnitsDefaults(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, string(units[socketUnitName]), "ListenStream=8087")
 	assert.Contains(t, string(units[serviceUnitName]), "Requires="+socketUnitName)
+}
+
+func TestRestartService(t *testing.T) {
+	h := newFakeHost()
+
+	require.NoError(t, New(WithTarget(h)).RestartService())
+	assert.Equal(t, []string{"systemctl --user restart " + serviceUnitName}, h.executed)
+
+	h.failures["systemctl --user restart "+serviceUnitName] = true
+	assert.Error(t, New(WithTarget(h)).RestartService())
 }

@@ -39,6 +39,7 @@ $(foreach var, $(vars), $(if $(value $(var)), $(info $(var)=$(value $(var))), $(
 	run-metrics-analyzer \
 	build-pb \
 	build-api-agent \
+	build-api-agent-linux \
 	build-client \
 	build-metrics-analyzer \
 	test \
@@ -66,6 +67,7 @@ help:
 	@$(ECHO) "$(ECHO_BEFORE2)Binary targets$(ECHO_AFTER)"
 	@$(ECHO) "  build-api-agent    Compile the gRPC API agent server"
 	@$(ECHO) "  build-client       Compile the CDS CLI client"
+	@$(ECHO) "  build-api-agent-linux Cross-compile the agent for remote linux hosts (dist/)"
 	@$(ECHO) "  build-pb           Generate Go code from .proto files"
 	@$(ECHO) ""
 	@$(ECHO) "$(ECHO_BEFORE2)Quality targets$(ECHO_AFTER)"
@@ -176,6 +178,13 @@ run-metrics-analyzer: go-tidy
 build-api-agent: go-tidy build-pb
 	@$(ECHO) "$(ECHO_BEFORE2)Building cds api server$(ECHO_AFTER)"
 	go build -o cds-api-agent ./cmd/api-agent/cds-api-agent.go
+
+# Agent binaries for remote linux hosts, to be used with
+# CDS_AGENT_BINARY=$(PWD)/dist/cds-api-agent-{{os}}-{{arch}}
+build-api-agent-linux: go-tidy build-pb
+	@$(ECHO) "$(ECHO_BEFORE2)Building cds api server for linux$(ECHO_AFTER)"
+	GOOS=linux GOARCH=amd64 go build -o dist/cds-api-agent-linux-amd64 ./cmd/api-agent/cds-api-agent.go
+	GOOS=linux GOARCH=arm64 go build -o dist/cds-api-agent-linux-arm64 ./cmd/api-agent/cds-api-agent.go
 
 build-client: go-tidy build-pb
 	@$(ECHO) "$(ECHO_BEFORE2)Building cds CLI$(ECHO_AFTER)"

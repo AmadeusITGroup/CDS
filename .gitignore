@@ -7,3 +7,4 @@ coverage.out
 *.exe
 tarball-deliv
 **/api/**/*.pb.go
+dist/

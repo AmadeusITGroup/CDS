@@ -1,5 +1,8 @@
 package bootstrap
 
+import "github.com/amadeusitgroup/cds/internal/clog"
+
 func fire() error {
-	return nil
+	clog.Debug("Starting agent on Windows")
+	return fireLocal(execAgent)
 }

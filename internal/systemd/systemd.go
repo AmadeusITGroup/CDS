@@ -54,9 +54,8 @@ type sysD struct {
 	binary string
 }
 
+// hostOps is the target host, prepared by the caller (e.g. SSH access configured).
 type hostOps interface {
-	Defined() bool
-	Build() error
 	Execute(name string, args ...string) (string, error)
 	Copy(localPath, remotePath string) error
 }
@@ -111,11 +110,6 @@ func (s *sysD) isUnitReady() bool {
 
 	for _, unitName := range []string{socketUnitName, serviceUnitName} {
 		if _, err := s.h.Execute("test", "-f", path.Join(unitDir, unitName)); err != nil {
-			if !s.h.Defined() {
-				if berr := s.h.Build(); berr != nil {
-					clog.Error("failed to configure host", berr)
-				}
-			}
 			return false
 		}
 	}
@@ -223,6 +217,15 @@ func (s *sysD) startUnit() error {
 	}
 	if _, err := s.h.Execute("systemctl", "--user", "enable", "--now", socketUnitName, serviceUnitName); err != nil {
 		return cerr.AppendError("failed to enable systemd units", err)
+	}
+	return nil
+}
+
+// RestartService restarts the service, e.g. to run an updated binary. The
+// socket is kept so that no connection is refused meanwhile.
+func (s *sysD) RestartService() error {
+	if _, err := s.h.Execute("systemctl", "--user", "restart", serviceUnitName); err != nil {
+		return cerr.AppendError("failed to restart systemd service", err)
 	}
 	return nil
 }
