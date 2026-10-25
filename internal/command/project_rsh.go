@@ -1,13 +1,9 @@
 package command
 
 import (
-	"fmt"
-
 	"github.com/spf13/cobra"
 
-	"github.com/amadeusitgroup/cds/internal/cerr"
-	"github.com/amadeusitgroup/cds/internal/clog"
-	"github.com/amadeusitgroup/cds/internal/db"
+	"github.com/amadeusitgroup/cds/internal/shexec"
 )
 
 var _ baseCmd = (*projectRsh)(nil)
@@ -50,21 +46,13 @@ func (prsh *projectRsh) initSubCommands() {
 func (prsh *projectRsh) execute(cmd *cobra.Command, args []string) error {
 	projectName := getProjectNameFromArgsOrContext(args)
 
-	containers := db.ProjectContainersName(projectName)
-	if len(containers) == 0 {
-		return cerr.NewError("No containers to rsh into.\n" +
-			getTipRun(projectName) + "\n" +
-			getTipSsh(projectName))
+	containerName, err := syncedProjectPrimaryContainer(projectName)
+	if err != nil {
+		return err
 	}
-
-	// TODO: Agent Service interaction needed — remote shell into container:
-	// 1. Align container statuses via engine (alignContainerStatuses)
-	// 2. Verify running containers exist
-	// 3. Get first running container info
-	// 4. Build target host with SSH key paths
-	// 5. Resolve session user (--user flag or db.ProjectContainerRemoteUser)
-	// 6. Build remote execution engine with K_ACTION_EXE and K_EXEC_CMD_RSH
-	// 7. Attach process using key (shexec.AttachProcessUsingKey)
-	clog.Info(fmt.Sprintf("Project '%s' has containers configured. Agent service required for remote shell access.", projectName))
-	return cerr.NewError("TODO: Agent service not yet implemented — cannot execute 'rsh' operation")
+	target, err := containerSSHTarget(projectName, containerName, prsh.user)
+	if err != nil {
+		return err
+	}
+	return shexec.AttachShellUsingKey(target)
 }

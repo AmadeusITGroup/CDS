@@ -1,11 +1,13 @@
 package command
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/spf13/cobra"
 
-	"github.com/amadeusitgroup/cds/internal/cerr"
+	"github.com/amadeusitgroup/cds/internal/api/v1/cdspb"
+	"github.com/amadeusitgroup/cds/internal/bo"
 	"github.com/amadeusitgroup/cds/internal/clog"
 	"github.com/amadeusitgroup/cds/internal/db"
 )
@@ -55,12 +57,16 @@ func (ps *projectStop) runE(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	// TODO: Agent Service interaction needed — full stop sequence:
-	// 1. Validate devcontainer configuration (ContainerConf package)
-	// 2. Stop running containers via engine (engine.NewContainerEngine + stop)
-	// 3. Align container statuses (alignContainerStatuses)
-	// 4. Verify all containers are stopped
-	clog.Info(fmt.Sprintf("Project '%s' is ready for stopping. Agent service required to proceed.", projectName))
+	if err := onProjectAgent(projectName, func(services agentServices, ctx context.Context) error {
+		return changeProjectContainersState(ctx, services.container, projectName, bo.KContainerStatusExited, func(containerName string) error {
+			_, err := services.container.StopContainer(ctx, &cdspb.StopContainerRequest{ContainerName: containerName})
+			return err
+		})
+	}); err != nil {
+		return err
+	}
+
+	clog.Info(fmt.Sprintf("Project '%s' stopped.", projectName))
 	clog.Info(getTipStart(projectName))
-	return cerr.NewError("TODO: Agent service not yet implemented — cannot execute 'stop' operation")
+	return nil
 }

@@ -1,6 +1,7 @@
 package command
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/spf13/cobra"
@@ -8,6 +9,7 @@ import (
 	"github.com/amadeusitgroup/cds/internal/cerr"
 	"github.com/amadeusitgroup/cds/internal/clog"
 	"github.com/amadeusitgroup/cds/internal/db"
+	"github.com/amadeusitgroup/cds/internal/engine"
 )
 
 var _ baseCmd = (*projectShare)(nil)
@@ -40,22 +42,29 @@ func (pshare *projectShare) subCommands() []baseCmd {
 func (pshare *projectShare) execute(cmd *cobra.Command, args []string) error {
 	projectName := getProjectNameFromArgsOrContext(args)
 
-	// TODO: Leverage ContainerConf package once implemented — validate devcontainer configuration
-	clog.Debug("Skipping devcontainer configuration validation — ContainerConf not yet implemented")
-
-	containers := db.ProjectContainersName(projectName)
-	if len(containers) == 0 {
-		return cerr.NewError("No containers to share.\n" +
-			getTipRun(projectName))
+	containerName, err := syncedProjectPrimaryContainer(projectName)
+	if err != nil {
+		return err
+	}
+	keyPair, err := ensureProjectSharedKeyPair(projectName)
+	if err != nil {
+		return err
+	}
+	publicKey, err := readPublicKey(keyPair)
+	if err != nil {
+		return err
 	}
 
-	// TODO: Agent Service interaction needed — share container access:
-	// 1. Align container statuses via engine (alignContainerStatuses)
-	// 2. Verify running containers exist
-	// 3. Get first running container info
-	// 4. Generate temporary SSH keypair (shexec.GenerateSharedKeys)
-	// 5. Add temporary shared keys to container authorized_keys (engine.AddTempSharedKeys)
-	// 6. Display private key content and connection instructions to user
-	clog.Info(fmt.Sprintf("Project '%s' share requires agent service to proceed.", projectName))
-	return cerr.NewError("TODO: Agent service not yet implemented — cannot execute 'share' operation")
+	remoteUser := db.ProjectContainerRemoteUser(projectName, containerName)
+	if err := onProjectAgent(projectName, func(services agentServices, ctx context.Context) error {
+		_, err := executeInContainer(ctx, services.container, containerName, engine.AuthorizedKeysCommand(true, remoteUser, publicKey), engine.KRootUsr)
+		return err
+	}); err != nil {
+		return cerr.AppendErrorFmt("Failed to install the shared SSH key in container %s", err, containerName)
+	}
+
+	clog.Info(fmt.Sprintf("Project '%s' is shared through container '%s'.", projectName, containerName))
+	clog.Info(fmt.Sprintf("Share the private key %s, to be used with:", keyPair.PathToPrv))
+	clog.Info(fmt.Sprintf("  ssh -i <private key> -p %d %s@%s", db.ContainerSSHPort(projectName, containerName), remoteUser, projectAgentHost(projectName)))
+	return nil
 }

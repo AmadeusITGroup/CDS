@@ -174,7 +174,7 @@ func (rb remoteBootstrap) ensureBinary(p platform, binDir string) (string, error
 	}
 
 	remote := path.Join(binDir, kAgentBinaryName)
-	if out, err := rb.h.Execute("sha256sum", remote); err == nil && strings.HasPrefix(strings.TrimSpace(out), localSum+" ") {
+	if out, err := rb.h.Execute("sh", "-c", sha256Probe(remote)); err == nil && strings.HasPrefix(strings.TrimSpace(out), localSum+" ") {
 		clog.Debug(fmt.Sprintf("Agent binary %s is up to date on %s", remote, rb.hostname))
 		return remote, nil
 	}
@@ -232,6 +232,12 @@ func (rb remoteBootstrap) upload(local, remote, perm string) error {
 		return cerr.AppendErrorFmt("Failed to set permissions of %s on %s", err, remote, rb.hostname)
 	}
 	return nil
+}
+
+// sha256Probe returns the sh script printing the sha256 of file, or nothing
+// when the file is missing: the probe does not fail.
+func sha256Probe(file string) string {
+	return cg.ShellSingleQuote(fmt.Sprintf("sha256sum %s 2>/dev/null || true", cg.ShellSingleQuote(file)))
 }
 
 // startRemoteService runs the agent as a systemd user service of the host,

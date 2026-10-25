@@ -33,9 +33,11 @@ func (v *version) runE(cmd *cobra.Command, args []string) error {
 	clog.Info(fmt.Sprintf("cds CLI version: %s", cg.Version))
 
 	// biz logic on server side
-	if err := agentVersion.execute(); err != nil {
+	agentVersion, err := agentVersionOn(cg.KLocalhost)
+	if err != nil {
 		return cerr.AppendError("Failed to execute version command", err)
 	}
+	clog.Info(fmt.Sprintf("Agent server version: %s", agentVersion))
 	return nil
 }
 
@@ -74,13 +76,16 @@ func (v *version) subCommands() []baseCmd {
 /*                                                         */
 /***********************************************************/
 
-var agentVersion stubCallback = func(c agentServices, ctx context.Context) error {
-	reply, err := c.info.GetVersion(ctx, &cdspb.GetVersionRequest{})
-
-	if err != nil {
-		return cerr.AppendError("Failed to get agent version", err)
-	}
-
-	clog.Info(fmt.Sprintf("Agent server version: %s", reply.GetCurrent()))
-	return nil
+// agentVersionOn returns the version of the agent of hostname.
+func agentVersionOn(hostname string, options ...func(*callOptions)) (string, error) {
+	var version string
+	err := stubCallback(func(c agentServices, ctx context.Context) error {
+		reply, err := c.info.GetVersion(ctx, &cdspb.GetVersionRequest{})
+		if err != nil {
+			return cerr.AppendError("Failed to get agent version", err)
+		}
+		version = reply.GetCurrent()
+		return nil
+	}).executeOn(hostname, options...)
+	return version, err
 }

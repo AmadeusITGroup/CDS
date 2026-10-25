@@ -376,3 +376,26 @@ func findCommandIndexWithDescription(cmds []shexec.ExecuteEvent, description str
 	}
 	return -1
 }
+
+func TestRemoveAuthorizedKeysCommand(t *testing.T) {
+	current, err := user.Current()
+	require.NoError(t, err)
+	dir := t.TempDir()
+	home := filepath.Join(dir, "home")
+	passwd := filepath.Join(dir, "passwd")
+	require.NoError(t, os.WriteFile(passwd, []byte(fmt.Sprintf("%s:x:1:1::%s:/bin/sh\n", current.Username, home)), 0600))
+	run := func(install bool, keys string) {
+		t.Helper()
+		cmd := strings.ReplaceAll(AuthorizedKeysCommand(install, current.Username, keys), "/etc/passwd", passwd)
+		out, err := exec.Command("/bin/sh", "-c", cmd).CombinedOutput()
+		require.NoError(t, err, string(out))
+	}
+
+	run(false, "ssh-ed25519 AAAA1 a@b") // nothing installed yet
+	run(true, "ssh-ed25519 AAAA1 a@b\nssh-ed25519 AAAA2 c@d\nssh-ed25519 AAAA3 e@f")
+	run(false, "ssh-ed25519 AAAA2 c@d\nssh-ed25519 AAAA3 e@f")
+
+	content, err := os.ReadFile(filepath.Join(home, ".ssh", "authorized_keys"))
+	require.NoError(t, err)
+	assert.Equal(t, "ssh-ed25519 AAAA1 a@b\n", string(content))
+}

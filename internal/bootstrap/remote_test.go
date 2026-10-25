@@ -134,7 +134,7 @@ func TestRemoteBootstrapSkipsUpToDateBinary(t *testing.T) {
 	require.NoError(t, err)
 	sum, err := sha256File(local)
 	require.NoError(t, err)
-	h.outputs["sha256sum "+remoteBinaryPath()] = sum + "  " + remoteBinaryPath() + "\n"
+	h.outputs["sh -c "+sha256Probe(remoteBinaryPath())] = sum + "  " + remoteBinaryPath() + "\n"
 
 	require.NoError(t, rb.run())
 
@@ -144,7 +144,7 @@ func TestRemoteBootstrapSkipsUpToDateBinary(t *testing.T) {
 
 func TestRemoteBootstrapReplacesDifferentBinary(t *testing.T) {
 	h := newFakeRemoteHost()
-	h.outputs["sha256sum "+remoteBinaryPath()] = "0000  " + remoteBinaryPath() + "\n"
+	h.outputs["sh -c "+sha256Probe(remoteBinaryPath())] = "0000  " + remoteBinaryPath() + "\n"
 	rb, _ := newTestRemoteBootstrap(t, h)
 
 	require.NoError(t, rb.run())

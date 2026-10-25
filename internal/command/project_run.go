@@ -1,6 +1,7 @@
 package command
 
 import (
+	"context"
 	"fmt"
 	"path/filepath"
 
@@ -22,6 +23,7 @@ type projectRun struct {
 	overrideImageTag string
 	pullLatest       bool
 	pullGiven        bool
+	projectName      string
 	defaultCmd
 }
 
@@ -102,6 +104,7 @@ func (pr *projectRun) preRunE(cmd *cobra.Command, args []string) error {
 	}
 
 	clog.Info(fmt.Sprintf("Using project '%s'.", projectName))
+	pr.projectName = projectName
 
 	if err := pr.buildProjectHostInfoAndConfig(projectName); err != nil {
 		return err
@@ -136,17 +139,20 @@ func (pr *projectRun) runE(cmd *cobra.Command, args []string) error {
 	clog.Debug("[commands.projectRun.runE] Start")
 	defer clog.Debug("[commands.projectRun.runE] End")
 
-	projectName := db.GetCurrentProject()
-	// TODO: Agent Service interaction needed — execute the full run orchestration:
-	// - build and run the devcontainer (engine.run)
-	// - build orchestration (KinD) if requested
-	// - build registry if requested
-	// - build SSM if requested
-	// - inspect container, configure SSH, run post-install hooks, clone repo
-	// Previously handled by runE() in run_utils.go which orchestrated concurrent goroutines
-	// for orchestration, registry, SSM, and devcontainer build.
-	clog.Info(fmt.Sprintf("Project '%s' is ready for deployment. Agent service required to proceed.", projectName))
-	return cerr.NewError("TODO: Agent service not yet implemented — cannot execute 'run' operation")
+	projectName := pr.projectName
+	plan, err := buildProjectDeployPlan(projectName)
+	if err != nil {
+		return err
+	}
+	return onProjectAgent(projectName, func(services agentServices, ctx context.Context) error {
+		containerName, err := deployProject(ctx, services, plan)
+		if err != nil {
+			return err
+		}
+		clog.Info(fmt.Sprintf("Project '%s' deployed container '%s'.", projectName, containerName))
+		clog.Info(getTipContainerSSH(containerName))
+		return nil
+	}, withLongTimeout())
 }
 
 /************************************************************/
@@ -158,7 +164,11 @@ func (pr *projectRun) runE(cmd *cobra.Command, args []string) error {
 func (pr *projectRun) buildProjectHostInfoAndConfig(projectName string) error {
 	var targetHostName string
 	if len(pr.targetServer) != 0 {
-		targetHostName = pr.targetServer
+		hostName, err := bootstrapHostName(pr.targetServer)
+		if err != nil {
+			return err
+		}
+		targetHostName = hostName
 	}
 	if targetHostName == "" {
 		targetHostName = db.GetDefaultHostName()
@@ -311,7 +321,7 @@ func (pr *projectRun) handlePath() (string, error) {
 }
 
 func (pr *projectRun) handleSrcRepo() (string, error) {
-	// TODO: Agent Service interaction needed — parse git repository URL (net.ParseGitRepositoryUrl)
-	// and handle source repo-based project creation (container.GetSourceRepository)
-	return "", cerr.NewError("TODO: Agent service not yet implemented — source repo-based project creation unavailable")
+	// TODO: parse git repository URL (net.ParseGitRepositoryUrl) and handle
+	// source repo-based project creation (container.GetSourceRepository)
+	return "", cerr.NewError("source repository based projects are not supported yet; use --path or a configured project")
 }

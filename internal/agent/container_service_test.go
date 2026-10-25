@@ -679,6 +679,20 @@ func TestRebuildContainer(t *testing.T) {
 		assert.Equal(t, "new", ops.lastDeploy.config.Get(containerconf.KOverrideImageTag))
 	})
 
+	t.Run("given configuration replaces the recorded one", func(t *testing.T) {
+		ops := &mockContainerOps{}
+		svc := deployed(t, ops)
+		newConfig := []byte(`{"image":"alpine:3.20"}`)
+
+		resp, err := svc.RebuildContainer(context.Background(), &cdspb.RebuildContainerRequest{ContainerName: "my-dev", DevcontainerConfig: newConfig})
+		require.NoError(t, err)
+		require.Empty(t, resp.GetError())
+		assert.Equal(t, "alpine:3.20", ops.lastDeploy.config.Get(containerconf.KImage))
+		recorded, err := svc.core.deployments().load("my-dev")
+		require.NoError(t, err)
+		assert.Equal(t, newConfig, recorded.GetDevcontainerConfig(), "the rebuilt deployment is recorded")
+	})
+
 	t.Run("empty override uses the configured image tag", func(t *testing.T) {
 		ops := &mockContainerOps{}
 		svc := deployed(t, ops)

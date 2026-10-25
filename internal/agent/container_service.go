@@ -174,7 +174,8 @@ func (s *containerServiceServer) DeployContainer(req *cdspb.DeployContainerReque
 }
 
 // RebuildContainer deletes the container and deploys it again from the
-// recorded deployment and the artifacts staged for its project.
+// recorded deployment, or the given configuration, and the artifacts staged
+// for its project.
 func (s *containerServiceServer) RebuildContainer(ctx context.Context, req *cdspb.RebuildContainerRequest) (*cdspb.RebuildContainerResponse, error) {
 	if err := validateRPCName("container_name", req.GetContainerName()); err != nil {
 		return nil, err
@@ -188,6 +189,9 @@ func (s *containerServiceServer) RebuildContainer(ctx context.Context, req *cdsp
 		return nil, status.Errorf(codes.Internal, "load deployment of %s: %v", req.GetContainerName(), err)
 	}
 	deployReq.OverrideImageTag = req.GetOverrideImageTag()
+	if len(req.GetDevcontainerConfig()) > 0 {
+		deployReq.DevcontainerConfig = req.GetDevcontainerConfig()
+	}
 
 	spec, err := s.deploySpec(deployReq)
 	if err != nil {
@@ -207,6 +211,10 @@ func (s *containerServiceServer) RebuildContainer(ctx context.Context, req *cdsp
 	response.Output = result.output
 	if err != nil {
 		response.Error = err.Error()
+		return response, nil
+	}
+	if errRecord := s.core.deployments().save(deployReq); errRecord != nil {
+		clog.Warn(fmt.Sprintf("Failed to record deployment of %s", req.GetContainerName()), errRecord)
 	}
 	return response, nil
 }

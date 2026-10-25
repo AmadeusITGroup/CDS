@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"github.com/amadeusitgroup/cds/internal/bo"
 )
 
@@ -1178,4 +1179,29 @@ func Test_ProjectsOrchestrationUsage(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestUpsertAndRemoveProjectContainers(t *testing.T) {
+	tearDown := setupTest(t, data{projects: projects{Projects: []*project{{Name: "p"}}}})
+	defer tearDown()
+
+	running := bo.Container{Id: "1", Name: "c1", Status: bo.KContainerStatusRunning, ExpectedStatus: bo.KContainerStatusRunning,
+		Pmapping: bo.PortMapping{bo.KSSHPortMapping: 2222}, RemoteUser: "dev"}
+	require.NoError(t, UpsertProjectContainer("p", running))
+	require.NoError(t, UpsertProjectContainer("p", bo.Container{Id: "2", Name: "c2"}))
+	assert.Equal(t, []string{"c1", "c2"}, ProjectContainersName("p"))
+	assert.Equal(t, 2222, ContainerSSHPort("p", "c1"))
+	assert.Equal(t, "dev", ProjectContainerRemoteUser("p", "c1"))
+
+	// upserting replaces the container of the same name
+	running.Pmapping = bo.PortMapping{bo.KSSHPortMapping: 3333}
+	require.NoError(t, UpsertProjectContainer("p", running))
+	assert.Equal(t, []string{"c1", "c2"}, ProjectContainersName("p"))
+	assert.Equal(t, 3333, ContainerSSHPort("p", "c1"))
+
+	require.NoError(t, RemoveProjectContainers("p", "c1", "unknown"))
+	assert.Equal(t, []string{"c2"}, ProjectContainersName("p"))
+
+	assert.Error(t, UpsertProjectContainer("unknown", running))
+	assert.Error(t, RemoveProjectContainers("unknown", "c2"))
 }

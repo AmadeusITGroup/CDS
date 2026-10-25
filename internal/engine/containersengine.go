@@ -536,11 +536,7 @@ func (ce *ContainersEngine) sshKeyHandler() (*RunEvent, error) {
 		formatActionName(engineAction(K_ACTION_EXE)),
 		KRootUsr,
 		ce.getContainerName(),
-		fmt.Sprintf(rEvent.cmd,
-			shellSingleQuote(kInstallAuthorizedKeysScript),
-			shellSingleQuote(ce.getRemoteUser()),
-			shellSingleQuote(strings.TrimSpace(string(pubKey))),
-		),
+		AuthorizedKeysCommand(true, ce.getRemoteUser(), string(pubKey)),
 	)
 	clog.Debug(fmt.Sprintf(kExecutingDebugMsg, cmd))
 
@@ -1057,7 +1053,7 @@ func (ce *ContainersEngine) handleCustomCommand() (*RunEvent, error) {
 		formatActionName(engineAction(K_ACTION_EXE)),
 		ce.getRemoteUser(),
 		ce.getContainerName(),
-		fmt.Sprintf(rEvent.cmd, shellSingleQuote(ce.getCustomCommand())),
+		fmt.Sprintf(rEvent.cmd, cg.ShellSingleQuote(ce.getCustomCommand())),
 	)
 
 	rEvent.cmd = cmd
@@ -1505,7 +1501,7 @@ func (ce *ContainersEngine) ensureConfiguredUsers() error {
 				formatActionName(engineAction(K_ACTION_EXE)),
 				KRootUsr,
 				ce.getContainerName(),
-				shellSingleQuote(ensureContainerUserScript(user)),
+				cg.ShellSingleQuote(ensureContainerUserScript(user)),
 			),
 			continueProcess: true,
 			eventInfo:       fmt.Sprintf("Ensuring container user '%s' exists", user),
@@ -1533,7 +1529,7 @@ func uniqueNonRootUsers(users ...string) []string {
 }
 
 func ensureContainerUserScript(user string) string {
-	quotedUser := shellSingleQuote(user)
+	quotedUser := cg.ShellSingleQuote(user)
 	return fmt.Sprintf(`set -eu
 user=%s
 if ! id -u "$user" >/dev/null 2>&1; then
@@ -1555,6 +1551,35 @@ chown "$user" "$home_dir"
 chmod u+rwx "$home_dir"`, quotedUser)
 }
 
+// kRemoveAuthorizedKeysScript removes the public keys given as second
+// positional parameter (one per line) from the authorized keys of the user
+// given as first one.
+const kRemoveAuthorizedKeysScript = `set -eu
+user="$1"
+keys="$2"
+home_dir=$(awk -F: -v user="$user" '$1 == user { print $6 }' /etc/passwd)
+if [ -z "$home_dir" ]; then
+	home_dir="/home/$user"
+fi
+auth="$home_dir/.ssh/authorized_keys"
+[ -f "$auth" ] || exit 0
+tmp=$(mktemp)
+printf '%s\n' "$keys" > "$tmp.keys"
+grep -Fxv -f "$tmp.keys" "$auth" > "$tmp" || true
+cat "$tmp" > "$auth"
+rm -f "$tmp" "$tmp.keys"`
+
+// AuthorizedKeysCommand returns a shell command installing (or removing) the
+// given public keys, one per line, in the authorized keys of user. It is meant
+// to be run as root in the container.
+func AuthorizedKeysCommand(install bool, user, keys string) string {
+	script := kRemoveAuthorizedKeysScript
+	if install {
+		script = kInstallAuthorizedKeysScript
+	}
+	return fmt.Sprintf("/bin/sh -c %s sh %s %s", cg.ShellSingleQuote(script), cg.ShellSingleQuote(user), cg.ShellSingleQuote(strings.TrimSpace(keys)))
+}
+
 // kInstallAuthorizedKeysScript installs, idempotently, the public keys given as
 // second positional parameter (one per line) for the user given as first one.
 const kInstallAuthorizedKeysScript = `set -eu
@@ -1574,10 +1599,6 @@ done
 chown -R "$user" "$ssh_dir"
 chmod 700 "$ssh_dir"
 chmod 600 "$ssh_dir/authorized_keys"`
-
-func shellSingleQuote(value string) string {
-	return "'" + strings.ReplaceAll(value, "'", `'\''`) + "'"
-}
 
 func configPublishesContainerPort(config *containerconf.Config, containerPort string) bool {
 	if config == nil {
@@ -1772,7 +1793,7 @@ func (ce *ContainersEngine) expand(a interface{}) (string, error) {
 }
 
 func (ce *ContainersEngine) executeFileOnHost(fileLocationForExec string) error {
-	quotedPath := shellSingleQuote(fileLocationForExec)
+	quotedPath := cg.ShellSingleQuote(fileLocationForExec)
 	cmd := fmt.Sprintf("bash %s; rc=$?; rm -f %s; exit $rc", quotedPath, quotedPath)
 	rEvent := &RunEvent{
 		cmd: cmd,
@@ -1795,7 +1816,7 @@ func (ce *ContainersEngine) executeScriptOnContainerFromHost(pathOnHost, user st
 		execCmdUsr = KRootUsr
 	}
 
-	quotedPath := shellSingleQuote(pathOnHost)
+	quotedPath := cg.ShellSingleQuote(pathOnHost)
 	cmd := fmt.Sprintf(
 		"%v %v -u %v -i %v /bin/sh -l < %v; rc=$?; rm -f %v; exit $rc",
 		engineName(ce.name),

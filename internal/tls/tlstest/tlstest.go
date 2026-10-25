@@ -24,12 +24,24 @@ const (
 	kPermFile = 0600
 )
 
-// WriteCerts generates a CA, an agent server certificate (valid for localhost
-// and 127.0.0.1) and a client certificate, and writes them into dir using the
-// same file names as the cdstls package (ca.pem, agent-srv.pem, agent-srv-key.pem,
-// client.pem, client-key.pem).
-func WriteCerts(t testing.TB, dir string) {
+// WriteCerts generates a CA, an agent server certificate valid for hosts
+// (localhost and 127.0.0.1 by default) and a client certificate, and writes
+// them into dir using the same file names as the cdstls package (ca.pem,
+// agent-srv.pem, agent-srv-key.pem, client.pem, client-key.pem).
+func WriteCerts(t testing.TB, dir string, hosts ...string) {
 	t.Helper()
+	if len(hosts) == 0 {
+		hosts = []string{"localhost", "127.0.0.1"}
+	}
+	var dnsNames []string
+	var ips []net.IP
+	for _, h := range hosts {
+		if ip := net.ParseIP(h); ip != nil {
+			ips = append(ips, ip)
+		} else {
+			dnsNames = append(dnsNames, h)
+		}
+	}
 
 	require.NoError(t, os.MkdirAll(dir, kPermDir))
 
@@ -67,7 +79,7 @@ func WriteCerts(t testing.TB, dir string) {
 		writeKey(t, filepath.Join(dir, keyFile), key)
 	}
 
-	issue(2, "127.0.0.1", x509.ExtKeyUsageServerAuth, []string{"localhost"}, []net.IP{net.ParseIP("127.0.0.1")}, "agent-srv.pem", "agent-srv-key.pem")
+	issue(2, hosts[0], x509.ExtKeyUsageServerAuth, dnsNames, ips, "agent-srv.pem", "agent-srv-key.pem")
 	issue(3, "client", x509.ExtKeyUsageClientAuth, nil, nil, "client.pem", "client-key.pem")
 }
 

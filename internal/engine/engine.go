@@ -125,6 +125,8 @@ const (
 
 	KCDSContainerFlavourNameLabel = "io.cds.flavour"
 
+	KCDSContainerProjectLabel = "io.cds.project"
+
 	KCDSSchedulerLabel      = "io.cds.scheduler"
 	KCDSSchedulerLabelValue = "odin-scheduler"
 )
@@ -132,8 +134,7 @@ const (
 var (
 	executeMap = map[Execute_t]RunEvent{
 		K_EXEC_CMD_SSH: {
-			// user and keys are passed as positional parameters to avoid any shell interpolation
-			cmd:       `/bin/sh -c %s sh %s %s`,
+			// command built by AuthorizedKeysCommand
 			eventInfo: "Install SSH public key in container",
 		},
 		K_EXEC_CMD_HOMEDIR: {

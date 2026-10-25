@@ -1,10 +1,13 @@
 package command
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/spf13/cobra"
 
+	"github.com/amadeusitgroup/cds/internal/api/v1/cdspb"
+	"github.com/amadeusitgroup/cds/internal/bo"
 	"github.com/amadeusitgroup/cds/internal/cerr"
 	"github.com/amadeusitgroup/cds/internal/clog"
 	"github.com/amadeusitgroup/cds/internal/db"
@@ -55,18 +58,17 @@ func (ps *projectStart) runE(cmd *cobra.Command, args []string) error {
 			getTipRun(projectName), projectName))
 	}
 
-	// TODO: Leverage ContainerConf package once implemented — validate devcontainer configuration
-	clog.Debug("Skipping devcontainer configuration validation — ContainerConf not yet implemented")
+	// TODO: start orchestration engine (KinD) and registry when used
+	if err := onProjectAgent(projectName, func(services agentServices, ctx context.Context) error {
+		return changeProjectContainersState(ctx, services.container, projectName, bo.KContainerStatusRunning, func(containerName string) error {
+			_, err := services.container.StartContainer(ctx, &cdspb.StartContainerRequest{ContainerName: containerName})
+			return err
+		})
+	}); err != nil {
+		return err
+	}
 
-	// TODO: Agent Service interaction needed — full start sequence:
-	// 1. Align container statuses via engine (engine.NewContainerEngine + alignContainerStatuses)
-	// 2. Check if already running (warn and return early)
-	// 3. Start stopped containers (engine start)
-	// 4. Re-align container statuses
-	// 5. Verify all containers are running
-	// 6. Start orchestration engine (KinD) if used
-	// 7. Start registry if used
-	clog.Info(fmt.Sprintf("Project '%s' is ready for starting. Agent service required to proceed.", projectName))
+	clog.Info(fmt.Sprintf("Project '%s' started.", projectName))
 	clog.Info(getTipSsh(projectName))
-	return cerr.NewError("TODO: Agent service not yet implemented — cannot execute 'start' operation")
+	return nil
 }

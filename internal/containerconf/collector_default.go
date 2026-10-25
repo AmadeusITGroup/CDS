@@ -13,7 +13,6 @@ import (
 
 const (
 	defaultAuthorizedKeysFileName = "authorized_keys"
-	defaultPublicKeyFileName      = "id_rsa.pub"
 	registryAuthFileEnv           = "REGISTRY_AUTH_FILE"
 )
 
@@ -104,22 +103,10 @@ func defaultAuthFilePath() (string, error) {
 // user's default public key. The engine consumes it through the pub_key singleton
 // resource and installs the key into the container user's ~/.ssh/authorized_keys.
 func defaultAuthorizedKeysSource(collectContext) (SourceRef, bool, error) {
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		return SourceRef{}, false, err
-	}
-
 	// TODO: Feature: Generate the Key pair per host / per container, instead of relying on the user to have a pre-existing public key.
-	publicKeyPath := filepath.Join(homeDir, ".ssh", defaultPublicKeyFileName)
-	info, err := cos.Fs.Stat(publicKeyPath)
-	if os.IsNotExist(err) {
+	_, publicKeyPath, found := DefaultSSHKeyPair()
+	if !found {
 		return SourceRef{}, false, nil
-	}
-	if err != nil {
-		return SourceRef{}, false, err
-	}
-	if info.IsDir() {
-		return SourceRef{}, false, fmt.Errorf("default SSH public key source %q is a directory", publicKeyPath)
 	}
 
 	data, err := cos.ReadFile(publicKeyPath)

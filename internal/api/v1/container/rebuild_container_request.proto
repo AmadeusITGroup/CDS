@@ -11,5 +11,9 @@ message RebuildContainerRequest {
   // override_image_tag optionally replaces the tag of the devcontainer image
   // for this rebuild; empty means the tag declared by the configuration.
   string override_image_tag = 2;
+
+  // devcontainer_config optionally replaces the recorded devcontainer.json,
+  // e.g. after a local change. The artifacts it references must be staged.
+  bytes devcontainer_config = 3;
 }
 

@@ -99,7 +99,12 @@ func handleDeleteAllOrForceAll(deleteOption func(string) error, errorMessage str
 
 func handleForceDelete(projectName string) error {
 	if errorDel := deleteProjectFromConfig(projectName); errorDel != nil {
-		clog.Warn("Failed to delete project normally, forcing config deletion")
+		clog.Warn("Failed to delete project normally, forcing config deletion", errorDel)
+		for _, containerName := range db.ProjectContainersName(projectName) {
+			if err := removeContainerSSHConfig(containerName); err != nil {
+				clog.Warn(fmt.Sprintf("Failed to remove SSH config of container %s", containerName), err)
+			}
+		}
 		if _, deleteErr := db.DeleteProject(projectName); deleteErr != nil {
 			clog.Warn("Failed to delete project in config file", deleteErr)
 			return deleteErr
@@ -109,8 +114,14 @@ func handleForceDelete(projectName string) error {
 	return nil
 }
 
+// deleteProjectFromConfig deletes the project containers on the agent host,
+// then the project.
 func deleteProjectFromConfig(projectName string) error {
 	clog.Info(fmt.Sprintf("Using project '%s'.", projectName))
+
+	if err := projectClearMain(projectName); err != nil {
+		return cerr.AppendErrorFmt("Failed to delete the containers of project %s (use --force to only delete it locally)", err, projectName)
+	}
 
 	if _, err := db.DeleteProject(projectName); err != nil {
 		clog.Warn("Failed to delete project in config file", err)
