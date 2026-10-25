@@ -126,9 +126,6 @@ const (
 	KCDSContainerFlavourNameLabel = "io.cds.flavour"
 
 	KCDSContainerProjectLabel = "io.cds.project"
-
-	KCDSSchedulerLabel      = "io.cds.scheduler"
-	KCDSSchedulerLabelValue = "odin-scheduler"
 )
 
 var (
