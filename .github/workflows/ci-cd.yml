@@ -63,9 +63,7 @@ jobs:
 
       # Install Go dependencies
       - name: Install Go dependencies
-        run: |
-          go install github.com/cloudflare/cfssl/cmd/cfssl@latest
-          go install github.com/cloudflare/cfssl/cmd/cfssljson@latest
+        run: make install-cfssl
 
       # Build using makefile (handles init, gencert, go-tidy, build-pb, build binaries)
       - name: Build project

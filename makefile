@@ -1,5 +1,7 @@
 # define a variable if it is not already defined
 GOLANGCI_LINT_VERSION := latest
+# pinned: @latest may require a newer Go than go.mod's one
+CFSSL_VERSION ?= v1.7.1
 GOPATH := $(shell go env GOPATH)
 GO_MOD_VERSION := $(shell grep '^go ' go.mod | awk '{print $$2}')
 PATH := $(PATH):$(GOPATH)/bin
@@ -46,6 +48,7 @@ $(foreach var, $(vars), $(if $(value $(var)), $(info $(var)=$(value $(var))), $(
 	coverage \
 	go-tidy \
 	install-golangci-lint \
+	install-cfssl \
 	init \
 	gencert \
 	scaffold
@@ -87,6 +90,7 @@ help:
 	@$(ECHO) "  init                 Create required directories"
 	@$(ECHO) "  gencert              Generate TLS certificates for testing"
 	@$(ECHO) "  install-golangci-lint Install golangci-lint locally"
+	@$(ECHO) "  install-cfssl        Install cfssl and cfssljson (CFSSL_VERSION)"
 	@$(ECHO) "  help                 Show this help message"
 
 install: \
@@ -127,8 +131,7 @@ init:
 gencert: init
 	CDS_CONFIG_PATH=${HOME_DIR}/cdstmp
 	@$(ECHO) "$(ECHO_BEFORE)Generating certificates$(ECHO_AFTER)"
-	go install github.com/cloudflare/cfssl/cmd/cfssl@latest
-	go install github.com/cloudflare/cfssl/cmd/cfssljson@latest
+	$(MAKE) install-cfssl
 	cfssl gencert \
 		-initca $(TEST_FOLDER)ca-csr.json | cfssljson -bare ca
 	cfssl gencert \
@@ -146,6 +149,11 @@ gencert: init
 	cp ca.pem agent-srv.pem agent-srv-key.pem $(CDS_CONFIG_PATH)/.xcds-agent/certs
 	mv ca.pem ca-key.pem client.pem client-key.pem $(CDS_CONFIG_PATH)/.xcds/certs
 	rm -f agent-srv.pem agent-srv-key.pem *.csr
+
+install-cfssl:
+	@$(ECHO) "$(ECHO_BEFORE)Installing cfssl $(CFSSL_VERSION)$(ECHO_AFTER)"
+	go install github.com/cloudflare/cfssl/cmd/cfssl@$(CFSSL_VERSION)
+	go install github.com/cloudflare/cfssl/cmd/cfssljson@$(CFSSL_VERSION)
 
 go-tidy: build-pb
 	@$(ECHO) "$(ECHO_BEFORE)Executing go mod tidy$(ECHO_AFTER)"

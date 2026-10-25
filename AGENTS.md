@@ -10,7 +10,7 @@ follow `CONTRIBUTING.md` and update these instructions.
   workflows.
 - Keep changes focused on the requested task. Do not modify unrelated files or
   clean up unrelated issues.
-- Use Go 1.24 or newer, `protoc`, `make`, and Git as described in the
+- Use Go 1.27.3 or newer, `protoc`, `make`, and Git as described in the
   contributor prerequisites.
 - Put application entry-point code under `cmd/` only. Keep business logic in
   `internal/` packages and avoid circular dependencies.

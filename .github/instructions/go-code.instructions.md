@@ -9,7 +9,7 @@ Follow standard Go conventions and the project-specific rules from
 
 ## Structure
 
-- Use Go 1.24 or newer.
+- Use Go 1.27.3 or newer.
 - Keep `cmd/` packages as thin application entry points with minimal logic.
 - Place business logic in focused `internal/` packages.
 - Avoid circular dependencies and keep packages responsible for one concern.
