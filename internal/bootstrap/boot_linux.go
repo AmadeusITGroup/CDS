@@ -21,8 +21,14 @@ func startLinuxAgent(binary string, port int) error {
 		systemd.WithServiceBinary(binary),
 	)
 	if sysd.In() {
-		err := sysd.StartService()
+		changed, err := sysd.StartService()
 		if err == nil {
+			if changed {
+				if err := sysd.RestartService(); err != nil {
+					clog.Warn("Systemd restart failed, falling back to exec:", err)
+					return execAgent(binary, port)
+				}
+			}
 			return nil
 		}
 		clog.Warn("Systemd start failed, falling back to exec:", err)

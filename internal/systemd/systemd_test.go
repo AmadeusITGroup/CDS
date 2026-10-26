@@ -70,11 +70,11 @@ func TestUserUnitDirFailsOnEmptyOutput(t *testing.T) {
 
 func TestStartServiceCreatesUnitsInTargetDirAndEnablesThemNow(t *testing.T) {
 	h := newFakeHost()
-	h.failures["test -f "+kRemoteUnitDir+"/"+socketUnitName] = true
 
-	err := New(WithTarget(h), WithServicePort(9090), WithServiceBinary("/opt/cds/cds-api-agent")).StartService()
+	changed, err := New(WithTarget(h), WithServicePort(9090), WithServiceBinary("/opt/cds/cds-api-agent")).StartService()
 
 	require.NoError(t, err)
+	assert.True(t, changed, "units are created on first start")
 	assert.Contains(t, h.executed, "mkdir -p "+kRemoteUnitDir)
 	require.Contains(t, h.copied, kRemoteUnitDir+"/"+socketUnitName)
 	require.Contains(t, h.copied, kRemoteUnitDir+"/"+serviceUnitName)
@@ -86,50 +86,45 @@ func TestStartServiceCreatesUnitsInTargetDirAndEnablesThemNow(t *testing.T) {
 	}, h.executed[len(h.executed)-2:])
 }
 
-func TestIsUnitReady(t *testing.T) {
-	for name, tc := range map[string]struct {
-		setup func(*fakeHost)
-		want  bool
-	}{
-		"both units enabled": {
-			setup: func(h *fakeHost) {
-				h.outputs["systemctl --user is-enabled "+socketUnitName] = "enabled\n"
-				h.outputs["systemctl --user is-enabled "+serviceUnitName] = "enabled\n"
-			},
-			want: true,
-		},
-		"disabled unit is not mistaken for enabled": {
-			setup: func(h *fakeHost) {
-				h.outputs["systemctl --user is-enabled "+socketUnitName] = "enabled\n"
-				h.outputs["systemctl --user is-enabled "+serviceUnitName] = "disabled\n"
-			},
-			want: false,
-		},
-		"is-enabled non-zero exit": {
-			setup: func(h *fakeHost) {
-				h.failures["systemctl --user is-enabled "+socketUnitName] = true
-			},
-			want: false,
-		},
-		"missing unit file": {
-			setup: func(h *fakeHost) {
-				h.failures["test -f "+kRemoteUnitDir+"/"+serviceUnitName] = true
-			},
-			want: false,
-		},
-		"unit dir cannot be resolved": {
-			setup: func(h *fakeHost) {
-				h.failures["systemd-path user-configuration"] = true
-			},
-			want: false,
-		},
-	} {
-		t.Run(name, func(t *testing.T) {
-			h := newFakeHost()
-			tc.setup(h)
-			assert.Equal(t, tc.want, New(WithTarget(h)).isUnitReady())
-		})
+// installUnits seeds the fake host with the unit files produced for binary/port,
+// as an already provisioned host would have them, and answers `cat` with them.
+func installUnits(t *testing.T, h *fakeHost, binary string, port int) {
+	t.Helper()
+	units, err := New(WithServiceBinary(binary), WithServicePort(port)).buildUnits(port)
+	require.NoError(t, err)
+	for _, name := range []string{socketUnitName, serviceUnitName} {
+		h.outputs["cat "+kRemoteUnitDir+"/"+name] = string(units[name])
 	}
+}
+
+func TestStartServiceLeavesUpToDateUnitsUnchanged(t *testing.T) {
+	h := newFakeHost()
+	installUnits(t, h, "/opt/cds/bin/a/cds-api-agent", 9090)
+
+	changed, err := New(WithTarget(h), WithServicePort(9090), WithServiceBinary("/opt/cds/bin/a/cds-api-agent")).StartService()
+
+	require.NoError(t, err)
+	assert.False(t, changed, "identical units are not rewritten")
+	assert.NotContains(t, h.copied, kRemoteUnitDir+"/"+serviceUnitName, "no unit file is copied")
+}
+
+// TestStartServiceReconcilesStaleBinary covers P1: an upgrade installs a new
+// binary under a versioned path, so the service unit's ExecStart must be
+// rewritten even though units already exist and are enabled. The reviewer's
+// focused reproduction created units for binary A, then started for binary B
+// and asserted ExecStart still pointed at A.
+func TestStartServiceReconcilesStaleBinary(t *testing.T) {
+	h := newFakeHost()
+	installUnits(t, h, "/opt/cds/bin/a/cds-api-agent", 9090)
+
+	changed, err := New(WithTarget(h), WithServicePort(9090), WithServiceBinary("/opt/cds/bin/b/cds-api-agent")).StartService()
+
+	require.NoError(t, err)
+	assert.True(t, changed, "a new binary rewrites the service unit")
+	require.Contains(t, h.copied, kRemoteUnitDir+"/"+serviceUnitName)
+	assert.Contains(t, h.copied[kRemoteUnitDir+"/"+serviceUnitName], "ExecStart=/opt/cds/bin/b/cds-api-agent")
+	assert.NotContains(t, h.copied[kRemoteUnitDir+"/"+serviceUnitName], "/bin/a/")
+	assert.Contains(t, h.executed, "systemctl --user daemon-reload")
 }
 
 func TestBuildUnitsDefaults(t *testing.T) {

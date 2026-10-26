@@ -2,10 +2,13 @@ package agent
 
 import (
 	"fmt"
+	"os"
+	"os/exec"
 	"strings"
 
 	"github.com/amadeusitgroup/cds/internal/bo"
 	"github.com/amadeusitgroup/cds/internal/cerr"
+	"github.com/amadeusitgroup/cds/internal/clog"
 	"github.com/amadeusitgroup/cds/internal/containerconf"
 	"github.com/amadeusitgroup/cds/internal/engine"
 	cg "github.com/amadeusitgroup/cds/internal/global"
@@ -159,22 +162,88 @@ func (defaultContainerOps) DeployContainer(spec deployContainerSpec, report depl
 	cmds = append(cmds, sshKeyCommands...)
 
 	var output strings.Builder
+	created := false
 	for _, cmd := range cmds {
 		if err := report(deployProgress{phase: "execute", message: deployCommandDescription(cmd)}); err != nil {
 			result.output = output.String()
+			compensateFailedDeploy(created, spec.containerName)
 			return result, err
 		}
 
-		stdout, err := shexec.RunLocalCmdWithOutput([]shexec.ExecuteEvent{cmd})
+		stdout, runErr := shexec.RunLocalCmdWithOutput([]shexec.ExecuteEvent{detachContainerHelpers(cmd)})
 		output.WriteString(stdout)
-		if err != nil {
+		if runErr != nil {
 			result.output = output.String()
-			return result, cerr.AppendError("failed to execute deploy command", err)
+			// Only clean up a container this deployment created. A creation
+			// failure (e.g. a name collision with a pre-existing container)
+			// must not remove that other container.
+			if commandCreatesContainer(cmd) {
+				return result, cerr.AppendError("failed to create container", runErr)
+			}
+			compensateFailedDeploy(created, spec.containerName)
+			return result, cerr.AppendError("failed to execute deploy command", runErr)
+		}
+		if commandCreatesContainer(cmd) {
+			created = true
 		}
 	}
 
 	result.output = output.String()
 	return result, nil
+}
+
+// commandCreatesContainer reports whether running cmd brings the container into
+// existence, i.e. the engine `run` step.
+func commandCreatesContainer(cmd shexec.ExecuteEvent) bool {
+	creator, ok := cmd.(interface{ CreatesContainer() bool })
+	return ok && creator.CreatesContainer()
+}
+
+// detachContainerHelpers wraps the container-creating command so that the
+// container runtime's long-lived helpers (conmon, rootlessport) start in their
+// own transient systemd scope instead of the agent's service cgroup. Without
+// this, restarting or stopping cds.service (e.g. during an agent upgrade) kills
+// those helpers under the default KillMode=control-group, leaving a running
+// container with no host port listener. The agent's lifetime is thus decoupled
+// from the containers it deploys.
+//
+// Only the creating command is wrapped, and only when the agent itself runs
+// under systemd (INVOCATION_ID is set for unit processes) and systemd-run is
+// available. Otherwise the command is returned unchanged.
+func detachContainerHelpers(cmd shexec.ExecuteEvent) shexec.ExecuteEvent {
+	if !commandCreatesContainer(cmd) || !runningUnderSystemd() || !systemdRunAvailable() {
+		return cmd
+	}
+	// --scope runs the command in a transient scope unit; --collect reclaims it
+	// once it exits. The scope is a sibling of cds.service, so a restart of the
+	// service no longer tears down the container helpers placed in this scope.
+	wrapped := fmt.Sprintf("systemd-run --user --scope --collect --quiet -- bash -c %s", cg.ShellSingleQuote(cmd.Cmd()))
+	return &shexec.DefaultShEvent{ExeCmd: wrapped, DescriptionCmd: cmd.Description()}
+}
+
+// runningUnderSystemd reports whether this process runs inside a systemd unit.
+// systemd exports INVOCATION_ID to the processes of the units it starts.
+func runningUnderSystemd() bool {
+	return os.Getenv("INVOCATION_ID") != cg.EmptyStr
+}
+
+func systemdRunAvailable() bool {
+	_, err := exec.LookPath("systemd-run")
+	return err == nil
+}
+
+// compensateFailedDeploy removes a container created earlier in a deployment
+// that then failed, so that a partial deploy does not leave an unmanaged
+// container behind. It is best effort: a container the client never recorded
+// could otherwise only be removed by hand. Nothing is removed when the
+// container was not created by this deployment.
+func compensateFailedDeploy(created bool, containerName string) {
+	if !created {
+		return
+	}
+	if err := engine.DeleteContainer(containerName); err != nil {
+		clog.Warn(fmt.Sprintf("Failed to remove container %s after a failed deployment, it may need manual cleanup", containerName), err)
+	}
 }
 
 // buildSSHKeyInstallCommands installs the staged public key, if any, for the

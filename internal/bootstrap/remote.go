@@ -240,17 +240,23 @@ func sha256Probe(file string) string {
 	return cg.ShellSingleQuote(fmt.Sprintf("sha256sum %s 2>/dev/null || true", cg.ShellSingleQuote(file)))
 }
 
-// startRemoteService runs the agent as a systemd user service of the host,
-// restarted to pick up an updated binary or certificates.
+// startRemoteService runs the agent as a systemd user service of the host. The
+// units are reconciled with the installed binary and port; the service is
+// restarted only when the units changed, to pick up an updated binary without
+// needlessly disrupting a running service and its containers.
 func startRemoteService(h remoteHost, binary string, port int) error {
 	sysd := systemd.New(systemd.WithTarget(h), systemd.WithServicePort(port), systemd.WithServiceBinary(binary))
 	if !sysd.In() {
 		return cerr.NewError("a systemd user session is required to run the agent, consider `loginctl enable-linger`")
 	}
-	if err := sysd.StartService(); err != nil {
+	changed, err := sysd.StartService()
+	if err != nil {
 		return err
 	}
-	return sysd.RestartService()
+	if changed {
+		return sysd.RestartService()
+	}
+	return nil
 }
 
 func sha256File(file string) (string, error) {

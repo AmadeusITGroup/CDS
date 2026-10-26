@@ -1485,8 +1485,9 @@ func (ce *ContainersEngine) containerRun() error {
 	cCmd := `/bin/sh -c 'while sleep 1000; do :; done'`
 	xCmd := cg.VariadicJoin(" ", eCmd, eOptions, parsedImage.ToString(), cCmd)
 	rEvent := &RunEvent{
-		cmd:       xCmd,
-		eventInfo: fmt.Sprintf("Creating container '%s'", ce.getContainerName()),
+		cmd:              xCmd,
+		eventInfo:        fmt.Sprintf("Creating container '%s'", ce.getContainerName()),
+		createsContainer: true,
 	}
 	ce.cmds = append(ce.cmds, rEvent)
 	return nil

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 
 	"github.com/amadeusitgroup/cds/internal/api/v1/cdspb"
@@ -225,6 +226,9 @@ func (s *containerServiceServer) deploySpec(req *cdspb.DeployContainerRequest) (
 	if err != nil {
 		return deployContainerSpec{}, status.Errorf(codes.InvalidArgument, "invalid devcontainer_config: %v", err)
 	}
+	if err := rejectUnsupportedFeatures(config); err != nil {
+		return deployContainerSpec{}, err
+	}
 	if tag := strings.TrimSpace(req.GetOverrideImageTag()); tag != cg.EmptyStr {
 		config.Set(containerconf.KOverrideImageTag, tag)
 	}
@@ -246,6 +250,30 @@ func (s *containerServiceServer) deploySpec(req *cdspb.DeployContainerRequest) (
 			projectName: req.GetProjectName(),
 		},
 	}, nil
+}
+
+// rejectUnsupportedFeatures fails deployments that declare devcontainer
+// features. The agent does not resolve or install features yet (the deploy
+// path never supplies engine.WithResolvedFeatures), so accepting them would
+// report a successful deployment with the requested tools silently missing.
+// Rejecting explicitly is clearer than that silent omission; feature support
+// can lift this check once the resolution and staging of feature resources are
+// implemented end to end.
+func rejectUnsupportedFeatures(config *containerconf.Config) error {
+	if config == nil || !config.IsSet(containerconf.KFeatures) {
+		return nil
+	}
+	features, ok := config.Get(containerconf.KFeatures).(map[string]interface{})
+	if !ok || len(features) == 0 {
+		return nil
+	}
+	names := make([]string, 0, len(features))
+	for name := range features {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return status.Errorf(codes.Unimplemented,
+		"devcontainer features are not supported yet, remove %v from the configuration", names)
 }
 
 func sendDeployProgress(stream grpc.ServerStreamingServer[cdspb.DeployContainerEvent], phase, message string) error {

@@ -1,7 +1,6 @@
 package systemd
 
 import (
-	"fmt"
 	"io"
 	"net"
 	"os"
@@ -11,7 +10,6 @@ import (
 	"strings"
 
 	"github.com/amadeusitgroup/cds/internal/cerr"
-	"github.com/amadeusitgroup/cds/internal/clog"
 	cg "github.com/amadeusitgroup/cds/internal/global"
 	"github.com/coreos/go-systemd/v22/activation"
 	"github.com/coreos/go-systemd/v22/unit"
@@ -90,70 +88,71 @@ func (s *sysD) IsServiceUp() bool {
 	return strings.TrimSpace(out) == "active"
 }
 
-// StartService starts the service on the target host.
-func (s *sysD) StartService() error {
-	if !s.isUnitReady() {
-		if err := s.createUnit(); err != nil {
-			return err
-		}
-	}
-	return s.startUnit()
-}
-
-// isUnitReady checks if the systemd unit files exist and are enabled.
-func (s *sysD) isUnitReady() bool {
-	unitDir, err := s.userUnitDir()
+// StartService makes sure the service runs the desired units on the target
+// host. The unit files are reconciled with the desired binary and port: when
+// they differ from what is installed (or are missing), they are rewritten and
+// the daemon reloaded. The units are then enabled and started. StartService
+// reports whether the unit files changed, so the caller can decide to restart
+// the service to pick up a new binary (see RestartService).
+func (s *sysD) StartService() (bool, error) {
+	changed, err := s.reconcileUnits()
 	if err != nil {
-		clog.Error("failed to check unit files", err)
-		return false
+		return false, err
 	}
-
-	for _, unitName := range []string{socketUnitName, serviceUnitName} {
-		if _, err := s.h.Execute("test", "-f", path.Join(unitDir, unitName)); err != nil {
-			return false
-		}
+	if err := s.startUnit(); err != nil {
+		return false, err
 	}
-
-	for _, unitName := range []string{socketUnitName, serviceUnitName} {
-		// is-enabled exits with a non-zero code when the unit is not enabled
-		out, err := s.h.Execute("systemctl", "--user", "is-enabled", unitName)
-		if err != nil {
-			clog.Debug(fmt.Sprintf("%s unit is not enabled: %v", unitName, err))
-			return false
-		}
-		if strings.TrimSpace(out) != "enabled" {
-			return false
-		}
-	}
-	return true
+	return changed, nil
 }
 
-// createUnit creates the systemd unit files on the target host.
-func (s *sysD) createUnit() error {
+// reconcileUnits writes the desired unit files when they are missing or differ
+// from what is installed on the target, reloading the systemd daemon when it
+// changes anything. It returns whether any unit file was written.
+func (s *sysD) reconcileUnits() (bool, error) {
 	port := s.port
 	if port == 0 {
 		port = 8087
 	}
-
-	unitsBytes, err := s.buildUnits(port)
+	desired, err := s.buildUnits(port)
 	if err != nil {
-		return err
+		return false, err
 	}
 
 	unitDir, err := s.userUnitDir()
 	if err != nil {
-		return err
+		return false, err
 	}
 	if _, err := s.h.Execute("mkdir", "-p", unitDir); err != nil {
-		return cerr.AppendErrorFmt("failed to create unit directory %s", err, unitDir)
+		return false, cerr.AppendErrorFmt("failed to create unit directory %s", err, unitDir)
 	}
 
-	for unitFileName, unitByte := range unitsBytes {
-		if err := s.createUnitFileOnTarget(unitDir, unitFileName, unitByte); err != nil {
-			return cerr.AppendErrorFmt("failed to build unit file %s", err, unitFileName)
+	changed := false
+	for _, unitName := range []string{socketUnitName, serviceUnitName} {
+		if s.unitUpToDate(unitDir, unitName, desired[unitName]) {
+			continue
+		}
+		if err := s.createUnitFileOnTarget(unitDir, unitName, desired[unitName]); err != nil {
+			return false, cerr.AppendErrorFmt("failed to install unit file %s", err, unitName)
+		}
+		changed = true
+	}
+
+	if changed {
+		if _, err := s.h.Execute("systemctl", "--user", "daemon-reload"); err != nil {
+			return false, cerr.AppendError("failed to reload systemd daemon", err)
 		}
 	}
-	return nil
+	return changed, nil
+}
+
+// unitUpToDate reports whether the unit file installed on the target has
+// exactly the desired content, so that it does not need to be rewritten.
+func (s *sysD) unitUpToDate(unitDir, unitName string, desired []byte) bool {
+	out, err := s.h.Execute("cat", path.Join(unitDir, unitName))
+	if err != nil {
+		return false
+	}
+	return out == string(desired)
 }
 
 // buildUnits builds the systemd unit files for the given port.

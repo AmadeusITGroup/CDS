@@ -27,6 +27,16 @@ else
 endif
 CDS_CONFIG_PATH=${HOME_DIR}/cdstmp
 
+# Version identity stamped into the binaries. It is shared through
+# internal/global.Version (cg.Version): the CLI checks the agent runs the same
+# version, and it namespaces the agent binary cache and remote install path.
+# Unstamped dev builds report "develop"; override VERSION to simulate releases.
+VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "develop")
+BUILD_TIME ?= $(shell date -u +"%Y-%m-%dT%H:%M:%SZ")
+COMMIT_HASH ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+VERSION_PKG := github.com/amadeusitgroup/cds/internal/global
+LDFLAGS := -ldflags "-X $(VERSION_PKG).Version=$(VERSION) -X $(VERSION_PKG).BuildTime=$(BUILD_TIME) -X $(VERSION_PKG).CommitHash=$(COMMIT_HASH)"
+
 # check that all required variables are set
 # vars := GOLANGCI_LINT_VERSION GOPATH GOPRIVATE GOPROXY CDS_CONFIG_PATH
 vars := GOLANGCI_LINT_VERSION GOPATH CDS_CONFIG_PATH
@@ -185,18 +195,18 @@ run-metrics-analyzer: go-tidy
 
 build-api-agent: go-tidy build-pb
 	@$(ECHO) "$(ECHO_BEFORE2)Building cds api server$(ECHO_AFTER)"
-	go build -o cds-api-agent ./cmd/api-agent/cds-api-agent.go
+	go build $(LDFLAGS) -o cds-api-agent ./cmd/api-agent/cds-api-agent.go
 
 # Agent binaries for remote linux hosts, to be used with
 # CDS_AGENT_BINARY=$(PWD)/dist/cds-api-agent-{{os}}-{{arch}}
 build-api-agent-linux: go-tidy build-pb
 	@$(ECHO) "$(ECHO_BEFORE2)Building cds api server for linux$(ECHO_AFTER)"
-	GOOS=linux GOARCH=amd64 go build -o dist/cds-api-agent-linux-amd64 ./cmd/api-agent/cds-api-agent.go
-	GOOS=linux GOARCH=arm64 go build -o dist/cds-api-agent-linux-arm64 ./cmd/api-agent/cds-api-agent.go
+	GOOS=linux GOARCH=amd64 go build $(LDFLAGS) -o dist/cds-api-agent-linux-amd64 ./cmd/api-agent/cds-api-agent.go
+	GOOS=linux GOARCH=arm64 go build $(LDFLAGS) -o dist/cds-api-agent-linux-arm64 ./cmd/api-agent/cds-api-agent.go
 
 build-client: go-tidy build-pb
 	@$(ECHO) "$(ECHO_BEFORE2)Building cds CLI$(ECHO_AFTER)"
-	go build -o cds ./cmd/client/cds.go
+	go build $(LDFLAGS) -o cds ./cmd/client/cds.go
 
 build-pb:
 	@$(ECHO) "$(ECHO_BEFORE2)Building protobuf$(ECHO_AFTER)"

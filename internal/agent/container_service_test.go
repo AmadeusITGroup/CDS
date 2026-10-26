@@ -620,6 +620,56 @@ func TestDeployContainerRecordsDeploymentAndFlagsCDSContainers(t *testing.T) {
 	assert.True(t, proto.Equal(req, recorded))
 }
 
+func TestDeployContainerRejectsUnsupportedFeatures(t *testing.T) {
+	// Features are not resolved or installed by the agent deploy path yet, so a
+	// configuration declaring them must be rejected rather than silently
+	// deployed without the requested tools (P1).
+	ops := &mockContainerOps{}
+	svc := newTestContainerService(t, ops)
+	stream := &mockDeployStream{}
+
+	err := svc.DeployContainer(&cdspb.DeployContainerRequest{
+		ContainerName:      "test-container",
+		ProjectName:        "test-project",
+		DevcontainerConfig: []byte(`{"image":"ubuntu:24.04","features":{"ssh-daemon":"1.0.0"}}`),
+	}, stream)
+
+	require.Error(t, err)
+	assert.Equal(t, codes.Unimplemented, status.Code(err))
+	assert.Contains(t, status.Convert(err).Message(), "ssh-daemon")
+	assert.Empty(t, ops.lastDeploy.containerName, "nothing is deployed")
+	assert.Empty(t, stream.events, "no progress is streamed")
+}
+
+func TestRebuildContainerRejectsUnsupportedFeatures(t *testing.T) {
+	ops := &mockContainerOps{}
+	svc := newTestContainerService(t, ops)
+	require.NoError(t, svc.core.deployments().save(&cdspb.DeployContainerRequest{
+		ContainerName:      "my-dev",
+		ProjectName:        "test-project",
+		DevcontainerConfig: []byte(`{"image":"ubuntu:24.04","features":{"docker-in-docker":"2.0.0"}}`),
+	}))
+
+	_, err := svc.RebuildContainer(context.Background(), &cdspb.RebuildContainerRequest{ContainerName: "my-dev"})
+
+	require.Error(t, err)
+	assert.Equal(t, codes.Unimplemented, status.Code(err))
+	assert.Empty(t, ops.lastDeleted, "the container is not deleted when the config is rejected")
+}
+
+func TestDeployContainerAllowsEmptyFeatures(t *testing.T) {
+	svc := newTestContainerService(t, &mockContainerOps{})
+	stream := &mockDeployStream{}
+
+	err := svc.DeployContainer(&cdspb.DeployContainerRequest{
+		ContainerName:      "test-container",
+		ProjectName:        "test-project",
+		DevcontainerConfig: []byte(`{"image":"ubuntu:24.04","features":{}}`),
+	}, stream)
+
+	require.NoError(t, err)
+}
+
 func TestDeployContainerFailureIsNotRecorded(t *testing.T) {
 	svc := newTestContainerService(t, &mockContainerOps{deployErr: assert.AnError})
 

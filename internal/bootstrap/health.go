@@ -52,13 +52,19 @@ func agentVersion(address, serverName string) (string, error) {
 	return reply.GetCurrent(), nil
 }
 
-// waitForHealthyAgent waits until the agent at address answers, see agentVersion.
+// waitForHealthyAgent waits until the agent at address answers and reports the
+// version of this CLI. Requiring the version (not merely a response) ensures
+// bootstrap does not report success while an old agent binary is still running,
+// e.g. after an upgrade that reinstalled the binary but left a stale unit.
 func waitForHealthyAgent(address, serverName string) error {
 	deadline := time.Now().Add(kAgentStartTimeout)
 	for {
-		_, err := agentVersion(address, serverName)
+		version, err := agentVersion(address, serverName)
 		if err == nil {
-			return nil
+			if version == cg.Version {
+				return nil
+			}
+			err = cerr.NewError(fmt.Sprintf("agent runs version %s instead of %s", version, cg.Version))
 		}
 		if time.Now().After(deadline) {
 			return cerr.AppendErrorFmt("agent at %s did not become healthy within %s", err, address, kAgentStartTimeout)

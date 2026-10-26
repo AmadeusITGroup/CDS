@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/amadeusitgroup/cds/internal/bo"
+	"github.com/amadeusitgroup/cds/internal/containerconf"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -81,4 +82,105 @@ func TestDefaultContainerOpsLifecycle(t *testing.T) {
 	assert.True(t, strings.HasPrefix(lines[1], "stop"), lines[1])
 	assert.Equal(t, "rename dev-1 dev-2", lines[2])
 	assert.Equal(t, "rm -f dev-2", lines[3])
+}
+
+// TestDetachContainerHelpersWrapsOnlyUnderSystemd covers P1: the
+// container-creating command is wrapped in a transient systemd scope so the
+// container runtime helpers survive an agent service restart. The wrapping only
+// applies to the creating command, and only when the agent runs under systemd
+// with systemd-run available.
+func TestDetachContainerHelpersWrapsOnlyUnderSystemd(t *testing.T) {
+	creating := fakeCreatingEvent{cmd: "podman run --name dev", creates: true}
+	nonCreating := fakeCreatingEvent{cmd: "podman exec dev true", creates: false}
+
+	t.Run("not under systemd: command is returned unchanged", func(t *testing.T) {
+		t.Setenv("INVOCATION_ID", "")
+		assert.Equal(t, creating.cmd, detachContainerHelpers(creating).Cmd())
+	})
+
+	t.Run("under systemd: non-creating command is unchanged", func(t *testing.T) {
+		t.Setenv("INVOCATION_ID", "abc")
+		assert.Equal(t, nonCreating.cmd, detachContainerHelpers(nonCreating).Cmd())
+	})
+
+	t.Run("under systemd with systemd-run: creating command is scoped", func(t *testing.T) {
+		t.Setenv("INVOCATION_ID", "abc")
+		fakeSystemdRun(t)
+		wrapped := detachContainerHelpers(creating)
+		assert.NotEqual(t, creating.cmd, wrapped.Cmd())
+		assert.Contains(t, wrapped.Cmd(), "systemd-run --user --scope --collect")
+		assert.Contains(t, wrapped.Cmd(), creating.cmd)
+	})
+}
+
+// fakeCreatingEvent is a minimal ExecuteEvent exposing CreatesContainer for the
+// detach logic, standing in for an engine run event.
+type fakeCreatingEvent struct {
+	cmd     string
+	creates bool
+}
+
+func (e fakeCreatingEvent) Cmd() string            { return e.cmd }
+func (e fakeCreatingEvent) Description() string    { return "" }
+func (e fakeCreatingEvent) Recoverable() bool      { return false }
+func (e fakeCreatingEvent) CarryOn() bool          { return false }
+func (e fakeCreatingEvent) Recover() string        { return "" }
+func (e fakeCreatingEvent) CreatesContainer() bool { return e.creates }
+
+// fakeSystemdRun puts a no-op systemd-run on PATH so systemdRunAvailable is true.
+func fakeSystemdRun(t *testing.T) {
+	t.Helper()
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "systemd-run"), []byte("#!/bin/sh\n"), 0755))
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
+// configuration, parsed the same way the agent does. It isolates HOME so that
+// engine side effects (e.g. the default ~/.devbox mount directory) land in a
+// throwaway directory rather than the real home.
+func deploySpecForTest(t *testing.T, name, config string) deployContainerSpec {
+	t.Helper()
+	t.Setenv("HOME", t.TempDir())
+	cfg, err := containerconf.ParseBytes(strings.NewReader(config))
+	require.NoError(t, err)
+	return deployContainerSpec{
+		projectName:   "proj",
+		containerName: name,
+		config:        cfg,
+	}
+}
+
+// TestDeployContainerCompensatesAfterCreation covers P1: when a command fails
+// after the container was created, the created container is removed so it does
+// not linger unmanaged (the client only records it on success).
+func TestDeployContainerCompensatesAfterCreation(t *testing.T) {
+	// Fail the post-create exec, succeed everything else. The container is
+	// created (run) first, so the failure must trigger its removal.
+	logPath := fakePodman(t, `case "$*" in
+  *"postCreateCommand"*|*"exit 42"*) echo "boom" >&2; exit 42 ;;
+  *) exit 0 ;;
+esac`)
+
+	spec := deploySpecForTest(t, "dev-fail", `{"image":"ubuntu:24.04","postCreateCommand":"exit 42"}`)
+	_, err := defaultContainerOps{}.DeployContainer(spec, func(deployProgress) error { return nil })
+
+	require.Error(t, err)
+	assert.Contains(t, readLog(t, logPath), "rm -f dev-fail", "the created container is removed after the failure")
+}
+
+// TestDeployContainerDoesNotRemoveOnCreationFailure covers P1: a creation
+// failure (e.g. a name collision with a pre-existing container) must not remove
+// that other container.
+func TestDeployContainerDoesNotRemoveOnCreationFailure(t *testing.T) {
+	// The very first command (run/create) fails; nothing was created by us.
+	logPath := fakePodman(t, `case "$*" in
+  run*) echo "name already in use" >&2; exit 125 ;;
+  *) exit 0 ;;
+esac`)
+
+	spec := deploySpecForTest(t, "dev-collision", `{"image":"ubuntu:24.04"}`)
+	_, err := defaultContainerOps{}.DeployContainer(spec, func(deployProgress) error { return nil })
+
+	require.Error(t, err)
+	assert.NotContains(t, readLog(t, logPath), "rm -f dev-collision", "a pre-existing container must not be removed on a creation failure")
 }
