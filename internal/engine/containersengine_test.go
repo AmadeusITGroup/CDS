@@ -216,9 +216,11 @@ func TestDevcontainerRunEnsuresConfiguredUsersBeforePostCreate(t *testing.T) {
 	assert.NotEqual(t, -1, postCreateIndex)
 	assert.Less(t, runIndex, ensureIndex)
 	assert.Less(t, ensureIndex, postCreateIndex)
-	assert.Contains(t, cmds[ensureIndex].Cmd(), "useradd -m -s /bin/sh \"$user\"")
-	assert.Contains(t, cmds[ensureIndex].Cmd(), "adduser -D -s /bin/sh \"$user\"")
+	assert.Contains(t, cmds[ensureIndex].Cmd(), `useradd -m -s /bin/sh $gopt "$user"`)
+	assert.Contains(t, cmds[ensureIndex].Cmd(), `adduser -D -s /bin/sh ${group:+-G $group} "$user"`)
 	assert.Contains(t, cmds[ensureIndex].Cmd(), "chown \"$user\" \"$home_dir\"")
+	// the spec is split into account and optional group before creation
+	assert.Contains(t, cmds[ensureIndex].Cmd(), "user=${spec%%:*}")
 
 	ensureCount := 0
 	for _, cmd := range cmds {
@@ -288,6 +290,47 @@ func TestInstallAuthorizedKeysScriptIsIdempotent(t *testing.T) {
 	info, err := os.Stat(authorizedKeys)
 	require.NoError(t, err)
 	assert.Equal(t, os.FileMode(0600), info.Mode().Perm())
+}
+
+func TestInstallAuthorizedKeysScriptHandlesMissingTrailingNewline(t *testing.T) {
+	// Reviewer P2: an existing key without a trailing newline must not get the
+	// new key appended onto its line; both must end up as separate entries.
+	current, err := user.Current()
+	require.NoError(t, err)
+	dir := t.TempDir()
+	home := filepath.Join(dir, "home")
+	passwd := filepath.Join(dir, "passwd")
+	require.NoError(t, os.WriteFile(passwd, []byte(fmt.Sprintf("%s:x:1:1::%s:/bin/sh\n", current.Username, home)), 0600))
+	// seed an authorized_keys whose single key has no trailing newline
+	require.NoError(t, os.MkdirAll(filepath.Join(home, ".ssh"), 0700))
+	authorizedKeys := filepath.Join(home, ".ssh", "authorized_keys")
+	require.NoError(t, os.WriteFile(authorizedKeys, []byte("ssh-ed25519 AAAA1 a@b"), 0600))
+
+	script := strings.ReplaceAll(kInstallAuthorizedKeysScript, "/etc/passwd", passwd)
+	out, err := exec.Command("/bin/sh", "-c", script, "sh", current.Username, "ssh-ed25519 AAAA2 c@d").CombinedOutput()
+	require.NoError(t, err, string(out))
+
+	content, err := os.ReadFile(authorizedKeys)
+	require.NoError(t, err)
+	assert.Equal(t, "ssh-ed25519 AAAA1 a@b\nssh-ed25519 AAAA2 c@d\n", string(content),
+		"the new key is a separate entry, not appended to the unterminated line")
+}
+
+func TestEnsureContainerUserScriptParsesUserGroupSpec(t *testing.T) {
+	// Reviewer P2: a "name:group" (or uid:gid) spec must be split so the whole
+	// spec is not handed to id/useradd as a single account name.
+	script := ensureContainerUserScript("nobody:nogroup")
+	assert.Contains(t, script, "spec='nobody:nogroup'")
+	assert.Contains(t, script, "user=${spec%%:*}", "the account is the part before ':'")
+	assert.Contains(t, script, "group=${spec#*:}", "the group is the part after ':'")
+	// an existing account is detected and not recreated
+	assert.Contains(t, script, "if ! account_exists; then")
+}
+
+func TestUniqueNonRootUsersSkipsRootAndGroupSpecs(t *testing.T) {
+	assert.Equal(t, []string{"developer"}, uniqueNonRootUsers("developer", "developer"))
+	assert.Empty(t, uniqueNonRootUsers("root", "0", "root:root", "0:0"))
+	assert.Equal(t, []string{"nobody:nogroup"}, uniqueNonRootUsers("nobody:nogroup", "root"))
 }
 
 func TestCustomCommandIsPassedAsSingleArgument(t *testing.T) {

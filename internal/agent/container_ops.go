@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -24,8 +25,8 @@ type containerOps interface {
 	StopContainer(name string) error
 	DeleteContainer(name string) error
 	RenameContainer(name, newName string) error
-	ExecuteInContainer(containerName, command, user string) (output string, exitCode int, err error)
-	DeployContainer(spec deployContainerSpec, report deployProgressReporter) (deployContainerResult, error)
+	ExecuteInContainer(ctx context.Context, containerName, command, user string) (output string, exitCode int, err error)
+	DeployContainer(ctx context.Context, spec deployContainerSpec, report deployProgressReporter) (deployContainerResult, error)
 }
 
 type deployResourceProvider interface {
@@ -118,8 +119,9 @@ func (defaultContainerOps) RenameContainer(name, newName string) error {
 }
 
 // ExecuteInContainer runs command in the container and returns its output and
-// exit code. A non-zero exit code is a command result, not an error.
-func (defaultContainerOps) ExecuteInContainer(containerName, command, user string) (string, int, error) {
+// exit code. A non-zero exit code is a command result, not an error. The
+// command is aborted if ctx is cancelled (e.g. the RPC deadline is reached).
+func (defaultContainerOps) ExecuteInContainer(ctx context.Context, containerName, command, user string) (string, int, error) {
 	es := engine.NewContainerEngine()
 	es.SetAction(engine.K_ACTION_EXE)
 	es.SetExecuteCmd(engine.K_EXEC_CUSTOM_CMD)
@@ -136,10 +138,10 @@ func (defaultContainerOps) ExecuteInContainer(containerName, command, user strin
 	if len(cmds) != 1 {
 		return cg.EmptyStr, -1, cerr.NewError(fmt.Sprintf("expected 1 execute command, got %d", len(cmds)))
 	}
-	return shexec.RunLocalCmdWithExitCode(cmds[0])
+	return shexec.RunLocalCmdWithExitCodeContext(ctx, cmds[0])
 }
 
-func (defaultContainerOps) DeployContainer(spec deployContainerSpec, report deployProgressReporter) (deployContainerResult, error) {
+func (defaultContainerOps) DeployContainer(ctx context.Context, spec deployContainerSpec, report deployProgressReporter) (deployContainerResult, error) {
 	result := deployContainerResult{containerName: spec.containerName}
 
 	ce := engine.NewContainerEngine(
@@ -164,16 +166,29 @@ func (defaultContainerOps) DeployContainer(spec deployContainerSpec, report depl
 	var output strings.Builder
 	created := false
 	for _, cmd := range cmds {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			result.output = boundedOutput(output.String())
+			compensateFailedDeploy(created, spec.containerName)
+			return result, cerr.AppendError("deployment cancelled", ctxErr)
+		}
 		if err := report(deployProgress{phase: "execute", message: deployCommandDescription(cmd)}); err != nil {
-			result.output = output.String()
+			result.output = boundedOutput(output.String())
 			compensateFailedDeploy(created, spec.containerName)
 			return result, err
 		}
 
-		stdout, runErr := shexec.RunLocalCmdWithOutput([]shexec.ExecuteEvent{detachContainerHelpers(cmd)})
+		stdout, runErr := shexec.RunLocalCmdWithOutputContext(ctx, []shexec.ExecuteEvent{detachContainerHelpers(cmd)})
 		output.WriteString(stdout)
+		// Stream the command output as progress rather than only returning it in
+		// the final response: the response carries a bounded tail, while the full
+		// output still reaches the client as it is produced.
+		if reportErr := reportCommandOutput(report, stdout); reportErr != nil {
+			result.output = boundedOutput(output.String())
+			compensateFailedDeploy(created, spec.containerName)
+			return result, reportErr
+		}
 		if runErr != nil {
-			result.output = output.String()
+			result.output = boundedOutput(output.String())
 			// Only clean up a container this deployment created. A creation
 			// failure (e.g. a name collision with a pre-existing container)
 			// must not remove that other container.
@@ -188,8 +203,44 @@ func (defaultContainerOps) DeployContainer(spec deployContainerSpec, report depl
 		}
 	}
 
-	result.output = output.String()
+	result.output = boundedOutput(output.String())
 	return result, nil
+}
+
+const (
+	// kMaxDeployOutput bounds the output returned in the final deploy response so
+	// that a verbose deployment cannot exceed the client's gRPC receive limit
+	// (4 MiB by default) and make a successful deployment look failed. The full
+	// output is streamed as progress; only the returned tail is bounded.
+	kMaxDeployOutput = 256 * 1024
+	// kMaxDeployOutputChunk bounds a single streamed output progress message.
+	kMaxDeployOutputChunk = 64 * 1024
+)
+
+// boundedOutput returns at most the last kMaxDeployOutput bytes of output,
+// prefixed with an explicit truncation marker when it had to drop content, so
+// diagnostics are neither unbounded nor silently lost.
+func boundedOutput(output string) string {
+	if len(output) <= kMaxDeployOutput {
+		return output
+	}
+	return fmt.Sprintf("[... %d earlier bytes truncated ...]\n%s", len(output)-kMaxDeployOutput, output[len(output)-kMaxDeployOutput:])
+}
+
+// reportCommandOutput streams non-empty command output as progress events,
+// split into bounded chunks so no single event is unbounded.
+func reportCommandOutput(report deployProgressReporter, stdout string) error {
+	for len(stdout) > 0 {
+		chunk := stdout
+		if len(chunk) > kMaxDeployOutputChunk {
+			chunk = chunk[:kMaxDeployOutputChunk]
+		}
+		stdout = stdout[len(chunk):]
+		if err := report(deployProgress{phase: "output", message: chunk}); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // commandCreatesContainer reports whether running cmd brings the container into

@@ -22,15 +22,16 @@ const (
 	kHealthCheckPeriod  = 200 * time.Millisecond
 )
 
-// agentVersion returns the version of the agent listening at address, after
-// a mutual TLS handshake verifying that its certificate is issued for serverName.
+// agentVersion returns the version of the agent listening at address, after a
+// mutual TLS handshake verifying that its certificate is issued for serverName.
+// It uses the TLS material registered for serverName, falling back to the
+// client's default certificates when the agent is not registered yet (a new
+// registration during bootstrap). Probing an explicitly configured agent with
+// the default certificates could otherwise wrongly report it as unreachable.
 func agentVersion(address, serverName string) (string, error) {
-	tlsConfig, err := cdstls.SetupTLSConfig(cdstls.TLSConfig{
-		CAFile:        cdstls.CAFilePath(),
-		CertFile:      cdstls.ClientCertFilePath(),
-		KeyFile:       cdstls.ClientKeyFilePath(),
-		ServerAddress: serverName,
-	})
+	tlsFiles := registeredAgentTLS(serverName)
+	tlsFiles.ServerAddress = serverName
+	tlsConfig, err := cdstls.SetupTLSConfig(tlsFiles)
 	if err != nil {
 		return cg.EmptyStr, cerr.AppendError("failed to setup agent TLS config", err)
 	}
@@ -50,6 +51,30 @@ func agentVersion(address, serverName string) (string, error) {
 		return cg.EmptyStr, cerr.AppendErrorFmt("agent at %s is not healthy", err, address)
 	}
 	return reply.GetCurrent(), nil
+}
+
+// registeredAgentTLS returns the CA/certificate/key registered for the agent of
+// hostname. It falls back to the client's default provisioning certificates
+// when the agent is not registered or its registration omits TLS material.
+// Default provisioning certificates are reserved for new registrations.
+func registeredAgentTLS(hostname string) cdstls.TLSConfig {
+	defaults := cdstls.TLSConfig{
+		CAFile:   cdstls.CAFilePath(),
+		CertFile: cdstls.ClientCertFilePath(),
+		KeyFile:  cdstls.ClientKeyFilePath(),
+	}
+	address, err := config.AgentAddress(hostname)
+	if err != nil || address == cg.EmptyStr {
+		return defaults
+	}
+	agent, err := config.RegisteredAgent(address)
+	if err != nil {
+		return defaults
+	}
+	if agent.Certs.CA == cg.EmptyStr || agent.Certs.Cert == cg.EmptyStr || agent.Certs.Key == cg.EmptyStr {
+		return defaults
+	}
+	return cdstls.TLSConfig{CAFile: agent.Certs.CA, CertFile: agent.Certs.Cert, KeyFile: agent.Certs.Key}
 }
 
 // waitForHealthyAgent waits until the agent at address answers and reports the

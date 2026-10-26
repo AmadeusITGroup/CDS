@@ -98,7 +98,14 @@ func validateExecutable(path string) error {
 	if err != nil {
 		return cerr.AppendErrorFmt("cannot access %s", err, path)
 	}
-	if !info.Mode().IsRegular() || info.Mode().Perm()&0100 == 0 {
+	if !info.Mode().IsRegular() {
+		return cerr.NewError(fmt.Sprintf("%s is not a regular file", path))
+	}
+	// The Unix owner-execute bit is only meaningful on platforms that expose it
+	// through os.Stat. On Windows, os.FileInfo does not carry Unix permission
+	// bits, so a valid executable (including a Linux agent binary a Windows
+	// client resolves to upload for remote bootstrap) would be wrongly rejected.
+	if runtime.GOOS != cg.WINDOWS && info.Mode().Perm()&0100 == 0 {
 		return cerr.NewError(fmt.Sprintf("%s is not an executable file", path))
 	}
 	return nil

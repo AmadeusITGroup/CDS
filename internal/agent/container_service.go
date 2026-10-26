@@ -132,7 +132,7 @@ func (s *containerServiceServer) ExecuteInContainer(ctx context.Context, req *cd
 		return nil, status.Error(codes.InvalidArgument, "command is required")
 	}
 
-	output, exitCode, err := s.core.containerOps().ExecuteInContainer(req.GetContainerName(), req.GetCommand(), req.GetUser())
+	output, exitCode, err := s.core.containerOps().ExecuteInContainer(ctx, req.GetContainerName(), req.GetCommand(), req.GetUser())
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "execute in container %s: %v", req.GetContainerName(), err)
 	}
@@ -162,7 +162,7 @@ func (s *containerServiceServer) DeployContainer(req *cdspb.DeployContainerReque
 		return err
 	}
 
-	result, err := s.core.containerOps().DeployContainer(spec, func(progress deployProgress) error {
+	result, err := s.core.containerOps().DeployContainer(stream.Context(), spec, func(progress deployProgress) error {
 		return sendDeployProgress(stream, progress.phase, progress.message)
 	})
 	if err == nil {
@@ -205,7 +205,7 @@ func (s *containerServiceServer) RebuildContainer(ctx context.Context, req *cdsp
 		return response, nil
 	}
 
-	result, err := s.core.containerOps().DeployContainer(spec, func(progress deployProgress) error {
+	result, err := s.core.containerOps().DeployContainer(ctx, spec, func(progress deployProgress) error {
 		clog.Debug(fmt.Sprintf("Rebuilding %s [%s]: %s", req.GetContainerName(), progress.phase, progress.message))
 		return nil
 	})

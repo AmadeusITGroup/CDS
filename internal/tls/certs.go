@@ -1,12 +1,15 @@
 package cdstls
 
 import (
+	"crypto/x509"
 	_ "embed"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/amadeusitgroup/cds/internal/cenv"
 	"github.com/amadeusitgroup/cds/internal/cerr"
@@ -80,10 +83,10 @@ func EnsureCerts() error {
 		{dir: cenv.AgentConfigDir(kcertsDir), profile: "server", csr: serverCSR, name: kAgentCertName},
 	}
 	for _, issue := range issues {
-		if filesExist(issue.dir, kCAFile, issue.name+".pem", issue.name+"-key.pem") {
+		if leafReusable(issue.dir, issue.name) {
 			continue
 		}
-		clog.Debug(fmt.Sprintf("Issuing missing %s certificate in %s", issue.name, issue.dir))
+		clog.Debug(fmt.Sprintf("Issuing missing or invalid %s certificate in %s", issue.name, issue.dir))
 		if err := issueCert(issue.dir, issue.profile, issue.csr, issue.name); err != nil {
 			return err
 		}
@@ -103,7 +106,7 @@ func AgentCertsDir(hostname string) (string, error) {
 	}
 
 	dir := cenv.ClientConfigDir(filepath.Join(kcertsDir, kAgentsCertsDir, hostname))
-	if filesExist(dir, kCAFile, kAgentCertName+".pem", kAgentCertName+"-key.pem") {
+	if leafReusable(dir, kAgentCertName) {
 		return dir, nil
 	}
 
@@ -139,6 +142,40 @@ func filesExist(dir string, names ...string) bool {
 		}
 	}
 	return true
+}
+
+// leafReusable reports whether the CA and the <name> leaf certificate in dir
+// all exist and the leaf is still valid now (parses and is within its validity
+// window). An expired or unparseable leaf is not reusable and must be reissued
+// from the CA; existence alone is insufficient because the mutual-TLS handshake
+// rejects an expired certificate.
+func leafReusable(dir, name string) bool {
+	if !filesExist(dir, kCAFile, name+".pem", name+"-key.pem") {
+		return false
+	}
+	return certValidNow(filepath.Join(dir, name+".pem")) == nil
+}
+
+// certValidNow returns nil when the PEM certificate file holds a certificate
+// valid at the current time, or an error describing why it is not.
+func certValidNow(certPath string) error {
+	data, err := os.ReadFile(certPath)
+	if err != nil {
+		return cerr.AppendErrorFmt("Failed to read certificate %s", err, certPath)
+	}
+	block, _ := pem.Decode(data)
+	if block == nil {
+		return cerr.NewError(fmt.Sprintf("no PEM certificate in %s", certPath))
+	}
+	cert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		return cerr.AppendErrorFmt("Failed to parse certificate %s", err, certPath)
+	}
+	now := time.Now()
+	if now.Before(cert.NotBefore) || now.After(cert.NotAfter) {
+		return cerr.NewError(fmt.Sprintf("certificate %s is not valid at %s (valid %s to %s)", certPath, now.Format(time.RFC3339), cert.NotBefore.Format(time.RFC3339), cert.NotAfter.Format(time.RFC3339)))
+	}
+	return nil
 }
 
 // withCfssl runs fn in a temporary working directory holding the cfssl templates.

@@ -1,10 +1,12 @@
 package agent
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/amadeusitgroup/cds/internal/bo"
 	"github.com/amadeusitgroup/cds/internal/containerconf"
@@ -57,7 +59,7 @@ func TestDefaultContainerOpsExecuteReturnsExitCode(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			logPath := fakePodman(t, tc.script)
 
-			output, code, err := defaultContainerOps{}.ExecuteInContainer("dev-1", "echo 'hi'", "developer")
+			output, code, err := defaultContainerOps{}.ExecuteInContainer(context.Background(), "dev-1", "echo 'hi'", "developer")
 
 			require.NoError(t, err)
 			assert.Equal(t, tc.wantOutput, output)
@@ -65,6 +67,64 @@ func TestDefaultContainerOpsExecuteReturnsExitCode(t *testing.T) {
 			assert.Equal(t, "exec -u developer -i dev-1 /bin/sh -c echo 'hi'\n", readLog(t, logPath))
 		})
 	}
+}
+
+func TestDefaultContainerOpsExecuteCancelsOnContext(t *testing.T) {
+	// a slow command is aborted when the context deadline is reached, well before
+	// it would finish naturally (the WaitDelay bounds any grandchild-held pipe)
+	fakePodman(t, "sleep 5")
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+
+	start := time.Now()
+	_, _, err := defaultContainerOps{}.ExecuteInContainer(ctx, "dev-1", "sleep 5", "root")
+
+	require.Error(t, err)
+	assert.Less(t, time.Since(start), 4*time.Second, "the command is killed well before its 5s runtime")
+}
+
+func TestDeployContainerStopsOnCancelledContext(t *testing.T) {
+	fakePodman(t, "exit 0")
+	spec := deploySpecForTest(t, "dev-cancel", `{"image":"ubuntu:24.04"}`)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // cancelled before the first command runs
+
+	_, err := defaultContainerOps{}.DeployContainer(ctx, spec, func(deployProgress) error { return nil })
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "cancelled")
+}
+
+func TestBoundedOutput(t *testing.T) {
+	assert.Equal(t, "short", boundedOutput("short"))
+
+	big := strings.Repeat("x", kMaxDeployOutput+100)
+	got := boundedOutput(big)
+	assert.LessOrEqual(t, len(got), kMaxDeployOutput+64, "output is bounded (plus a short marker)")
+	assert.Contains(t, got, "truncated")
+	assert.True(t, strings.HasSuffix(got, strings.Repeat("x", 10)), "the tail is kept")
+}
+
+func TestReportCommandOutputChunksBoundedly(t *testing.T) {
+	var chunks []string
+	report := func(p deployProgress) error {
+		if p.phase == "output" {
+			chunks = append(chunks, p.message)
+		}
+		return nil
+	}
+	require.NoError(t, reportCommandOutput(report, strings.Repeat("y", kMaxDeployOutputChunk*2+5)))
+
+	require.Len(t, chunks, 3)
+	assert.Len(t, chunks[0], kMaxDeployOutputChunk)
+	assert.Len(t, chunks[1], kMaxDeployOutputChunk)
+	assert.Len(t, chunks[2], 5)
+}
+
+func TestReportCommandOutputSkipsEmpty(t *testing.T) {
+	called := false
+	require.NoError(t, reportCommandOutput(func(deployProgress) error { called = true; return nil }, ""))
+	assert.False(t, called, "no event is sent for empty output")
 }
 
 func TestDefaultContainerOpsLifecycle(t *testing.T) {
@@ -162,7 +222,7 @@ func TestDeployContainerCompensatesAfterCreation(t *testing.T) {
 esac`)
 
 	spec := deploySpecForTest(t, "dev-fail", `{"image":"ubuntu:24.04","postCreateCommand":"exit 42"}`)
-	_, err := defaultContainerOps{}.DeployContainer(spec, func(deployProgress) error { return nil })
+	_, err := defaultContainerOps{}.DeployContainer(context.Background(), spec, func(deployProgress) error { return nil })
 
 	require.Error(t, err)
 	assert.Contains(t, readLog(t, logPath), "rm -f dev-fail", "the created container is removed after the failure")
@@ -179,7 +239,7 @@ func TestDeployContainerDoesNotRemoveOnCreationFailure(t *testing.T) {
 esac`)
 
 	spec := deploySpecForTest(t, "dev-collision", `{"image":"ubuntu:24.04"}`)
-	_, err := defaultContainerOps{}.DeployContainer(spec, func(deployProgress) error { return nil })
+	_, err := defaultContainerOps{}.DeployContainer(context.Background(), spec, func(deployProgress) error { return nil })
 
 	require.Error(t, err)
 	assert.NotContains(t, readLog(t, logPath), "rm -f dev-collision", "a pre-existing container must not be removed on a creation failure")

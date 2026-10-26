@@ -41,7 +41,27 @@ func (d deploymentStore) save(req *cdspb.DeployContainerRequest) error {
 	if err := os.MkdirAll(d.dir, cg.KPermDir); err != nil {
 		return cerr.AppendErrorFmt("failed to create deployments directory %s", err, d.dir)
 	}
-	if err := os.WriteFile(path, data, cg.KPermFile); err != nil {
+	// Write to a temporary file in the same directory and rename it over the
+	// record, so a failed or concurrent write never truncates or exposes a
+	// partially written record: the previous valid record is preserved, and a
+	// reader sees either the old or the new file whole.
+	tmp, err := os.CreateTemp(d.dir, "."+req.GetContainerName()+"-*.tmp")
+	if err != nil {
+		return cerr.AppendErrorFmt("failed to create temporary deployment file for %s", err, req.GetContainerName())
+	}
+	tmpPath := tmp.Name()
+	defer func() {
+		// best effort: removes the temp file if we returned before renaming it
+		_ = os.Remove(tmpPath)
+	}()
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		return cerr.AppendErrorFmt("failed to write deployment of %s", err, req.GetContainerName())
+	}
+	if err := tmp.Close(); err != nil {
+		return cerr.AppendErrorFmt("failed to write deployment of %s", err, req.GetContainerName())
+	}
+	if err := os.Rename(tmpPath, path); err != nil {
 		return cerr.AppendErrorFmt("failed to record deployment of %s", err, req.GetContainerName())
 	}
 	return nil

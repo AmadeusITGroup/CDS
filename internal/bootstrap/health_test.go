@@ -110,3 +110,34 @@ func TestIsAgentRunning(t *testing.T) {
 		assert.False(t, running)
 	})
 }
+
+func TestRegisteredAgentTLSUsesRegistrationThenDefaults(t *testing.T) {
+	t.Setenv("CDS_CONFIG_PATH", t.TempDir())
+
+	// not registered -> default client provisioning certificates
+	defaults := registeredAgentTLS("unknown.example.com")
+	assert.Equal(t, cdstls.CAFilePath(), defaults.CAFile)
+	assert.Equal(t, cdstls.ClientCertFilePath(), defaults.CertFile)
+	assert.Equal(t, cdstls.ClientKeyFilePath(), defaults.KeyFile)
+
+	// registered with its own TLS material -> that material is used
+	require.NoError(t, config.UpsertAgentForHostInConfig("host.example.com", config.NewAgent(
+		config.WithTargetAddress("host.example.com:8087"),
+		config.WithAgentTLS(config.NewTlssecret(
+			config.WithCA("/custom/ca.pem"),
+			config.WithCert("/custom/client.pem"),
+			config.WithKey("/custom/client-key.pem"),
+		)),
+	)))
+	registered := registeredAgentTLS("host.example.com")
+	assert.Equal(t, "/custom/ca.pem", registered.CAFile)
+	assert.Equal(t, "/custom/client.pem", registered.CertFile)
+	assert.Equal(t, "/custom/client-key.pem", registered.KeyFile)
+
+	// registered without TLS material -> fall back to defaults
+	require.NoError(t, config.UpsertAgentForHostInConfig("plain.example.com", config.NewAgent(
+		config.WithTargetAddress("plain.example.com:8087"),
+	)))
+	fallback := registeredAgentTLS("plain.example.com")
+	assert.Equal(t, cdstls.CAFilePath(), fallback.CAFile)
+}

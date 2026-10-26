@@ -75,12 +75,12 @@ func (m *mockContainerOps) RenameContainer(name, newName string) error {
 	return m.renameErr
 }
 
-func (m *mockContainerOps) ExecuteInContainer(containerName, command, user string) (string, int, error) {
+func (m *mockContainerOps) ExecuteInContainer(_ context.Context, containerName, command, user string) (string, int, error) {
 	m.lastExecCmd = command
 	return m.execOutput, m.execCode, m.execErr
 }
 
-func (m *mockContainerOps) DeployContainer(spec deployContainerSpec, report deployProgressReporter) (deployContainerResult, error) {
+func (m *mockContainerOps) DeployContainer(_ context.Context, spec deployContainerSpec, report deployProgressReporter) (deployContainerResult, error) {
 	m.lastDeploy = spec
 	for _, progress := range m.progress {
 		if err := report(progress); err != nil {
@@ -789,6 +789,10 @@ func TestRenameContainerMovesDeployment(t *testing.T) {
 type mockDeployStream struct {
 	events []*cdspb.DeployContainerEvent
 	grpc.ServerStreamingServer[cdspb.DeployContainerEvent]
+}
+
+func (m *mockDeployStream) Context() context.Context {
+	return context.Background()
 }
 
 func (m *mockDeployStream) Send(event *cdspb.DeployContainerEvent) error {

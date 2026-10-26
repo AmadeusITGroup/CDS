@@ -266,7 +266,12 @@ func receiveDeployResponse(stream grpc.ServerStreamingClient[cdspb.DeployContain
 			return nil, cerr.AppendError("Failed to receive deploy progress", err)
 		}
 		if progress := event.GetProgress(); progress != nil {
-			clog.Info(progress.GetMessage())
+			if progress.GetPhase() == "output" {
+				// raw command output streamed from the agent, print as is
+				clog.Debug(progress.GetMessage())
+			} else {
+				clog.Info(progress.GetMessage())
+			}
 		}
 		if eventResponse := event.GetResponse(); eventResponse != nil {
 			response = eventResponse

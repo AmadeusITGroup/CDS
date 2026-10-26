@@ -1517,7 +1517,12 @@ func uniqueNonRootUsers(users ...string) []string {
 	seen := map[string]struct{}{}
 	for _, user := range users {
 		user = strings.TrimSpace(user)
-		if user == "" || user == KRootUsr {
+		// the account is the first field of a "user[:group]" / "uid[:gid]" spec
+		account := user
+		if i := strings.IndexByte(account, ':'); i >= 0 {
+			account = account[:i]
+		}
+		if user == "" || account == KRootUsr || account == "0" {
 			continue
 		}
 		if _, exists := seen[user]; exists {
@@ -1530,26 +1535,65 @@ func uniqueNonRootUsers(users ...string) []string {
 }
 
 func ensureContainerUserScript(user string) string {
-	quotedUser := cg.ShellSingleQuote(user)
+	quotedSpec := cg.ShellSingleQuote(user)
 	return fmt.Sprintf(`set -eu
-user=%s
-if ! id -u "$user" >/dev/null 2>&1; then
-	if command -v useradd >/dev/null 2>&1; then
-		useradd -m -s /bin/sh "$user"
-	elif command -v adduser >/dev/null 2>&1; then
-		adduser -D -s /bin/sh "$user"
-	else
-		echo "Unable to create user '$user': useradd/adduser is not available" >&2
-		exit 1
-	fi
+spec=%s
+# a container user may be "name", "name:group", "uid", or "uid:gid"; only the
+# account (first field) is created here, the group part is passed through
+user=${spec%%%%:*}
+group=""
+case "$spec" in *:*) group=${spec#*:} ;; esac
+
+# the account already exists when resolvable by login name or by numeric uid
+account_exists() {
+	id -u "$user" >/dev/null 2>&1 && return 0
+	case "$user" in
+		''|*[!0-9]*) return 1 ;;
+		*) awk -F: -v id="$user" '$3 == id { found = 1 } END { exit !found }' /etc/passwd ;;
+	esac
+}
+
+if ! account_exists; then
+	case "$user" in
+		''|*[!0-9]*)
+			# a login name: create it, honouring an existing named group
+			if command -v useradd >/dev/null 2>&1; then
+				case "$group" in
+					''|*[!0-9]*) [ -n "$group" ] && gopt="-g $group" || gopt="" ;;
+					*) gopt="-g $group" ;;
+				esac
+				# shellcheck disable=SC2086
+				useradd -m -s /bin/sh $gopt "$user"
+			elif command -v adduser >/dev/null 2>&1; then
+				# shellcheck disable=SC2086
+				adduser -D -s /bin/sh ${group:+-G $group} "$user"
+			else
+				echo "Unable to create user '$user': useradd/adduser is not available" >&2
+				exit 1
+			fi
+			;;
+		*)
+			# a bare numeric uid with no matching account: create one with that uid
+			if command -v useradd >/dev/null 2>&1; then
+				useradd -m -s /bin/sh -u "$user" "cds-$user"
+			elif command -v adduser >/dev/null 2>&1; then
+				adduser -D -s /bin/sh -u "$user" "cds-$user"
+			else
+				echo "Unable to create user with uid '$user': useradd/adduser is not available" >&2
+				exit 1
+			fi
+			;;
+	esac
 fi
-home_dir=$(awk -F: -v user="$user" '$1 == user { print $6 }' /etc/passwd)
+
+# resolve the home directory of the account by login name or uid
+home_dir=$(awk -F: -v u="$user" '$1 == u || $3 == u { print $6; exit }' /etc/passwd)
 if [ -z "$home_dir" ]; then
 	home_dir="/home/$user"
 fi
 mkdir -p "$home_dir"
 chown "$user" "$home_dir"
-chmod u+rwx "$home_dir"`, quotedUser)
+chmod u+rwx "$home_dir"`, quotedSpec)
 }
 
 // kRemoveAuthorizedKeysScript removes the public keys given as second
@@ -1593,6 +1637,11 @@ fi
 ssh_dir="$home_dir/.ssh"
 mkdir -p "$ssh_dir"
 touch "$ssh_dir/authorized_keys"
+# a pre-existing file whose last key has no trailing newline would otherwise
+# get the new key appended to that same line, installing neither key properly
+if [ -s "$ssh_dir/authorized_keys" ] && [ -n "$(tail -c 1 "$ssh_dir/authorized_keys")" ]; then
+	printf '\n' >> "$ssh_dir/authorized_keys"
+fi
 printf '%s\n' "$keys" | while IFS= read -r key; do
 	[ -n "$key" ] || continue
 	grep -Fxq -- "$key" "$ssh_dir/authorized_keys" || printf '%s\n' "$key" >> "$ssh_dir/authorized_keys"

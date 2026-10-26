@@ -43,14 +43,23 @@ func RunLocalCmds(cmds []ExecuteEvent) error {
 // run single command and return its output
 // if the command fails, error is captured and (stderr, exe.Run's error) are returned
 func RunLocalCmdWithOutput(cmd []ExecuteEvent) (string, error) {
+	return RunLocalCmdWithOutputContext(context.Background(), cmd)
+}
+
+// RunLocalCmdWithOutputContext behaves like RunLocalCmdWithOutput but aborts the
+// command when ctx is cancelled (the process is killed and ctx.Err is returned).
+func RunLocalCmdWithOutputContext(ctx context.Context, cmd []ExecuteEvent) (string, error) {
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 
-	exeCmd := localShellCmd(cmd[0].Cmd())
+	exeCmd := localShellCmdContext(ctx, cmd[0].Cmd())
 	exeCmd.Stdout = &stdout
 	exeCmd.Stderr = &stderr
 
 	if err := exeCmd.Run(); err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return stderr.String(), cerr.AppendErrorFmt("command (%v) cancelled", ctxErr, cmd[0].Cmd())
+		}
 		return stderr.String(), cerr.AppendError(
 			fmt.Sprintf("Failed to execute commands locally, command (%v) failed\nstdout: %s\nstderr: %s",
 				cmd[0].Cmd(),
@@ -67,8 +76,14 @@ func RunLocalCmdWithOutput(cmd []ExecuteEvent) (string, error) {
 // stdout/stderr output and its exit code. A non-zero exit code is not an error:
 // the returned error is only set when the command could not be run at all.
 func RunLocalCmdWithExitCode(cmd ExecuteEvent) (string, int, error) {
+	return RunLocalCmdWithExitCodeContext(context.Background(), cmd)
+}
+
+// RunLocalCmdWithExitCodeContext behaves like RunLocalCmdWithExitCode but aborts
+// the command when ctx is cancelled.
+func RunLocalCmdWithExitCodeContext(ctx context.Context, cmd ExecuteEvent) (string, int, error) {
 	var output bytes.Buffer
-	exeCmd := localShellCmd(cmd.Cmd())
+	exeCmd := localShellCmdContext(ctx, cmd.Cmd())
 	exeCmd.Stdout = &output
 	exeCmd.Stderr = &output
 
@@ -77,6 +92,8 @@ func RunLocalCmdWithExitCode(cmd ExecuteEvent) (string, int, error) {
 	switch {
 	case err == nil:
 		return output.String(), 0, nil
+	case ctx.Err() != nil:
+		return output.String(), -1, cerr.AppendErrorFmt("command (%v) cancelled", ctx.Err(), cmd.Cmd())
 	case errors.As(err, &exitErr):
 		return output.String(), exitErr.ExitCode(), nil
 	default:
@@ -84,11 +101,18 @@ func RunLocalCmdWithExitCode(cmd ExecuteEvent) (string, int, error) {
 	}
 }
 
-func localShellCmd(command string) *exec.Cmd {
+func localShellCmdContext(ctx context.Context, command string) *exec.Cmd {
+	var cmd *exec.Cmd
 	if runtime.GOOS == "windows" {
-		return exec.Command("cmd.exe", "/c", command)
+		cmd = exec.CommandContext(ctx, "cmd.exe", "/c", command)
+	} else {
+		cmd = exec.CommandContext(ctx, "bash", "-c", command)
 	}
-	return exec.Command("bash", "-c", command)
+	// On cancellation, exec kills the shell, but a grandchild (e.g. a container
+	// runtime helper) may keep the output pipe open and make Wait block. WaitDelay
+	// bounds that wait so a cancelled command returns promptly.
+	cmd.WaitDelay = time.Second
+	return cmd
 }
 
 // attach the terminal to a ssh session, the assumption here is that

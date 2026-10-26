@@ -5,6 +5,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	cg "github.com/amadeusitgroup/cds/internal/global"
@@ -19,6 +20,29 @@ func writeExecutable(t *testing.T, path, content string) {
 	t.Helper()
 	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0700))
 	require.NoError(t, os.WriteFile(path, []byte(content), 0700))
+}
+
+func TestValidateExecutable(t *testing.T) {
+	dir := t.TempDir()
+
+	exe := filepath.Join(dir, "agent")
+	require.NoError(t, os.WriteFile(exe, []byte("bin"), 0700))
+	assert.NoError(t, validateExecutable(exe), "a regular executable file is valid")
+
+	missing := filepath.Join(dir, "nope")
+	assert.Error(t, validateExecutable(missing), "a missing file is invalid")
+
+	assert.Error(t, validateExecutable(dir), "a directory is not a regular file")
+
+	// On Unix a file without the execute bit is rejected; on Windows the bit is
+	// not exposed by os.Stat, so a regular file must be accepted regardless.
+	plain := filepath.Join(dir, "plain")
+	require.NoError(t, os.WriteFile(plain, []byte("data"), 0600))
+	if runtime.GOOS == cg.WINDOWS {
+		assert.NoError(t, validateExecutable(plain))
+	} else {
+		assert.Error(t, validateExecutable(plain), "a non-executable file is rejected on Unix")
+	}
 }
 
 func TestResolveAgentBinaryFromSetting(t *testing.T) {
