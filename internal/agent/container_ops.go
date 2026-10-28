@@ -102,8 +102,26 @@ func (defaultContainerOps) GetContainer(name string) (bo.Container, error) {
 	return container, nil
 }
 
+// StartContainer starts a stopped container. The podman start is run in a
+// transient systemd scope, like the initial run, so the helpers it respawns
+// (conmon, rootlessport) do not land in cds.service and get killed on the next
+// agent restart. Without this, a stop/start reintroduces the restart failure.
 func (defaultContainerOps) StartContainer(name string) error {
-	return engine.StartContainer(name)
+	es := engine.NewContainerEngine()
+	es.SetAction(engine.K_ACTION_START)
+	es.AddArg(name)
+
+	cmds, err := es.BuildCommands()
+	if err != nil {
+		return cerr.AppendErrorFmt("failed to build start command for %s", err, name)
+	}
+	if len(cmds) != 1 {
+		return cerr.NewError(fmt.Sprintf("expected 1 start command, got %d", len(cmds)))
+	}
+	if _, err := shexec.RunLocalCmdWithOutput([]shexec.ExecuteEvent{scopeWrap(cmds[0])}); err != nil {
+		return cerr.AppendErrorFmt("failed to start container %s", err, name)
+	}
+	return nil
 }
 
 func (defaultContainerOps) StopContainer(name string) error {
@@ -179,13 +197,14 @@ func (defaultContainerOps) DeployContainer(ctx context.Context, spec deployConta
 
 		stdout, runErr := shexec.RunLocalCmdWithOutputContext(ctx, []shexec.ExecuteEvent{detachContainerHelpers(cmd)})
 		output.WriteString(stdout)
-		// Stream the command output as progress rather than only returning it in
-		// the final response: the response carries a bounded tail, while the full
-		// output still reaches the client as it is produced.
-		if reportErr := reportCommandOutput(report, stdout); reportErr != nil {
-			result.output = boundedOutput(output.String())
-			compensateFailedDeploy(created, spec.containerName)
-			return result, reportErr
+		// Establish ownership of a successfully created container immediately,
+		// before anything that could fail (reporting its output, the next
+		// command). Podman prints the new container id on the run step; if the
+		// output send then failed we would otherwise leave the container running
+		// without recording that this deployment created it, so compensation
+		// could not clean it up.
+		if runErr == nil && commandCreatesContainer(cmd) {
+			created = true
 		}
 		if runErr != nil {
 			result.output = boundedOutput(output.String())
@@ -198,8 +217,13 @@ func (defaultContainerOps) DeployContainer(ctx context.Context, spec deployConta
 			compensateFailedDeploy(created, spec.containerName)
 			return result, cerr.AppendError("failed to execute deploy command", runErr)
 		}
-		if commandCreatesContainer(cmd) {
-			created = true
+		// Stream the command output as progress rather than only returning it in
+		// the final response: the response carries a bounded tail, while the full
+		// output still reaches the client as it is produced.
+		if reportErr := reportCommandOutput(report, stdout); reportErr != nil {
+			result.output = boundedOutput(output.String())
+			compensateFailedDeploy(created, spec.containerName)
+			return result, reportErr
 		}
 	}
 
@@ -262,14 +286,43 @@ func commandCreatesContainer(cmd shexec.ExecuteEvent) bool {
 // under systemd (INVOCATION_ID is set for unit processes) and systemd-run is
 // available. Otherwise the command is returned unchanged.
 func detachContainerHelpers(cmd shexec.ExecuteEvent) shexec.ExecuteEvent {
-	if !commandCreatesContainer(cmd) || !runningUnderSystemd() || !systemdRunAvailable() {
+	if !commandCreatesContainer(cmd) {
 		return cmd
+	}
+	wrapped, changed := transientScopeCommand(cmd.Cmd())
+	if !changed {
+		return cmd
+	}
+	return &shexec.DefaultShEvent{ExeCmd: wrapped, DescriptionCmd: cmd.Description()}
+}
+
+// scopeWrap returns cmd wrapped to run in a transient systemd scope, for any
+// command that spawns a container's long-lived helpers (e.g. `podman start`).
+// Unlike detachContainerHelpers it does not require the CreatesContainer marker.
+func scopeWrap(cmd shexec.ExecuteEvent) shexec.ExecuteEvent {
+	wrapped, changed := transientScopeCommand(cmd.Cmd())
+	if !changed {
+		return cmd
+	}
+	return &shexec.DefaultShEvent{ExeCmd: wrapped, DescriptionCmd: cmd.Description()}
+}
+
+// transientScopeCommand wraps command so it runs in its own transient systemd
+// user scope (a sibling of cds.service), detaching any long-lived container
+// helpers it spawns from the agent's service cgroup. It returns the command
+// unchanged (changed=false) when the agent is not under systemd or systemd-run
+// is unavailable. This must wrap every operation that (re)spawns a container's
+// helpers — both `podman run` (deploy) and `podman start` — otherwise a
+// stop/start would place fresh helpers back in cds.service and an agent restart
+// would kill them again.
+func transientScopeCommand(command string) (string, bool) {
+	if !runningUnderSystemd() || !systemdRunAvailable() {
+		return command, false
 	}
 	// --scope runs the command in a transient scope unit; --collect reclaims it
 	// once it exits. The scope is a sibling of cds.service, so a restart of the
 	// service no longer tears down the container helpers placed in this scope.
-	wrapped := fmt.Sprintf("systemd-run --user --scope --collect --quiet -- bash -c %s", cg.ShellSingleQuote(cmd.Cmd()))
-	return &shexec.DefaultShEvent{ExeCmd: wrapped, DescriptionCmd: cmd.Description()}
+	return fmt.Sprintf("systemd-run --user --scope --collect --quiet -- bash -c %s", cg.ShellSingleQuote(command)), true
 }
 
 // runningUnderSystemd reports whether this process runs inside a systemd unit.

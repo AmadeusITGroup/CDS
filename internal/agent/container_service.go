@@ -229,6 +229,9 @@ func (s *containerServiceServer) deploySpec(req *cdspb.DeployContainerRequest) (
 	if err := rejectUnsupportedFeatures(config); err != nil {
 		return deployContainerSpec{}, err
 	}
+	if err := validateConfigTypes(config); err != nil {
+		return deployContainerSpec{}, err
+	}
 	if tag := strings.TrimSpace(req.GetOverrideImageTag()); tag != cg.EmptyStr {
 		config.Set(containerconf.KOverrideImageTag, tag)
 	}
@@ -274,6 +277,57 @@ func rejectUnsupportedFeatures(config *containerconf.Config) error {
 	sort.Strings(names)
 	return status.Errorf(codes.Unimplemented,
 		"devcontainer features are not supported yet, remove %v from the configuration", names)
+}
+
+// validateConfigTypes rejects devcontainer configurations whose values have a
+// type the engine cannot use, returning InvalidArgument. This runs before any
+// destructive work (RebuildContainer deletes the container before building), so
+// a malformed configuration fails cleanly instead of being caught deep in the
+// command builder — where an unchecked type assertion would otherwise take the
+// whole agent down.
+func validateConfigTypes(config *containerconf.Config) error {
+	if config == nil {
+		return nil
+	}
+	if config.IsSet(containerconf.KRunArgs) {
+		runArgs, ok := config.Get(containerconf.KRunArgs).([]interface{})
+		if !ok {
+			return status.Errorf(codes.InvalidArgument, "runArgs must be an array of strings")
+		}
+		for _, arg := range runArgs {
+			if _, ok := arg.(string); !ok {
+				return status.Errorf(codes.InvalidArgument, "runArgs entries must be strings, got %T (%v)", arg, arg)
+			}
+		}
+	}
+	if config.IsSet(containerconf.KAppPort) {
+		if err := validateAppPortTypes(config.Get(containerconf.KAppPort)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// validateAppPortTypes accepts appPort as a scalar (string or integer) or an
+// array of such scalars, rejecting other shapes with InvalidArgument.
+func validateAppPortTypes(raw interface{}) error {
+	elements, isList := raw.([]interface{})
+	if !isList {
+		elements = []interface{}{raw}
+	}
+	for _, element := range elements {
+		switch v := element.(type) {
+		case string:
+		case int, int64:
+		case float64:
+			if v != float64(int64(v)) {
+				return status.Errorf(codes.InvalidArgument, "appPort %v is not an integer", v)
+			}
+		default:
+			return status.Errorf(codes.InvalidArgument, "appPort entries must be strings or integers, got %T (%v)", element, element)
+		}
+	}
+	return nil
 }
 
 func sendDeployProgress(stream grpc.ServerStreamingServer[cdspb.DeployContainerEvent], phase, message string) error {

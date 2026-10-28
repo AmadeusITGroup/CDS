@@ -333,6 +333,43 @@ func TestUniqueNonRootUsersSkipsRootAndGroupSpecs(t *testing.T) {
 	assert.Equal(t, []string{"nobody:nogroup"}, uniqueNonRootUsers("nobody:nogroup", "root"))
 }
 
+func TestContainerRunToleratesNonStringRunArgsAndPublishesNumericPorts(t *testing.T) {
+	// a numeric runArg must be skipped (not panic) and a numeric appPort must be
+	// published like its string form
+	config := containerconf.NewConfig()
+	config.Set(containerconf.KImage, "alpine:3.20")
+	config.Set(containerconf.KRunArgs, []interface{}{1, "-t"})
+	config.Set(containerconf.KAppPort, []interface{}{18080, "9090:90"})
+
+	ce := NewContainerEngine(WithContainerConfig(config))
+	ce.SetAction(K_ACTION_RUN)
+	ce.SetRunType(K_RUN_DEV_CONTAINER)
+	ce.SetContainerName("sample-container")
+
+	cmds, err := ce.BuildCommands()
+	require.NoError(t, err)
+	runIndex := findCommandIndexWithPrefix(cmds, "podman run ")
+	require.NotEqual(t, -1, runIndex)
+	run := cmds[runIndex].Cmd()
+	assert.Contains(t, run, "-t", "the valid string runArg is kept")
+	assert.Contains(t, run, "-p 18080", "the numeric appPort is published")
+	assert.Contains(t, run, "-p 9090:90", "the string appPort is published")
+}
+
+func TestNormalizeAppPorts(t *testing.T) {
+	mk := func(v interface{}) *containerconf.Config {
+		c := containerconf.NewConfig()
+		c.Set(containerconf.KAppPort, v)
+		return c
+	}
+	assert.Equal(t, []string{"18080"}, normalizeAppPorts(mk([]interface{}{18080})))
+	assert.Equal(t, []string{"8080:80"}, normalizeAppPorts(mk([]interface{}{"8080:80"})))
+	assert.Equal(t, []string{"18080"}, normalizeAppPorts(mk(18080)))                // scalar number
+	assert.Equal(t, []string{"18080"}, normalizeAppPorts(mk("18080")))              // scalar string
+	assert.Empty(t, normalizeAppPorts(mk([]interface{}{map[string]interface{}{}}))) // unsupported skipped
+	assert.Nil(t, normalizeAppPorts(containerconf.NewConfig()))                     // unset
+}
+
 func TestCustomCommandIsPassedAsSingleArgument(t *testing.T) {
 	ce := NewContainerEngine()
 	ce.SetAction(K_ACTION_EXE)

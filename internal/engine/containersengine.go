@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -1436,8 +1437,12 @@ func (ce *ContainersEngine) containerRun() error {
 
 	// best effort
 	if runArgs, ok := ce.configGet(containerconf.KRunArgs).([]interface{}); ok {
-		for _, arg := range runArgs {
-			arg := arg.(string)
+		for _, raw := range runArgs {
+			arg, ok := raw.(string)
+			if !ok {
+				clog.Warn(fmt.Sprintf("run argument '%v' skipped: not a string", raw))
+				continue
+			}
 			if err := ce.validateRunArg(arg); err != nil {
 				clog.Warn(fmt.Sprintf("run argument '%s' skipped:\n", arg), err)
 				continue
@@ -1446,15 +1451,8 @@ func (ce *ContainersEngine) containerRun() error {
 		}
 	}
 
-	if appPorts, ok := ce.configGet(containerconf.KAppPort).([]interface{}); ok {
-		for _, port := range appPorts {
-			portSpec, ok := port.(string)
-			if !ok {
-				clog.Warn(fmt.Sprintf("Invalid appPort configuration, '%v' is not a string", port))
-				continue
-			}
-			options = append(options, fmt.Sprintf("-p %s", portSpec))
-		}
+	for _, portSpec := range ce.appPorts() {
+		options = append(options, fmt.Sprintf("-p %s", portSpec))
 	}
 	if !configPublishesContainerPort(ce.containerConfig(), "22") {
 		options = append(options, "-p 22")
@@ -1651,23 +1649,62 @@ chmod 700 "$ssh_dir"
 chmod 600 "$ssh_dir/authorized_keys"`
 
 func configPublishesContainerPort(config *containerconf.Config, containerPort string) bool {
-	if config == nil {
-		return false
-	}
-	appPorts, ok := config.Get(containerconf.KAppPort).([]interface{})
-	if !ok {
-		return false
-	}
-	for _, appPort := range appPorts {
-		portSpec, ok := appPort.(string)
-		if !ok {
-			continue
-		}
+	for _, portSpec := range normalizeAppPorts(config) {
 		if portSpecPublishesContainerPort(portSpec, containerPort) {
 			return true
 		}
 	}
 	return false
+}
+
+// appPorts returns the normalized appPort specifications configured for the engine.
+func (ce *ContainersEngine) appPorts() []string {
+	return normalizeAppPorts(ce.containerConfig())
+}
+
+// normalizeAppPorts returns the appPort values of config as strings, accepting
+// the supported forms: a scalar or an array, whose elements are strings
+// ("18080", "8080:80") or integers (18080). Unsupported element types are
+// skipped with a warning rather than silently dropped or panicking.
+func normalizeAppPorts(config *containerconf.Config) []string {
+	if config == nil {
+		return nil
+	}
+	raw := config.Get(containerconf.KAppPort)
+	if raw == nil {
+		return nil
+	}
+	var elements []interface{}
+	if list, ok := raw.([]interface{}); ok {
+		elements = list
+	} else {
+		// a scalar form (string or number) is a single port specification
+		elements = []interface{}{raw}
+	}
+
+	ports := make([]string, 0, len(elements))
+	for _, element := range elements {
+		switch v := element.(type) {
+		case string:
+			if spec := strings.TrimSpace(v); spec != cg.EmptyStr {
+				ports = append(ports, spec)
+			}
+		case int:
+			ports = append(ports, strconv.Itoa(v))
+		case int64:
+			ports = append(ports, strconv.FormatInt(v, 10))
+		case float64:
+			// JSON numbers decode to float64; accept whole numbers as ports
+			if v == float64(int64(v)) {
+				ports = append(ports, strconv.FormatInt(int64(v), 10))
+			} else {
+				clog.Warn(fmt.Sprintf("Invalid appPort configuration, '%v' is not an integer port", v))
+			}
+		default:
+			clog.Warn(fmt.Sprintf("Invalid appPort configuration, '%v' is not a string or integer", element))
+		}
+	}
+	return ports
 }
 
 func portSpecPublishesContainerPort(portSpec, containerPort string) bool {

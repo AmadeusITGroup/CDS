@@ -127,6 +127,58 @@ func TestReportCommandOutputSkipsEmpty(t *testing.T) {
 	assert.False(t, called, "no event is sent for empty output")
 }
 
+// TestStartContainerUsesTransientScopeUnderSystemd covers P1: podman start must
+// run in a transient scope too, so the helpers it respawns do not land in
+// cds.service and get killed on the next agent restart.
+func TestStartContainerUsesTransientScopeUnderSystemd(t *testing.T) {
+	logPath := fakePodman(t, "")
+	t.Setenv("INVOCATION_ID", "abc")
+	sdLog := fakeSystemdRun(t)
+
+	require.NoError(t, defaultContainerOps{}.StartContainer("dev-1"))
+
+	// start was handed to systemd-run --scope, carrying the podman start command
+	require.FileExists(t, sdLog, "systemd-run was invoked")
+	sd, err := os.ReadFile(sdLog)
+	require.NoError(t, err)
+	assert.Contains(t, string(sd), "--scope")
+	assert.Contains(t, string(sd), "podman start dev-1")
+	// podman start was not run directly (the fake systemd-run does not exec it)
+	if data, err := os.ReadFile(logPath); err == nil {
+		assert.NotContains(t, string(data), "start dev-1", "podman start was wrapped in a transient scope, not run directly")
+	}
+}
+
+func TestStartContainerRunsDirectlyWithoutSystemd(t *testing.T) {
+	logPath := fakePodman(t, "")
+	t.Setenv("INVOCATION_ID", "") // not under systemd -> no scope wrapping
+
+	require.NoError(t, defaultContainerOps{}.StartContainer("dev-1"))
+	assert.Contains(t, readLog(t, logPath), "start dev-1")
+}
+
+// TestDeployContainerCompensatesWhenOutputSendFailsAfterCreation covers P1: if
+// reporting the create command's output fails, the just-created container must
+// still be cleaned up (ownership is established before the output is reported).
+func TestDeployContainerCompensatesWhenOutputSendFailsAfterCreation(t *testing.T) {
+	// podman prints a container id on create (non-empty stdout), everything succeeds
+	logPath := fakePodman(t, `case "$*" in run*) echo "container-id-123" ;; *) : ;; esac`)
+	spec := deploySpecForTest(t, "dev-reportfail", `{"image":"ubuntu:24.04"}`)
+
+	// the reporter fails on the first "output" event (the create command's stdout)
+	report := func(p deployProgress) error {
+		if p.phase == "output" {
+			return os.ErrClosed
+		}
+		return nil
+	}
+	_, err := defaultContainerOps{}.DeployContainer(context.Background(), spec, report)
+
+	require.Error(t, err)
+	assert.Contains(t, readLog(t, logPath), "rm -f dev-reportfail",
+		"the created container is removed even though the failure was reporting its output")
+}
+
 func TestDefaultContainerOpsLifecycle(t *testing.T) {
 	logPath := fakePodman(t, "")
 	ops := defaultContainerOps{}
@@ -187,14 +239,21 @@ func (e fakeCreatingEvent) CarryOn() bool          { return false }
 func (e fakeCreatingEvent) Recover() string        { return "" }
 func (e fakeCreatingEvent) CreatesContainer() bool { return e.creates }
 
-// fakeSystemdRun puts a no-op systemd-run on PATH so systemdRunAvailable is true.
-func fakeSystemdRun(t *testing.T) {
+// fakeSystemdRun puts a systemd-run stub on PATH (so systemdRunAvailable is
+// true) that records its arguments and does NOT run them, and returns the log
+// path. Recording-not-running lets a test assert the wrapped command without
+// the inner podman being executed.
+func fakeSystemdRun(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "systemd-run"), []byte("#!/bin/sh\n"), 0755))
+	logPath := filepath.Join(dir, "systemd-run.log")
+	stub := "#!/bin/sh\necho \"$*\" >> '" + logPath + "'\n"
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "systemd-run"), []byte(stub), 0755))
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	return logPath
 }
 
+// deploySpecForTest builds a minimal deploy spec with the given devcontainer
 // configuration, parsed the same way the agent does. It isolates HOME so that
 // engine side effects (e.g. the default ~/.devbox mount directory) land in a
 // throwaway directory rather than the real home.
