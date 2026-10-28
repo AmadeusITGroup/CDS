@@ -370,6 +370,30 @@ func TestNormalizeAppPorts(t *testing.T) {
 	assert.Nil(t, normalizeAppPorts(containerconf.NewConfig()))                     // unset
 }
 
+func TestPostCreateCommandIsQuotedAsSingleArgument(t *testing.T) {
+	// P2: `echo 'hello world'` must reach the container intact, not be re-split
+	config := containerconf.NewConfig()
+	config.Set(containerconf.KImage, "alpine:3.20")
+	config.Set(containerconf.KPostCreateCommand, "echo 'hello world'")
+
+	ce := NewContainerEngine(WithContainerConfig(config))
+	ce.SetAction(K_ACTION_RUN)
+	ce.SetRunType(K_RUN_DEV_CONTAINER)
+	ce.SetContainerName("sample-container")
+	cmds, err := ce.BuildCommands()
+	require.NoError(t, err)
+
+	idx := findCommandIndexWithDescription(cmds, "Running devcontainer postCreateCommand")
+	require.NotEqual(t, -1, idx)
+	cmd := cmds[idx].Cmd()
+	// the whole command is a single-quoted argument; inner quotes are escaped
+	assert.Contains(t, cmd, cg.ShellSingleQuote("echo 'hello world'"))
+	// run it through a fake podman to prove the container receives one argument
+	argv := runWithFakePodman(t, cmd)
+	// last argv element is the full command, unchanged
+	assert.Equal(t, "echo 'hello world'", argv[len(argv)-1])
+}
+
 func TestCustomCommandIsPassedAsSingleArgument(t *testing.T) {
 	ce := NewContainerEngine()
 	ce.SetAction(K_ACTION_EXE)

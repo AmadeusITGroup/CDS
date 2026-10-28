@@ -83,3 +83,65 @@ func TestEnsureCertsRenewsExpiredLeaf(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, caBefore, caAfter, "the CA (trust root) is preserved across renewal")
 }
+
+// TestAgentCertsDirReissuesAfterCARegeneration covers P2: a cached host leaf
+// signed by a previous CA must be reissued after the client PKI is rebuilt,
+// not returned by date validity alone (it would fail against the new CA).
+func TestAgentCertsDirReissuesAfterCARegeneration(t *testing.T) {
+	requireCfssl(t)
+	root := t.TempDir()
+	t.Setenv("CDS_CONFIG_PATH", root)
+
+	dir, err := AgentCertsDir("remote.example.com")
+	require.NoError(t, err)
+	firstLeaf, err := os.ReadFile(filepath.Join(dir, "agent-srv.pem"))
+	require.NoError(t, err)
+
+	// regenerate the whole client PKI (new CA), then request the host certs again
+	require.NoError(t, BuildCerts())
+	dir2, err := AgentCertsDir("remote.example.com")
+	require.NoError(t, err)
+	assert.Equal(t, dir, dir2)
+	secondLeaf, err := os.ReadFile(filepath.Join(dir, "agent-srv.pem"))
+	require.NoError(t, err)
+
+	assert.NotEqual(t, firstLeaf, secondLeaf, "the leaf was reissued under the new CA")
+	// the reissued leaf chains to the current client CA and matches its key
+	assert.NoError(t, certMatchesCAAndKey(
+		filepath.Join(dir, "agent-srv.pem"),
+		filepath.Join(dir, "agent-srv-key.pem"),
+		filepath.Join(root, ".xcds", "certs", "ca.pem"),
+	))
+}
+
+// TestEnsureCertsReissuesOnKeyMismatch covers P2: a date-valid leaf whose key
+// was replaced must be reissued, because the pair no longer works for TLS.
+func TestEnsureCertsReissuesOnKeyMismatch(t *testing.T) {
+	requireCfssl(t)
+	root := t.TempDir()
+	t.Setenv("CDS_CONFIG_PATH", root)
+	clientDir := filepath.Join(root, ".xcds", "certs")
+
+	require.NoError(t, EnsureCerts())
+	clientKey := filepath.Join(clientDir, "client-key.pem")
+	original, err := os.ReadFile(clientKey)
+	require.NoError(t, err)
+
+	// replace the client key with a different, unrelated key
+	other, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+	der, err := x509.MarshalPKCS8PrivateKey(other)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(clientKey, pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der}), 0o600))
+
+	require.NoError(t, EnsureCerts())
+
+	renewed, err := os.ReadFile(clientKey)
+	require.NoError(t, err)
+	assert.NotEqual(t, other, renewed, "the mismatched key was replaced by a reissue")
+	// the reissued pair is consistent and chains to the CA
+	assert.NoError(t, certMatchesCAAndKey(
+		filepath.Join(clientDir, "client.pem"), clientKey, filepath.Join(clientDir, "ca.pem"),
+	))
+	assert.NotEqual(t, original, renewed) // sanity: something changed
+}

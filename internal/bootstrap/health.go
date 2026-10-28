@@ -23,13 +23,9 @@ const (
 )
 
 // agentVersion returns the version of the agent listening at address, after a
-// mutual TLS handshake verifying that its certificate is issued for serverName.
-// It uses the TLS material registered for serverName, falling back to the
-// client's default certificates when the agent is not registered yet (a new
-// registration during bootstrap). Probing an explicitly configured agent with
-// the default certificates could otherwise wrongly report it as unreachable.
-func agentVersion(address, serverName string) (string, error) {
-	tlsFiles := registeredAgentTLS(serverName)
+// mutual TLS handshake verifying that its certificate is issued for serverName,
+// using the given TLS material.
+func agentVersion(address, serverName string, tlsFiles cdstls.TLSConfig) (string, error) {
 	tlsFiles.ServerAddress = serverName
 	tlsConfig, err := cdstls.SetupTLSConfig(tlsFiles)
 	if err != nil {
@@ -53,16 +49,23 @@ func agentVersion(address, serverName string) (string, error) {
 	return reply.GetCurrent(), nil
 }
 
-// registeredAgentTLS returns the CA/certificate/key registered for the agent of
-// hostname. It falls back to the client's default provisioning certificates
-// when the agent is not registered or its registration omits TLS material.
-// Default provisioning certificates are reserved for new registrations.
-func registeredAgentTLS(hostname string) cdstls.TLSConfig {
-	defaults := cdstls.TLSConfig{
+// provisioningTLS is the client's default CA/certificate/key. A freshly
+// bootstrapped agent presents a server certificate issued from this CA, so
+// readiness after provisioning must use these credentials — not a possibly
+// stale registration, which would prevent reaching the agent to update it.
+func provisioningTLS() cdstls.TLSConfig {
+	return cdstls.TLSConfig{
 		CAFile:   cdstls.CAFilePath(),
 		CertFile: cdstls.ClientCertFilePath(),
 		KeyFile:  cdstls.ClientKeyFilePath(),
 	}
+}
+
+// registeredAgentTLS returns the CA/certificate/key registered for the agent of
+// hostname. It falls back to the client's default provisioning certificates
+// when the agent is not registered or its registration omits TLS material.
+func registeredAgentTLS(hostname string) cdstls.TLSConfig {
+	defaults := provisioningTLS()
 	address, err := config.AgentAddress(hostname)
 	if err != nil || address == cg.EmptyStr {
 		return defaults
@@ -77,14 +80,16 @@ func registeredAgentTLS(hostname string) cdstls.TLSConfig {
 	return cdstls.TLSConfig{CAFile: agent.Certs.CA, CertFile: agent.Certs.Cert, KeyFile: agent.Certs.Key}
 }
 
-// waitForHealthyAgent waits until the agent at address answers and reports the
-// version of this CLI. Requiring the version (not merely a response) ensures
-// bootstrap does not report success while an old agent binary is still running,
-// e.g. after an upgrade that reinstalled the binary but left a stale unit.
+// waitForHealthyAgent waits until the agent just provisioned at address answers
+// and reports the version of this CLI. It uses the provisioning credentials
+// (the identity the fresh agent presents), so a stale registration cannot keep
+// readiness from reaching the agent before the registration is updated.
+// Requiring the version (not merely a response) ensures bootstrap does not
+// report success while an old agent binary is still running.
 func waitForHealthyAgent(address, serverName string) error {
 	deadline := time.Now().Add(kAgentStartTimeout)
 	for {
-		version, err := agentVersion(address, serverName)
+		version, err := agentVersion(address, serverName, provisioningTLS())
 		if err == nil {
 			if version == cg.Version {
 				return nil
@@ -113,7 +118,7 @@ func isAgentRunning(hostname string) (bool, error) {
 		return false, nil
 	}
 
-	version, err := agentVersion(address, hostname)
+	version, err := agentVersion(address, hostname, registeredAgentTLS(hostname))
 	if err != nil {
 		clog.Debug(fmt.Sprintf("Agent of %s is not running", hostname), err)
 		return false, nil

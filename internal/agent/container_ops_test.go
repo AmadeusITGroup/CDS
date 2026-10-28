@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/amadeusitgroup/cds/internal/bo"
 	"github.com/amadeusitgroup/cds/internal/containerconf"
@@ -64,15 +65,19 @@ func TestDefaultContainerOpsExecuteReturnsExitCode(t *testing.T) {
 			require.NoError(t, err)
 			assert.Equal(t, tc.wantOutput, output)
 			assert.Equal(t, tc.wantCode, code)
-			assert.Equal(t, "exec -u developer -i dev-1 /bin/sh -c echo 'hi'\n", readLog(t, logPath))
+			// the command carries a cancellation token prefix, then the user command
+			logged := readLog(t, logPath)
+			assert.True(t, strings.HasPrefix(logged, "exec -u developer -i dev-1 /bin/sh -c : cds-exec-"), logged)
+			assert.True(t, strings.HasSuffix(logged, ";\necho 'hi'\n"), logged)
 		})
 	}
 }
 
 func TestDefaultContainerOpsExecuteCancelsOnContext(t *testing.T) {
 	// a slow command is aborted when the context deadline is reached, well before
-	// it would finish naturally (the WaitDelay bounds any grandchild-held pipe)
-	fakePodman(t, "sleep 5")
+	// it would finish naturally (the WaitDelay bounds any grandchild-held pipe).
+	// the pkill cleanup exec returns immediately so stop() is not delayed.
+	fakePodman(t, `case "$*" in *pkill*) exit 0 ;; *) sleep 5 ;; esac`)
 	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 	defer cancel()
 
@@ -81,6 +86,31 @@ func TestDefaultContainerOpsExecuteCancelsOnContext(t *testing.T) {
 
 	require.Error(t, err)
 	assert.Less(t, time.Since(start), 4*time.Second, "the command is killed well before its 5s runtime")
+}
+
+// TestExecuteInContainerKillsInContainerOnCancel covers P2: on cancellation the
+// agent issues a podman exec that pkills the tagged in-container process tree,
+// so the workload cannot keep running past the deadline.
+func TestExecuteInContainerKillsInContainerOnCancel(t *testing.T) {
+	// fake podman: the first exec (the actual command) sleeps so it is still
+	// running when the deadline fires; every invocation is logged
+	logPath := fakePodman(t, `case "$*" in *pkill*) exit 0 ;; *) sleep 5 ;; esac`)
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+
+	_, _, err := defaultContainerOps{}.ExecuteInContainer(ctx, "dev-1", "sleep 5", "root")
+	require.Error(t, err)
+
+	// give the kill watcher a moment to issue the pkill exec
+	assert.Eventually(t, func() bool {
+		data, _ := os.ReadFile(logPath)
+		return strings.Contains(string(data), "pkill") && strings.Contains(string(data), "cds-exec-")
+	}, 3*time.Second, 50*time.Millisecond, "a pkill for the exec token was issued into the container")
+}
+
+func TestExecTokenIsUnique(t *testing.T) {
+	assert.NotEqual(t, execToken(), execToken())
+	assert.True(t, strings.HasPrefix(execToken(), "cds-exec-"))
 }
 
 func TestDeployContainerStopsOnCancelledContext(t *testing.T) {
@@ -103,6 +133,40 @@ func TestBoundedOutput(t *testing.T) {
 	assert.LessOrEqual(t, len(got), kMaxDeployOutput+64, "output is bounded (plus a short marker)")
 	assert.Contains(t, got, "truncated")
 	assert.True(t, strings.HasSuffix(got, strings.Repeat("x", 10)), "the tail is kept")
+}
+
+// TestBoundedOutputKeepsValidUTF8 covers P2: the tail must start on a rune
+// boundary so the bounded string is valid UTF-8 (a protobuf string rejects
+// invalid UTF-8). Fill just over the limit with a multibyte rune.
+func TestBoundedOutputKeepsValidUTF8(t *testing.T) {
+	euro := strings.Repeat("€", kMaxDeployOutput) // 3 bytes each, well over the limit
+	got := boundedOutput(euro)
+	assert.True(t, utf8.ValidString(got), "bounded output must be valid UTF-8")
+}
+
+func TestBoundedHeadKeepsValidUTF8(t *testing.T) {
+	assert.Equal(t, "short", boundedHead("short"))
+	euro := strings.Repeat("€", kMaxDeployOutput)
+	got := boundedHead(euro)
+	assert.True(t, utf8.ValidString(got), "bounded head must be valid UTF-8")
+	assert.Contains(t, got, "truncated")
+}
+
+func TestReportCommandOutputChunksKeepValidUTF8(t *testing.T) {
+	var chunks []string
+	report := func(p deployProgress) error {
+		if p.phase == "output" {
+			chunks = append(chunks, p.message)
+		}
+		return nil
+	}
+	// a multibyte stream longer than one chunk must split on rune boundaries
+	require.NoError(t, reportCommandOutput(report, strings.Repeat("€", kMaxDeployOutputChunk)))
+	require.NotEmpty(t, chunks)
+	for _, c := range chunks {
+		assert.True(t, utf8.ValidString(c), "each streamed chunk is valid UTF-8")
+	}
+	assert.Equal(t, strings.Repeat("€", kMaxDeployOutputChunk), strings.Join(chunks, ""), "no bytes lost")
 }
 
 func TestReportCommandOutputChunksBoundedly(t *testing.T) {

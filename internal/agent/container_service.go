@@ -137,7 +137,7 @@ func (s *containerServiceServer) ExecuteInContainer(ctx context.Context, req *cd
 		return nil, status.Errorf(codes.Internal, "execute in container %s: %v", req.GetContainerName(), err)
 	}
 	return &cdspb.ExecuteInContainerResponse{
-		Output:   output,
+		Output:   boundedHead(output),
 		ExitCode: int32(exitCode),
 	}, nil
 }
@@ -211,7 +211,7 @@ func (s *containerServiceServer) RebuildContainer(ctx context.Context, req *cdsp
 	})
 	response.Output = result.output
 	if err != nil {
-		response.Error = err.Error()
+		response.Error = boundedHead(err.Error())
 		return response, nil
 	}
 	if errRecord := s.core.deployments().save(deployReq); errRecord != nil {
@@ -354,7 +354,8 @@ func sendDeployResponse(stream grpc.ServerStreamingServer[cdspb.DeployContainerE
 		if _, isStatus := status.FromError(deployErr); isStatus {
 			return deployErr
 		}
-		response.Error = deployErr.Error()
+		// the error may embed command output; bound it like the success payload
+		response.Error = boundedHead(deployErr.Error())
 	}
 
 	if err := stream.Send(&cdspb.DeployContainerEvent{

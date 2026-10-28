@@ -1,6 +1,7 @@
 package cdstls
 
 import (
+	"crypto/tls"
 	"crypto/x509"
 	_ "embed"
 	"encoding/json"
@@ -82,8 +83,9 @@ func EnsureCerts() error {
 		{dir: clientCertsDir, profile: "client", csr: clientCSR, name: kClientCertName},
 		{dir: cenv.AgentConfigDir(kcertsDir), profile: "server", csr: serverCSR, name: kAgentCertName},
 	}
+	clientCAPath := filepath.Join(clientCertsDir, kCAFile)
 	for _, issue := range issues {
-		if leafReusable(issue.dir, issue.name) {
+		if leafReusable(issue.dir, issue.name, clientCAPath) {
 			continue
 		}
 		clog.Debug(fmt.Sprintf("Issuing missing or invalid %s certificate in %s", issue.name, issue.dir))
@@ -106,7 +108,8 @@ func AgentCertsDir(hostname string) (string, error) {
 	}
 
 	dir := cenv.ClientConfigDir(filepath.Join(kcertsDir, kAgentsCertsDir, hostname))
-	if leafReusable(dir, kAgentCertName) {
+	clientCAPath := filepath.Join(cenv.ClientConfigDir(kcertsDir), kCAFile)
+	if leafReusable(dir, kAgentCertName, clientCAPath) {
 		return dir, nil
 	}
 
@@ -144,16 +147,68 @@ func filesExist(dir string, names ...string) bool {
 	return true
 }
 
-// leafReusable reports whether the CA and the <name> leaf certificate in dir
-// all exist and the leaf is still valid now (parses and is within its validity
-// window). An expired or unparseable leaf is not reusable and must be reissued
-// from the CA; existence alone is insufficient because the mutual-TLS handshake
-// rejects an expired certificate.
-func leafReusable(dir, name string) bool {
+// leafReusable reports whether the <name> leaf certificate in dir can still be
+// used with the active client CA at caPath: all files exist, the leaf parses,
+// is within its validity window, chains to the active CA, and its private key
+// matches it. caPath is the current client CA (not the possibly-stale copy in
+// dir), so a leaf signed by a replaced CA — or paired with a replaced key — is
+// reissued instead of being reused by mere existence and date validity.
+func leafReusable(dir, name, caPath string) bool {
 	if !filesExist(dir, kCAFile, name+".pem", name+"-key.pem") {
 		return false
 	}
-	return certValidNow(filepath.Join(dir, name+".pem")) == nil
+	certPath := filepath.Join(dir, name+".pem")
+	keyPath := filepath.Join(dir, name+"-key.pem")
+	if err := certValidNow(certPath); err != nil {
+		clog.Debug(fmt.Sprintf("Reissuing %s: %v", certPath, err))
+		return false
+	}
+	if err := certMatchesCAAndKey(certPath, keyPath, caPath); err != nil {
+		clog.Debug(fmt.Sprintf("Reissuing %s: %v", certPath, err))
+		return false
+	}
+	return true
+}
+
+// certMatchesCAAndKey verifies the leaf certificate chains to the CA and that
+// the key pair is consistent, returning a describing error otherwise.
+func certMatchesCAAndKey(certPath, keyPath, caPath string) error {
+	certPEM, err := os.ReadFile(certPath)
+	if err != nil {
+		return cerr.AppendErrorFmt("Failed to read certificate %s", err, certPath)
+	}
+	keyPEM, err := os.ReadFile(keyPath)
+	if err != nil {
+		return cerr.AppendErrorFmt("Failed to read key %s", err, keyPath)
+	}
+	caPEM, err := os.ReadFile(caPath)
+	if err != nil {
+		return cerr.AppendErrorFmt("Failed to read CA %s", err, caPath)
+	}
+
+	// key must match the certificate (tls.X509KeyPair fails on a mismatch)
+	if _, err := tls.X509KeyPair(certPEM, keyPEM); err != nil {
+		return cerr.AppendError("certificate and key do not match", err)
+	}
+
+	// certificate must chain to the CA currently in use
+	roots := x509.NewCertPool()
+	if !roots.AppendCertsFromPEM(caPEM) {
+		return cerr.NewError(fmt.Sprintf("no CA certificate in %s", caPath))
+	}
+	block, _ := pem.Decode(certPEM)
+	if block == nil {
+		return cerr.NewError(fmt.Sprintf("no PEM certificate in %s", certPath))
+	}
+	cert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		return cerr.AppendErrorFmt("Failed to parse certificate %s", err, certPath)
+	}
+	// verify the signature chain only; key usage is enforced at handshake time
+	if _, err := cert.Verify(x509.VerifyOptions{Roots: roots, KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageAny}}); err != nil {
+		return cerr.AppendError("certificate does not chain to the active CA", err)
+	}
+	return nil
 }
 
 // certValidNow returns nil when the PEM certificate file holds a certificate

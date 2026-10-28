@@ -111,6 +111,24 @@ func TestIsAgentRunning(t *testing.T) {
 	})
 }
 
+func TestWaitForHealthyAgentUsesProvisioningIdentityNotStaleRegistration(t *testing.T) {
+	// P2: readiness after provisioning must use the provisioning identity, so a
+	// stale/obsolete registration does not prevent reaching the fresh agent.
+	address := startFakeAgent(t, cg.Version)
+	// an obsolete registration pointing at non-existent credentials
+	require.NoError(t, config.UpsertAgentForHostInConfig("127.0.0.1", config.NewAgent(
+		config.WithTargetAddress(address),
+		config.WithAgentTLS(config.NewTlssecret(
+			config.WithCA("/nonexistent/ca.pem"),
+			config.WithCert("/nonexistent/client.pem"),
+			config.WithKey("/nonexistent/client-key.pem"),
+		)),
+	)))
+
+	// readiness still succeeds because it dials with the provisioning credentials
+	require.NoError(t, waitForHealthyAgent(address, "127.0.0.1"))
+}
+
 func TestRegisteredAgentTLSUsesRegistrationThenDefaults(t *testing.T) {
 	t.Setenv("CDS_CONFIG_PATH", t.TempDir())
 

@@ -56,8 +56,16 @@ func TestResolveAgentBinaryFromSetting(t *testing.T) {
 	assert.Equal(t, filepath.Join(dir, "cds-api-agent-linux-riscv64"), path)
 
 	require.NoError(t, os.Chmod(path, 0600))
-	_, err = resolveAgentBinary(remotePlatform)
-	assert.Error(t, err, "a configured binary must be executable")
+	if runtime.GOOS == cg.WINDOWS {
+		// Windows does not expose the Unix execute bit through os.Stat, so a
+		// regular configured file resolves successfully.
+		resolved, err := resolveAgentBinary(remotePlatform)
+		require.NoError(t, err)
+		assert.Equal(t, path, resolved)
+	} else {
+		_, err = resolveAgentBinary(remotePlatform)
+		assert.Error(t, err, "a configured binary must be executable on Unix")
+	}
 
 	_, err = resolveAgentBinary(platform{os: "linux", arch: "s390x"})
 	require.Error(t, err, "a missing configured binary falls back to the other sources")

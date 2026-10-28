@@ -1333,10 +1333,9 @@ func (ce *ContainersEngine) preContainerRun() error {
 	}
 
 	if len(ic) > 0 {
-		icCmd := fmt.Sprintf(
-			"/bin/sh -c '%v' ",
-			ic,
-		)
+		// quote the whole command as one argument, like the custom-exec path, so
+		// a command containing quotes/spaces reaches the shell unchanged
+		icCmd := fmt.Sprintf("/bin/sh -c %s", cg.ShellSingleQuote(ic))
 
 		rEvent := &RunEvent{
 			cmd:       icCmd,
@@ -1806,13 +1805,16 @@ func (ce *ContainersEngine) postContainerRun() error {
 	}
 
 	if len(pcc) > 0 {
+		// quote the whole post-create command as one argument (reusing the
+		// custom-exec policy) so `echo 'hello world'` reaches the container
+		// unchanged instead of being re-split by the surrounding single quotes
 		pccCmd := fmt.Sprintf(
-			"%v %v -u %v -i %v /bin/sh -c '%v' ",
+			"%v %v -u %v -i %v /bin/sh -c %s",
 			engineName(ce.name),
 			formatActionName(engineAction(K_ACTION_EXE)),
 			ce.getContainerUser(),
 			ce.getContainerName(),
-			pcc,
+			cg.ShellSingleQuote(pcc),
 		)
 		rEvent := &RunEvent{
 			cmd: pccCmd,

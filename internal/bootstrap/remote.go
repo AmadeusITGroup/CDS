@@ -44,7 +44,7 @@ type remoteBootstrap struct {
 	port          int
 	resolveBinary func(platform) (string, error)
 	agentCertsDir func(hostname string) (string, error)
-	startService  func(h remoteHost, binary string, port int) error
+	startService  func(h remoteHost, binary string, port int, credentialsChanged bool) error
 	waitHealthy   func(address, serverName string) error
 	register      func(hostname, address string) error
 }
@@ -98,10 +98,13 @@ func (rb remoteBootstrap) run() error {
 	if err != nil {
 		return err
 	}
-	if err := rb.ensureCerts(path.Join(agentDir, "certs")); err != nil {
+	certsChanged, err := rb.ensureCerts(path.Join(agentDir, "certs"))
+	if err != nil {
 		return err
 	}
-	if err := rb.startService(rb.h, binary, rb.port); err != nil {
+	// a renewed/replaced server certificate requires a restart to be loaded,
+	// even when the unit text (binary path/port) is unchanged
+	if err := rb.startService(rb.h, binary, rb.port, certsChanged); err != nil {
 		return cerr.AppendErrorFmt("Failed to start agent on %s", err, rb.hostname)
 	}
 
@@ -184,7 +187,7 @@ func (rb remoteBootstrap) ensureBinary(p platform, binDir string) (string, error
 		return cg.EmptyStr, err
 	}
 	// upload aside then rename, the binary may be in use by a running agent
-	if err := rb.upload(local, remote+kRemoteUploadExt, kRemoteBinaryPerm); err != nil {
+	if _, err := rb.upload(local, remote+kRemoteUploadExt, kRemoteBinaryPerm); err != nil {
 		return cg.EmptyStr, err
 	}
 	if _, err := rb.h.Execute("mv", "-f", remote+kRemoteUploadExt, remote); err != nil {
@@ -194,44 +197,59 @@ func (rb remoteBootstrap) ensureBinary(p platform, binDir string) (string, error
 }
 
 // ensureCerts installs the CA and the server certificate of the host in certsDir.
-func (rb remoteBootstrap) ensureCerts(certsDir string) error {
+func (rb remoteBootstrap) ensureCerts(certsDir string) (bool, error) {
 	localDir, err := rb.agentCertsDir(rb.hostname)
 	if err != nil {
-		return err
+		return false, err
 	}
 	if err := rb.ensureDir(certsDir); err != nil {
-		return err
+		return false, err
 	}
+	changed := false
 	for _, file := range []string{"ca.pem", "agent-srv.pem", "agent-srv-key.pem"} {
-		if err := rb.upload(filepath.Join(localDir, file), path.Join(certsDir, file), kRemoteSecretsPerm); err != nil {
-			return err
+		fileChanged, err := rb.upload(filepath.Join(localDir, file), path.Join(certsDir, file), kRemoteSecretsPerm)
+		if err != nil {
+			return false, err
 		}
+		changed = changed || fileChanged
 	}
-	return nil
+	return changed, nil
 }
 
-// upload copies the local file to the remote path with the given permissions.
-func (rb remoteBootstrap) upload(local, remote, perm string) error {
+// upload copies the local file to the remote path with the given permissions,
+// returning whether the remote content actually changed (so the caller can
+// decide to restart a service that must reload it). An unchanged file is still
+// re-copied but reported as unchanged.
+func (rb remoteBootstrap) upload(local, remote, perm string) (bool, error) {
+	localSum, err := sha256File(local)
+	if err != nil {
+		return false, err
+	}
+	changed := true
+	if out, err := rb.h.Execute("sh", "-c", sha256Probe(remote)); err == nil && strings.HasPrefix(strings.TrimSpace(out), localSum+" ") {
+		changed = false
+	}
+
 	// the remote file name is the one of the copied file
 	stagingDir, err := cos.CreateTempDir(cg.EmptyStr, "cds-upload")
 	if err != nil {
-		return cerr.AppendError("Failed to create upload staging directory", err)
+		return false, cerr.AppendError("Failed to create upload staging directory", err)
 	}
 	defer func() {
 		_ = cos.Fs.RemoveAll(stagingDir)
 	}()
 	staged := filepath.Join(stagingDir, path.Base(remote))
 	if err := cenv.CopyFile(local, staged); err != nil {
-		return cerr.AppendErrorFmt("Failed to stage %s for upload", err, local)
+		return false, cerr.AppendErrorFmt("Failed to stage %s for upload", err, local)
 	}
 
 	if err := rb.h.Copy(staged, path.Dir(remote)); err != nil {
-		return cerr.AppendErrorFmt("Failed to copy %s to %s", err, local, rb.hostname)
+		return false, cerr.AppendErrorFmt("Failed to copy %s to %s", err, local, rb.hostname)
 	}
 	if _, err := rb.h.Execute("chmod", perm, remote); err != nil {
-		return cerr.AppendErrorFmt("Failed to set permissions of %s on %s", err, remote, rb.hostname)
+		return false, cerr.AppendErrorFmt("Failed to set permissions of %s on %s", err, remote, rb.hostname)
 	}
-	return nil
+	return changed, nil
 }
 
 // sha256Probe returns the sh script printing the sha256 of file, or nothing
@@ -242,9 +260,10 @@ func sha256Probe(file string) string {
 
 // startRemoteService runs the agent as a systemd user service of the host. The
 // units are reconciled with the installed binary and port; the service is
-// restarted only when the units changed, to pick up an updated binary without
-// needlessly disrupting a running service and its containers.
-func startRemoteService(h remoteHost, binary string, port int) error {
+// restarted when the units changed or when credentialsChanged is set (a renewed
+// certificate the running process must reload), to pick up updated material
+// without needlessly disrupting a running service and its containers otherwise.
+func startRemoteService(h remoteHost, binary string, port int, credentialsChanged bool) error {
 	sysd := systemd.New(systemd.WithTarget(h), systemd.WithServicePort(port), systemd.WithServiceBinary(binary))
 	if !sysd.In() {
 		return cerr.NewError("a systemd user session is required to run the agent, consider `loginctl enable-linger`")
@@ -253,7 +272,7 @@ func startRemoteService(h remoteHost, binary string, port int) error {
 	if err != nil {
 		return err
 	}
-	if changed {
+	if changed || credentialsChanged {
 		return sysd.RestartService()
 	}
 	return nil

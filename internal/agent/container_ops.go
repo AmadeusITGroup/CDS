@@ -2,10 +2,14 @@ package agent
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"os/exec"
 	"strings"
+	"time"
+	"unicode/utf8"
 
 	"github.com/amadeusitgroup/cds/internal/bo"
 	"github.com/amadeusitgroup/cds/internal/cerr"
@@ -137,14 +141,23 @@ func (defaultContainerOps) RenameContainer(name, newName string) error {
 }
 
 // ExecuteInContainer runs command in the container and returns its output and
-// exit code. A non-zero exit code is a command result, not an error. The
-// command is aborted if ctx is cancelled (e.g. the RPC deadline is reached).
+// exit code. A non-zero exit code is a command result, not an error. When ctx
+// is cancelled (e.g. the RPC deadline is reached) the in-container process tree
+// is terminated, not only the host-side podman client: the command is tagged
+// with a unique token and, on cancellation, a `pkill` inside the container
+// matches that token and kills the workload so it cannot complete its effect
+// after the deadline.
 func (defaultContainerOps) ExecuteInContainer(ctx context.Context, containerName, command, user string) (string, int, error) {
+	token := execToken()
+	// the token rides as a leading no-op in the args of the in-container shell,
+	// so pkill -f can find the process tree spawned for this execution
+	tagged := fmt.Sprintf(": %s;\n%s", token, command)
+
 	es := engine.NewContainerEngine()
 	es.SetAction(engine.K_ACTION_EXE)
 	es.SetExecuteCmd(engine.K_EXEC_CUSTOM_CMD)
 	es.SetContainerName(containerName)
-	es.SetCustomCommand(command)
+	es.SetCustomCommand(tagged)
 	if user != cg.EmptyStr {
 		es.SetRemoteUser(user)
 	}
@@ -156,7 +169,70 @@ func (defaultContainerOps) ExecuteInContainer(ctx context.Context, containerName
 	if len(cmds) != 1 {
 		return cg.EmptyStr, -1, cerr.NewError(fmt.Sprintf("expected 1 execute command, got %d", len(cmds)))
 	}
+
+	// terminate the in-container process tree when ctx is cancelled
+	stop := watchAndKillInContainer(ctx, containerName, token)
+	defer stop()
+
 	return shexec.RunLocalCmdWithExitCodeContext(ctx, cmds[0])
+}
+
+// execToken returns a unique marker embedded in an execution's in-container
+// command so the process tree can be found and killed on cancellation.
+func execToken() string {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		// a weaker but still unique-enough fallback; collisions only risk killing
+		// the wrong cds exec, which is already an exceptional cancellation path
+		return fmt.Sprintf("cds-exec-%d", time.Now().UnixNano())
+	}
+	return "cds-exec-" + hex.EncodeToString(b[:])
+}
+
+// watchAndKillInContainer starts a watcher that, when ctx is cancelled, kills
+// the in-container process tree tagged with token (TERM then KILL). It returns
+// a stop function that must be called once the command returns. Killing happens
+// through a fresh engine exec that does not share the cancelled context.
+func watchAndKillInContainer(ctx context.Context, containerName, token string) func() {
+	done := make(chan struct{})
+	stopped := make(chan struct{})
+	go func() {
+		defer close(stopped)
+		select {
+		case <-done:
+			return
+		case <-ctx.Done():
+		}
+		killInContainer(containerName, token)
+	}()
+	return func() {
+		close(done)
+		<-stopped
+	}
+}
+
+// killInContainer terminates the in-container process tree tagged with token,
+// TERM first then KILL after a short grace period. It uses its own bounded
+// context since the caller's context is already cancelled.
+func killInContainer(containerName, token string) {
+	killCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	script := fmt.Sprintf("pkill -TERM -f %q 2>/dev/null; sleep 2; pkill -KILL -f %q 2>/dev/null; true", token, token)
+
+	es := engine.NewContainerEngine()
+	es.SetAction(engine.K_ACTION_EXE)
+	es.SetExecuteCmd(engine.K_EXEC_CUSTOM_CMD)
+	es.SetContainerName(containerName)
+	es.SetRemoteUser(engine.KRootUsr)
+	es.SetCustomCommand(script)
+	cmds, err := es.BuildCommands()
+	if err != nil || len(cmds) != 1 {
+		clog.Warn(fmt.Sprintf("Failed to build in-container kill command for %s", containerName), err)
+		return
+	}
+	if _, _, err := shexec.RunLocalCmdWithExitCodeContext(killCtx, cmds[0]); err != nil {
+		clog.Warn(fmt.Sprintf("Failed to terminate in-container process for %s after cancellation", containerName), err)
+	}
 }
 
 func (defaultContainerOps) DeployContainer(ctx context.Context, spec deployContainerSpec, report deployProgressReporter) (deployContainerResult, error) {
@@ -232,10 +308,11 @@ func (defaultContainerOps) DeployContainer(ctx context.Context, spec deployConta
 }
 
 const (
-	// kMaxDeployOutput bounds the output returned in the final deploy response so
-	// that a verbose deployment cannot exceed the client's gRPC receive limit
-	// (4 MiB by default) and make a successful deployment look failed. The full
-	// output is streamed as progress; only the returned tail is bounded.
+	// kMaxDeployOutput bounds the output returned in a final response (deploy,
+	// rebuild, execute, and error fields) so a verbose command cannot exceed the
+	// client's gRPC receive limit (4 MiB by default) and make a successful result
+	// look failed. The full deploy output is streamed as progress; only the
+	// returned copy is bounded.
 	kMaxDeployOutput = 256 * 1024
 	// kMaxDeployOutputChunk bounds a single streamed output progress message.
 	kMaxDeployOutputChunk = 64 * 1024
@@ -243,21 +320,62 @@ const (
 
 // boundedOutput returns at most the last kMaxDeployOutput bytes of output,
 // prefixed with an explicit truncation marker when it had to drop content, so
-// diagnostics are neither unbounded nor silently lost.
+// diagnostics are neither unbounded nor silently lost. The cut is moved to a
+// UTF-8 boundary so the result stays a valid string (a protobuf string field
+// rejects invalid UTF-8).
 func boundedOutput(output string) string {
 	if len(output) <= kMaxDeployOutput {
 		return output
 	}
-	return fmt.Sprintf("[... %d earlier bytes truncated ...]\n%s", len(output)-kMaxDeployOutput, output[len(output)-kMaxDeployOutput:])
+	tail := trimToValidUTF8Start(output[len(output)-kMaxDeployOutput:])
+	return fmt.Sprintf("[... %d earlier bytes truncated ...]\n%s", len(output)-len(tail), tail)
+}
+
+// boundedHead returns at most kMaxDeployOutput bytes from the start of output,
+// cut on a UTF-8 boundary, with a trailing marker when truncated. It is used
+// for execute and error payloads, where the beginning of the output is the most
+// useful part.
+func boundedHead(output string) string {
+	if len(output) <= kMaxDeployOutput {
+		return output
+	}
+	head := trimToValidUTF8End(output[:kMaxDeployOutput])
+	return fmt.Sprintf("%s\n[... %d later bytes truncated ...]", head, len(output)-len(head))
+}
+
+// trimToValidUTF8Start drops leading bytes that are a UTF-8 continuation so s
+// starts on a rune boundary.
+func trimToValidUTF8Start(s string) string {
+	for len(s) > 0 && !utf8.RuneStart(s[0]) {
+		s = s[1:]
+	}
+	return s
+}
+
+// trimToValidUTF8End drops a trailing partial rune so s ends on a rune boundary.
+func trimToValidUTF8End(s string) string {
+	for len(s) > 0 {
+		if r, size := utf8.DecodeLastRuneInString(s); r == utf8.RuneError && size <= 1 {
+			s = s[:len(s)-1]
+			continue
+		}
+		break
+	}
+	return s
 }
 
 // reportCommandOutput streams non-empty command output as progress events,
-// split into bounded chunks so no single event is unbounded.
+// split into bounded chunks so no single event is unbounded. Each chunk is cut
+// on a UTF-8 boundary so it is a valid protobuf string.
 func reportCommandOutput(report deployProgressReporter, stdout string) error {
 	for len(stdout) > 0 {
 		chunk := stdout
 		if len(chunk) > kMaxDeployOutputChunk {
-			chunk = chunk[:kMaxDeployOutputChunk]
+			chunk = trimToValidUTF8End(stdout[:kMaxDeployOutputChunk])
+			// a single rune larger than the chunk budget should still make progress
+			if chunk == cg.EmptyStr {
+				chunk = stdout[:kMaxDeployOutputChunk]
+			}
 		}
 		stdout = stdout[len(chunk):]
 		if err := report(deployProgress{phase: "output", message: chunk}); err != nil {

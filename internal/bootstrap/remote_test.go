@@ -56,9 +56,10 @@ const (
 )
 
 type bootstrapRecorder struct {
-	started    []string
-	healthy    []string
-	registered []string
+	started            []string
+	healthy            []string
+	registered         []string
+	credentialsChanged []bool
 }
 
 func newTestRemoteBootstrap(t *testing.T, h *fakeRemoteHost) (remoteBootstrap, *bootstrapRecorder) {
@@ -86,8 +87,9 @@ func newTestRemoteBootstrap(t *testing.T, h *fakeRemoteHost) (remoteBootstrap, *
 			assert.Equal(t, "remote.example.com", hostname)
 			return certsDir, nil
 		},
-		startService: func(_ remoteHost, binary string, port int) error {
+		startService: func(_ remoteHost, binary string, port int, credentialsChanged bool) error {
 			rec.started = append(rec.started, binary)
+			rec.credentialsChanged = append(rec.credentialsChanged, credentialsChanged)
 			assert.Equal(t, 8087, port)
 			return nil
 		},
@@ -180,6 +182,17 @@ func TestRemoteBootstrapPlatformProbe(t *testing.T) {
 	}
 }
 
+func TestRemoteBootstrapRestartsWhenCredentialsChange(t *testing.T) {
+	// on first install the host has no certs, so the probe reports no match and
+	// the upload is a change: the service must be (re)started to load them (P2)
+	h := newFakeRemoteHost()
+	rb, rec := newTestRemoteBootstrap(t, h)
+
+	require.NoError(t, rb.run())
+	require.Len(t, rec.credentialsChanged, 1)
+	assert.True(t, rec.credentialsChanged[0], "freshly uploaded certificates force a restart")
+}
+
 func TestRemoteBootstrapStopsOnFailure(t *testing.T) {
 	t.Run("unhealthy agent is not registered", func(t *testing.T) {
 		rb, rec := newTestRemoteBootstrap(t, newFakeRemoteHost())
@@ -191,7 +204,7 @@ func TestRemoteBootstrapStopsOnFailure(t *testing.T) {
 
 	t.Run("service start failure", func(t *testing.T) {
 		rb, rec := newTestRemoteBootstrap(t, newFakeRemoteHost())
-		rb.startService = func(remoteHost, string, int) error { return errors.New("no systemd") }
+		rb.startService = func(remoteHost, string, int, bool) error { return errors.New("no systemd") }
 
 		assert.Error(t, rb.run())
 		assert.Empty(t, rec.registered)
