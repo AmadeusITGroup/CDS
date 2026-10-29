@@ -3,6 +3,7 @@ package command
 import (
 	"fmt"
 
+	"github.com/amadeusitgroup/cds/internal/clog"
 	"github.com/amadeusitgroup/cds/internal/config"
 	"github.com/amadeusitgroup/cds/internal/output"
 	"github.com/spf13/cobra"
@@ -55,25 +56,25 @@ func (r spaceHostGetResult) MachineReadable() any {
 }
 
 func (s *spcHostGet) runE(cmd *cobra.Command, args []string) error {
-	agent, err := config.RegisteredAgent(args[0])
+	hostName, err := bootstrapHostName(args[0])
+	if err != nil {
+		return err
+	}
+	address, err := config.AgentAddress(hostName)
 	if err != nil {
 		return err
 	}
 
-	// TODO: Sync agent status.
-	reachable := func() bool {
-		return false
-	}()
-
-	// TODO: Do the actual RPC call to the agent to know its version
-	version := func() string {
-		return "0.0.0-unimplemented"
+	// only report the agent state, without starting it
+	version, versionErr := agentVersionOn(hostName, withoutAutostart())
+	if versionErr != nil {
+		clog.Debug(fmt.Sprintf("Agent of %s is not reachable", hostName), versionErr)
 	}
 
 	o := output.FromContext(cmd.Context())
 	return output.Render(o, spaceHostGetResult{
-		Hostname:  agent.TargetSrv,
-		Reachable: reachable,
-		Version:   version(),
+		Hostname:  address,
+		Reachable: versionErr == nil,
+		Version:   version,
 	})
 }

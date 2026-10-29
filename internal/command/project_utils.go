@@ -120,6 +120,11 @@ func getTipRun(projectName string) string {
 	return fmt.Sprintf(`  (use "cds project run %s -t %s" to create and start a container)`, extras, hostname)
 }
 
+// getTipContainerSSH returns a tip on how to connect to a container.
+func getTipContainerSSH(containerName string) string {
+	return fmt.Sprintf(`  (use "ssh %s" to connect to the container)`, containerName)
+}
+
 // getTipClear returns a tip on how to clear a project.
 func getTipClear(projectName string) string {
 	extras := ""
@@ -145,13 +150,4 @@ func getTipStart(projectName string) string {
 		extras = " " + projectName
 	}
 	return fmt.Sprintf(`  (use "cds project start%s" to start a container)`, extras)
-}
-
-// getTipStartAndSsh returns a tip on how to start a project and then ssh into it.
-func getTipStartAndSsh(projectName string) string {
-	extras := ""
-	if !db.IsCurrentProject(projectName) {
-		extras = " " + projectName
-	}
-	return fmt.Sprintf(`  (use "cds project start%s" then "cds project ssh%s" to access your started container)`, extras, extras)
 }

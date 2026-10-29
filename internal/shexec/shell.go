@@ -3,6 +3,7 @@ package shexec
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -42,28 +43,26 @@ func RunLocalCmds(cmds []ExecuteEvent) error {
 // run single command and return its output
 // if the command fails, error is captured and (stderr, exe.Run's error) are returned
 func RunLocalCmdWithOutput(cmd []ExecuteEvent) (string, error) {
-	var shell string
-	var args []string
+	return RunLocalCmdWithOutputContext(context.Background(), cmd)
+}
 
-	switch runtime.GOOS {
-	case "windows":
-		shell = "cmd.exe"
-		args = []string{"/c"}
-	default:
-		shell = "bash"
-		args = []string{"-c"}
-	}
+// RunLocalCmdWithOutputContext behaves like RunLocalCmdWithOutput but aborts the
+// command when ctx is cancelled (the process is killed and ctx.Err is returned).
+// Output is captured into a capped buffer so a command producing huge output
+// cannot exhaust agent memory; the retained excerpt keeps the first and last
+// bytes up to the cap.
+func RunLocalCmdWithOutputContext(ctx context.Context, cmd []ExecuteEvent) (string, error) {
+	stdout := newCappedBuffer(defaultCapBytes)
+	stderr := newCappedBuffer(defaultCapBytes)
 
-	args = append(args, cmd[0].Cmd())
-
-	var stdout bytes.Buffer
-	var stderr bytes.Buffer
-
-	exeCmd := exec.Command(shell, args...)
-	exeCmd.Stdout = &stdout
-	exeCmd.Stderr = &stderr
+	exeCmd := localShellCmdContext(ctx, cmd[0].Cmd())
+	exeCmd.Stdout = stdout
+	exeCmd.Stderr = stderr
 
 	if err := exeCmd.Run(); err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return stderr.String(), cerr.AppendErrorFmt("command (%v) cancelled", ctxErr, cmd[0].Cmd())
+		}
 		return stderr.String(), cerr.AppendError(
 			fmt.Sprintf("Failed to execute commands locally, command (%v) failed\nstdout: %s\nstderr: %s",
 				cmd[0].Cmd(),
@@ -74,6 +73,50 @@ func RunLocalCmdWithOutput(cmd []ExecuteEvent) (string, error) {
 	}
 
 	return stdout.String(), nil
+}
+
+// RunLocalCmdWithExitCode runs a single command and returns its combined
+// stdout/stderr output and its exit code. A non-zero exit code is not an error:
+// the returned error is only set when the command could not be run at all.
+func RunLocalCmdWithExitCode(cmd ExecuteEvent) (string, int, error) {
+	return RunLocalCmdWithExitCodeContext(context.Background(), cmd)
+}
+
+// RunLocalCmdWithExitCodeContext behaves like RunLocalCmdWithExitCode but aborts
+// the command when ctx is cancelled. Output is captured into a capped buffer so
+// a command producing huge output cannot exhaust agent memory.
+func RunLocalCmdWithExitCodeContext(ctx context.Context, cmd ExecuteEvent) (string, int, error) {
+	output := newCappedBuffer(defaultCapBytes)
+	exeCmd := localShellCmdContext(ctx, cmd.Cmd())
+	exeCmd.Stdout = output
+	exeCmd.Stderr = output
+
+	err := exeCmd.Run()
+	var exitErr *exec.ExitError
+	switch {
+	case err == nil:
+		return output.String(), 0, nil
+	case ctx.Err() != nil:
+		return output.String(), -1, cerr.AppendErrorFmt("command (%v) cancelled", ctx.Err(), cmd.Cmd())
+	case errors.As(err, &exitErr):
+		return output.String(), exitErr.ExitCode(), nil
+	default:
+		return output.String(), -1, cerr.AppendErrorFmt("Failed to execute command locally (%v)", err, cmd.Cmd())
+	}
+}
+
+func localShellCmdContext(ctx context.Context, command string) *exec.Cmd {
+	var cmd *exec.Cmd
+	if runtime.GOOS == "windows" {
+		cmd = exec.CommandContext(ctx, "cmd.exe", "/c", command)
+	} else {
+		cmd = exec.CommandContext(ctx, "bash", "-c", command)
+	}
+	// On cancellation, exec kills the shell, but a grandchild (e.g. a container
+	// runtime helper) may keep the output pipe open and make Wait block. WaitDelay
+	// bounds that wait so a cancelled command returns promptly.
+	cmd.WaitDelay = time.Second
+	return cmd
 }
 
 // attach the terminal to a ssh session, the assumption here is that

@@ -1,10 +1,13 @@
 package command
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/spf13/cobra"
 
+	"github.com/amadeusitgroup/cds/internal/api/v1/cdspb"
+	"github.com/amadeusitgroup/cds/internal/bo"
 	"github.com/amadeusitgroup/cds/internal/cerr"
 	"github.com/amadeusitgroup/cds/internal/clog"
 	"github.com/amadeusitgroup/cds/internal/db"
@@ -78,14 +81,38 @@ func (pr *projectRename) initSubCommands() {
 func (pr *projectRename) execute(cmd *cobra.Command, args []string) error {
 	clog.Info(fmt.Sprintf("Using project '%s'.", pr.projectName))
 
-	// TODO: Agent Service interaction needed — rename container:
-	// 1. Get first running container info
-	// 2. Execute engine rename operation (engine.K_ACTION_RENAME via shexec.RunCmds)
-	// 3. Update container name in config (db equivalent of space.RenameContainer)
-	// 4. Clear old SSH config entry (com.ClearSSHConfig)
-	// 5. Add new SSH config entry if port 22 is exposed (configureSSHForContainer)
-	clog.Info(fmt.Sprintf("Project '%s' rename to '%s' requires agent service to proceed.", pr.projectName, pr.newContainerName))
-	return cerr.NewError("TODO: Agent service not yet implemented — cannot execute 'rename' operation")
+	return onProjectAgent(pr.projectName, func(services agentServices, ctx context.Context) error {
+		if err := syncProjectContainers(ctx, services.container, pr.projectName); err != nil {
+			return err
+		}
+		oldName, err := projectPrimaryContainer(pr.projectName)
+		if err != nil {
+			return err
+		}
+		if oldName == pr.newContainerName {
+			clog.Warn(fmt.Sprintf("Container is already named %q. Skipping.", pr.newContainerName))
+			return nil
+		}
+
+		if _, err := services.container.RenameContainer(ctx, &cdspb.RenameContainerRequest{
+			ContainerName:    oldName,
+			NewContainerName: pr.newContainerName,
+		}); err != nil {
+			return cerr.AppendErrorFmt("Failed to rename container %s to %s", err, oldName, pr.newContainerName)
+		}
+
+		remoteUser := db.ProjectContainerRemoteUser(pr.projectName, oldName)
+		if err := forgetProjectContainer(pr.projectName, oldName); err != nil {
+			return err
+		}
+		if err := recordProjectContainer(ctx, services.container, pr.projectName, pr.newContainerName, remoteUser, bo.KContainerStatusRunning); err != nil {
+			return cerr.AppendError("Failed to record the renamed container", err)
+		}
+
+		clog.Info(fmt.Sprintf("Container '%s' renamed to '%s'.", oldName, pr.newContainerName))
+		clog.Info(getTipContainerSSH(pr.newContainerName))
+		return nil
+	})
 }
 
 // validateCurrentProjectName ensures the project exists in the configuration.

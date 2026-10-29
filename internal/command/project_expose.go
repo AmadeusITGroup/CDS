@@ -2,13 +2,15 @@ package command
 
 import (
 	"fmt"
+	"net"
 	"time"
 
 	"github.com/spf13/cobra"
 
 	"github.com/amadeusitgroup/cds/internal/cerr"
 	"github.com/amadeusitgroup/cds/internal/clog"
-	"github.com/amadeusitgroup/cds/internal/db"
+	cg "github.com/amadeusitgroup/cds/internal/global"
+	"github.com/amadeusitgroup/cds/internal/shexec"
 )
 
 var _ baseCmd = (*projectExpose)(nil)
@@ -55,22 +57,25 @@ func (pexpose *projectExpose) initFlags() {
 func (pexpose *projectExpose) execute(cmd *cobra.Command, args []string) error {
 	projectName := getProjectNameFromArgsOrContext(args)
 
-	// TODO: Leverage ContainerConf package once implemented — validate devcontainer configuration
-	clog.Debug("Skipping devcontainer configuration validation — ContainerConf not yet implemented")
-
-	containers := db.ProjectContainersName(projectName)
-	if len(containers) == 0 {
-		return cerr.NewError("No containers to expose services from.\n" +
-			getTipRun(projectName))
+	// TODO: expose orchestration (KinD) services by name
+	if pexpose.service.serviceName != cg.EmptyStr {
+		return cerr.NewError("exposing a service by name is not supported yet; provide --remote HOST:PORT")
+	}
+	for flag, address := range map[string]string{"local": pexpose.service.local, "remote": pexpose.service.remote} {
+		if _, _, err := net.SplitHostPort(address); err != nil {
+			return cerr.AppendErrorFmt("invalid --%s address %q, expected HOST:PORT", err, flag, address)
+		}
 	}
 
-	// TODO: Agent Service interaction needed — expose service via port forwarding:
-	// 1. Align container statuses via engine (alignContainerStatuses)
-	// 2. Verify running containers exist
-	// 3. Get first running container info (including SSH port mapping)
-	// 4. Build target host with SSH key paths
-	// 5. Resolve exposure: handle KinD service (patch local kubeconfig) or direct port forward
-	// 6. Forward port via shexec.ForwardPort with timeout
-	clog.Info(fmt.Sprintf("Project '%s' has containers configured. Agent service required for port forwarding.", projectName))
-	return cerr.NewError("TODO: Agent service not yet implemented — cannot execute 'expose' operation")
+	containerName, err := syncedProjectPrimaryContainer(projectName)
+	if err != nil {
+		return err
+	}
+	target, err := containerSSHTarget(projectName, containerName, cg.EmptyStr)
+	if err != nil {
+		return err
+	}
+
+	clog.Info(fmt.Sprintf("Forwarding %s to %s through container %s.", pexpose.service.local, pexpose.service.remote, containerName))
+	return shexec.ForwardPort(target, pexpose.service.local, pexpose.service.remote, pexpose.timeout)
 }

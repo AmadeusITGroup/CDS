@@ -1,6 +1,7 @@
 package command
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/spf13/cobra"
@@ -8,6 +9,7 @@ import (
 	"github.com/amadeusitgroup/cds/internal/cerr"
 	"github.com/amadeusitgroup/cds/internal/clog"
 	"github.com/amadeusitgroup/cds/internal/db"
+	"github.com/amadeusitgroup/cds/internal/engine"
 )
 
 var _ baseCmd = (*projectUnshare)(nil)
@@ -40,21 +42,25 @@ func (punshare *projectUnshare) subCommands() []baseCmd {
 func (punshare *projectUnshare) execute(cmd *cobra.Command, args []string) error {
 	projectName := getProjectNameFromArgsOrContext(args)
 
-	// TODO: Leverage ContainerConf package once implemented — validate devcontainer configuration
-	clog.Debug("Skipping devcontainer configuration validation — ContainerConf not yet implemented")
-
-	containers := db.ProjectContainersName(projectName)
-	if len(containers) == 0 {
-		return cerr.NewError("No containers to unshare.\n" +
-			getTipRun(projectName))
+	keyPair := projectSharedKeyPair(projectName)
+	publicKey, err := readPublicKey(keyPair)
+	if err != nil {
+		return cerr.AppendErrorFmt("Project %s is not shared", err, projectName)
+	}
+	containerName, err := syncedProjectPrimaryContainer(projectName)
+	if err != nil {
+		return err
 	}
 
-	// TODO: Agent Service interaction needed — unshare container access:
-	// 1. Align container statuses via engine (alignContainerStatuses)
-	// 2. Verify running containers exist
-	// 3. Get first running container info
-	// 4. Delete shared keys from container authorized_keys (engine.DeleteSharedKeys)
-	// 5. Remove temporary keypair directory (os.RemoveAll on shared keys path)
-	clog.Info(fmt.Sprintf("Project '%s' unshare requires agent service to proceed.", projectName))
-	return cerr.NewError("TODO: Agent service not yet implemented — cannot execute 'unshare' operation")
+	remoteUser := db.ProjectContainerRemoteUser(projectName, containerName)
+	if err := onProjectAgent(projectName, func(services agentServices, ctx context.Context) error {
+		_, err := executeInContainer(ctx, services.container, containerName, engine.AuthorizedKeysCommand(false, remoteUser, publicKey), engine.KRootUsr)
+		return err
+	}); err != nil {
+		return cerr.AppendErrorFmt("Failed to remove the shared SSH key from container %s", err, containerName)
+	}
+
+	removeProjectSharedKeyPair(keyPair)
+	clog.Info(fmt.Sprintf("Project '%s' is no longer shared through container '%s'.", projectName, containerName))
+	return nil
 }

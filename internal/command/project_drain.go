@@ -5,9 +5,11 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/amadeusitgroup/cds/internal/cenv"
 	"github.com/amadeusitgroup/cds/internal/cerr"
 	"github.com/amadeusitgroup/cds/internal/clog"
 	"github.com/amadeusitgroup/cds/internal/db"
+	cg "github.com/amadeusitgroup/cds/internal/global"
 )
 
 var _ baseCmd = (*projectDrain)(nil)
@@ -101,11 +103,9 @@ func identifyProjectHost(projectName string, desiredHostName string) error {
 		}
 	}
 
-	if !db.HasHost(hostName) {
-		// TODO: Agent Service interaction needed — build host (generate SSH keypair, copy public key to remote)
-		// For now, just register the host in the config
-		db.AddHost(hostName, "")
-		clog.Debug(fmt.Sprintf("Registered new host '%s' (SSH key setup requires agent service)", hostName))
+	// remote hosts are configured (SSH access) when their agent is bootstrapped
+	if hostName == cg.KLocalhost && !db.HasHost(hostName) {
+		db.AddHost(hostName, cenv.GetUsernameFromEnv())
 	}
 
 	if err := db.SetProjectHost(projectName, hostName); err != nil {

@@ -5,7 +5,6 @@ import (
 	"log/slog"
 	"os"
 
-	"github.com/amadeusitgroup/cds/internal/bootstrap"
 	"github.com/amadeusitgroup/cds/internal/cenv"
 	"github.com/amadeusitgroup/cds/internal/cerr"
 	"github.com/amadeusitgroup/cds/internal/clog"
@@ -39,16 +38,7 @@ func init() {
 		return
 	}
 
-	// Bootstrap local agent
-	if err = bootstrap.StartAgent(cg.KLocalhost); err != nil {
-		if _, ok := err.(bootstrap.StartOnRunError); ok {
-			err = nil
-			clog.Debug("Agent is already running")
-		} else {
-			err = cerr.AppendError("Failed to start local agent", err)
-		}
-		return
-	}
+	// Agents are started on demand, by the commands calling them.
 
 	// Init profile from config-resolved reader
 	r, profileErr := config.ProfileReader()

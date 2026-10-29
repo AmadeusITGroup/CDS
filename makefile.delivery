@@ -3,7 +3,12 @@ PROJECT_NAME ?= $(shell basename $(shell git rev-parse --show-toplevel 2>/dev/nu
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 BUILD_TIME ?= $(shell date -u +"%Y-%m-%dT%H:%M:%SZ")
 COMMIT_HASH ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
-LDFLAGS = -ldflags "-X main.Version=${VERSION} -X main.BuildTime=${BUILD_TIME} -X main.CommitHash=${COMMIT_HASH} -w -s"
+# Version identity is shared through internal/global.Version (cg.Version): the
+# CLI compares its version with the agent's, and it namespaces the agent binary
+# cache and remote install path. Stamping main.Version would leave both binaries
+# at "develop", so releases would compare equal and share those namespaces.
+VERSION_PKG = github.com/amadeusitgroup/cds/internal/global
+LDFLAGS = -ldflags "-X ${VERSION_PKG}.Version=${VERSION} -X ${VERSION_PKG}.BuildTime=${BUILD_TIME} -X ${VERSION_PKG}.CommitHash=${COMMIT_HASH} -w -s"
 
 # Output directory
 DIST_DIR = tarball-deliv

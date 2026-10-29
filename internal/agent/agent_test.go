@@ -3,11 +3,13 @@ package agent
 import (
 	"context"
 	"net"
+	"path/filepath"
 	"testing"
 
 	"github.com/amadeusitgroup/cds/internal/api/v1/cdspb"
 	"github.com/amadeusitgroup/cds/internal/core"
 	cdstls "github.com/amadeusitgroup/cds/internal/tls"
+	"github.com/amadeusitgroup/cds/internal/tls/tlstest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
@@ -50,16 +52,19 @@ func TestAgent(t *testing.T) {
 
 func setupTest(t *testing.T, fn func(*bom)) (client cdspb.AgentInfoServiceClient, cfg *bom, teardown func()) {
 	t.Helper()
+	t.Setenv("CDS_CONFIG_PATH", t.TempDir())
+	tlstest.WriteCerts(t, filepath.Dir(cdstls.CAFilePath()))
+
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
 	assert.NoError(t, err)
 
 	// Configure the client’s TLS credentials to use our self-signed CA as the client’s Root CA (the CA it will use to verify the server).
 	// Set the client to use those credentials for its connection.
-	clientTLSConfig, err := cdstls.SetupTLSConfig(cdstls.TLSConfig{CAFile: cdstls.CAFilePath,
+	clientTLSConfig, err := cdstls.SetupTLSConfig(cdstls.TLSConfig{CAFile: cdstls.CAFilePath(),
 		// Settings the following two attributes is needed for mutual TLS authentication (server authenticates the client,
 		// on top of the default authentication where the client authenticates the server).
-		CertFile: cdstls.ClientCertFilePath,
-		KeyFile:  cdstls.ClientKeyFilePath,
+		CertFile: cdstls.ClientCertFilePath(),
+		KeyFile:  cdstls.ClientKeyFilePath(),
 	})
 	assert.NoError(t, err)
 
@@ -71,9 +76,9 @@ func setupTest(t *testing.T, fn func(*bom)) (client cdspb.AgentInfoServiceClient
 
 	// Configure the Agent TLS and enable it to handle TLS connections.
 	agentTLSConfig, err := cdstls.SetupTLSConfig(cdstls.TLSConfig{
-		CertFile:      cdstls.AgentServerCertFilePath,
-		KeyFile:       cdstls.AgentServerKeyFilePath,
-		CAFile:        cdstls.CAFilePath,
+		CertFile:      cdstls.AgentServerCertFilePath(),
+		KeyFile:       cdstls.AgentServerKeyFilePath(),
+		CAFile:        cdstls.CAFilePath(),
 		ServerAddress: lis.Addr().String(),
 		Server:        true, // Setting Server attribute to true enable authentication of clients at server side. Mutual TLS authentication use case
 	})
@@ -106,7 +111,7 @@ func testServerVersion(t *testing.T, client cdspb.AgentInfoServiceClient, config
 	ctx := context.Background()
 	reply, err := client.GetVersion(ctx, &cdspb.GetVersionRequest{})
 	assert.NoError(t, err)
-	want := "9.9.9"
-	assert.Equal(t, want, reply.GetCurrent(), "they should be equal")
+	// the configured manager is used, not replaced by the default one
+	assert.Equal(t, "99.99.99", reply.GetCurrent())
 
 }

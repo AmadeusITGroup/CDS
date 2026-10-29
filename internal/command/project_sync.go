@@ -1,11 +1,11 @@
 package command
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/spf13/cobra"
 
-	"github.com/amadeusitgroup/cds/internal/cerr"
 	"github.com/amadeusitgroup/cds/internal/clog"
 	"github.com/amadeusitgroup/cds/internal/db"
 )
@@ -65,22 +65,14 @@ func (ps *projectSync) execute(cmd *cobra.Command, args []string) error {
 }
 
 func syncProject(projectName string) error {
-	// TODO: Leverage ContainerConf package once implemented — validate devcontainer configuration
-	clog.Debug("Skipping devcontainer configuration validation — ContainerConf not yet implemented")
-
-	// TODO: Agent Service interaction needed — sync container statuses with reality:
-	// 1. Initialize project configuration (configuration.SetSearchPaths + configuration.Validate)
-	// 2. List containers on host via engine (engine.NewContainerEngine + engine.K_ACTION_PS)
-	// 3. Compare configured containers with actual containers on host
-	// 4. Update container statuses in config (db.UpdateContainers equivalent)
-	// 5. Clean up SSH config entries for deleted containers
-	containers := db.ProjectContainersName(projectName)
-	if len(containers) == 0 {
+	if len(db.ProjectContainersName(projectName)) == 0 {
 		clog.Info("No containers found in configuration, nothing to sync.")
 		return nil
 	}
 
-	return cerr.NewError("TODO: Agent service not yet implemented — cannot execute sync (align container statuses) operation")
+	return onProjectAgent(projectName, func(services agentServices, ctx context.Context) error {
+		return syncProjectContainers(ctx, services.container, projectName)
+	})
 }
 
 func syncAllProjects() error {

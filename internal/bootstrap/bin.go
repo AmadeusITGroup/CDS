@@ -1,4 +1,3 @@
-//nolint:unused
 package bootstrap
 
 import (
@@ -53,19 +52,6 @@ func (c cfssljsonbin) name() string {
 }
 
 func (c cfssljsonbin) install() error {
-	clog.Warn("Not implemented yet")
-	return nil
-}
-
-type cdsagentbin struct {
-	n string
-}
-
-func (c cdsagentbin) name() string {
-	return c.n
-}
-
-func (c cdsagentbin) install() error {
 	clog.Warn("Not implemented yet")
 	return nil
 }

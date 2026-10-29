@@ -90,21 +90,7 @@ func AddContainerInfo(projectName string, info bo.Container) error {
 			clog.Warn(fmt.Sprintf("Container name %s already exists, skipping", info.Name))
 			return
 		}
-
-		portMappings := info.PortMapping()
-		var port int
-		if val, ok := portMappings[bo.KSSHPortMapping]; ok {
-			port = val
-		}
-		cInfo := &containerInfo{
-			Id:            string(info.Id),
-			State:         bo.FContainerStatus(info.Status),
-			ExpectedState: bo.FContainerStatus(info.ExpectedStatus),
-			Name:          string(info.Name),
-			PortSSH:       port,
-			RemoteUser:    string(info.RemoteUser),
-		}
-		p.Containers = append(p.Containers, cInfo)
+		p.Containers = append(p.Containers, toContainerInfo(info))
 	}
 
 	if err := fn.update(projectName); err != nil {
@@ -112,6 +98,55 @@ func AddContainerInfo(projectName string, info bo.Container) error {
 	}
 
 	return nil
+}
+
+// UpsertProjectContainer adds the container to the project, or replaces the
+// container of the same name.
+func UpsertProjectContainer(projectName string, info bo.Container) error {
+	var fn decorateProject = func(p *project) {
+		updated := toContainerInfo(info)
+		for index, container := range p.Containers {
+			if container.Name == updated.Name {
+				p.Containers[index] = updated
+				return
+			}
+		}
+		p.Containers = append(p.Containers, updated)
+	}
+
+	if err := fn.update(projectName); err != nil {
+		return cerr.AppendErrorFmt("Failed to update project %s container %s", err, projectName, info.Name)
+	}
+	return nil
+}
+
+// RemoveProjectContainers removes the named containers from the project.
+func RemoveProjectContainers(projectName string, containerNames ...string) error {
+	var fn decorateProject = func(p *project) {
+		p.Containers = slices.DeleteFunc(p.Containers, func(container *containerInfo) bool {
+			return slices.Contains(containerNames, container.Name)
+		})
+	}
+
+	if err := fn.update(projectName); err != nil {
+		return cerr.AppendErrorFmt("Failed to remove project %s containers", err, projectName)
+	}
+	return nil
+}
+
+func toContainerInfo(info bo.Container) *containerInfo {
+	var port int
+	if val, ok := info.PortMapping()[bo.KSSHPortMapping]; ok {
+		port = val
+	}
+	return &containerInfo{
+		Id:            string(info.Id),
+		State:         bo.FContainerStatus(info.Status),
+		ExpectedState: bo.FContainerStatus(info.ExpectedStatus),
+		Name:          string(info.Name),
+		PortSSH:       port,
+		RemoteUser:    string(info.RemoteUser),
+	}
 }
 
 func SetProjectHost(projectName, hostName string) error {

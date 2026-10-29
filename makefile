@@ -1,5 +1,7 @@
 # define a variable if it is not already defined
 GOLANGCI_LINT_VERSION := latest
+# pinned: @latest may require a newer Go than go.mod's one
+CFSSL_VERSION ?= v1.7.1
 GOPATH := $(shell go env GOPATH)
 GO_MOD_VERSION := $(shell grep '^go ' go.mod | awk '{print $$2}')
 PATH := $(PATH):$(GOPATH)/bin
@@ -25,6 +27,16 @@ else
 endif
 CDS_CONFIG_PATH=${HOME_DIR}/cdstmp
 
+# Version identity stamped into the binaries. It is shared through
+# internal/global.Version (cg.Version): the CLI checks the agent runs the same
+# version, and it namespaces the agent binary cache and remote install path.
+# Unstamped dev builds report "develop"; override VERSION to simulate releases.
+VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "develop")
+BUILD_TIME ?= $(shell date -u +"%Y-%m-%dT%H:%M:%SZ")
+COMMIT_HASH ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+VERSION_PKG := github.com/amadeusitgroup/cds/internal/global
+LDFLAGS := -ldflags "-X $(VERSION_PKG).Version=$(VERSION) -X $(VERSION_PKG).BuildTime=$(BUILD_TIME) -X $(VERSION_PKG).CommitHash=$(COMMIT_HASH)"
+
 # check that all required variables are set
 # vars := GOLANGCI_LINT_VERSION GOPATH GOPRIVATE GOPROXY CDS_CONFIG_PATH
 vars := GOLANGCI_LINT_VERSION GOPATH CDS_CONFIG_PATH
@@ -39,12 +51,14 @@ $(foreach var, $(vars), $(if $(value $(var)), $(info $(var)=$(value $(var))), $(
 	run-metrics-analyzer \
 	build-pb \
 	build-api-agent \
+	build-api-agent-linux \
 	build-client \
 	build-metrics-analyzer \
 	test \
 	coverage \
 	go-tidy \
 	install-golangci-lint \
+	install-cfssl \
 	init \
 	gencert \
 	scaffold
@@ -66,6 +80,7 @@ help:
 	@$(ECHO) "$(ECHO_BEFORE2)Binary targets$(ECHO_AFTER)"
 	@$(ECHO) "  build-api-agent    Compile the gRPC API agent server"
 	@$(ECHO) "  build-client       Compile the CDS CLI client"
+	@$(ECHO) "  build-api-agent-linux Cross-compile the agent for remote linux hosts (dist/)"
 	@$(ECHO) "  build-pb           Generate Go code from .proto files"
 	@$(ECHO) ""
 	@$(ECHO) "$(ECHO_BEFORE2)Quality targets$(ECHO_AFTER)"
@@ -85,6 +100,7 @@ help:
 	@$(ECHO) "  init                 Create required directories"
 	@$(ECHO) "  gencert              Generate TLS certificates for testing"
 	@$(ECHO) "  install-golangci-lint Install golangci-lint locally"
+	@$(ECHO) "  install-cfssl        Install cfssl and cfssljson (CFSSL_VERSION)"
 	@$(ECHO) "  help                 Show this help message"
 
 install: \
@@ -120,13 +136,12 @@ scaffold: \
 
 init:
 	@$(ECHO) "$(ECHO_BEFORE)Creating certs directory$(ECHO_AFTER)"
-	mkdir -p $(TEST_FOLDER) $(CDS_CONFIG_PATH)/.xcds/certs
+	mkdir -p $(TEST_FOLDER) $(CDS_CONFIG_PATH)/.xcds/certs $(CDS_CONFIG_PATH)/.xcds-agent/certs
 
 gencert: init
 	CDS_CONFIG_PATH=${HOME_DIR}/cdstmp
 	@$(ECHO) "$(ECHO_BEFORE)Generating certificates$(ECHO_AFTER)"
-	go install github.com/cloudflare/cfssl/cmd/cfssl@latest
-	go install github.com/cloudflare/cfssl/cmd/cfssljson@latest
+	$(MAKE) install-cfssl
 	cfssl gencert \
 		-initca $(TEST_FOLDER)ca-csr.json | cfssljson -bare ca
 	cfssl gencert \
@@ -141,7 +156,14 @@ gencert: init
 		-config=$(TEST_FOLDER)ca-config.json \
 		-profile=client \
 		$(TEST_FOLDER)client-csr.json | cfssljson -bare client
-	mv *.pem *.csr $(CDS_CONFIG_PATH)/.xcds/certs
+	cp ca.pem agent-srv.pem agent-srv-key.pem $(CDS_CONFIG_PATH)/.xcds-agent/certs
+	mv ca.pem ca-key.pem client.pem client-key.pem $(CDS_CONFIG_PATH)/.xcds/certs
+	rm -f agent-srv.pem agent-srv-key.pem *.csr
+
+install-cfssl:
+	@$(ECHO) "$(ECHO_BEFORE)Installing cfssl $(CFSSL_VERSION)$(ECHO_AFTER)"
+	go install github.com/cloudflare/cfssl/cmd/cfssl@$(CFSSL_VERSION)
+	go install github.com/cloudflare/cfssl/cmd/cfssljson@$(CFSSL_VERSION)
 
 go-tidy: build-pb
 	@$(ECHO) "$(ECHO_BEFORE)Executing go mod tidy$(ECHO_AFTER)"
@@ -173,11 +195,18 @@ run-metrics-analyzer: go-tidy
 
 build-api-agent: go-tidy build-pb
 	@$(ECHO) "$(ECHO_BEFORE2)Building cds api server$(ECHO_AFTER)"
-	go build -o cds-api-agent ./cmd/api-agent/cds-api-agent.go
+	go build $(LDFLAGS) -o cds-api-agent ./cmd/api-agent/cds-api-agent.go
+
+# Agent binaries for remote linux hosts, to be used with
+# CDS_AGENT_BINARY=$(PWD)/dist/cds-api-agent-{{os}}-{{arch}}
+build-api-agent-linux: go-tidy build-pb
+	@$(ECHO) "$(ECHO_BEFORE2)Building cds api server for linux$(ECHO_AFTER)"
+	GOOS=linux GOARCH=amd64 go build $(LDFLAGS) -o dist/cds-api-agent-linux-amd64 ./cmd/api-agent/cds-api-agent.go
+	GOOS=linux GOARCH=arm64 go build $(LDFLAGS) -o dist/cds-api-agent-linux-arm64 ./cmd/api-agent/cds-api-agent.go
 
 build-client: go-tidy build-pb
 	@$(ECHO) "$(ECHO_BEFORE2)Building cds CLI$(ECHO_AFTER)"
-	go build -o cds ./cmd/client/cds.go
+	go build $(LDFLAGS) -o cds ./cmd/client/cds.go
 
 build-pb:
 	@$(ECHO) "$(ECHO_BEFORE2)Building protobuf$(ECHO_AFTER)"

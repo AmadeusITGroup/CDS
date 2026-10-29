@@ -1,13 +1,10 @@
 package command
 
 import (
-	"fmt"
-
 	"github.com/spf13/cobra"
 
-	"github.com/amadeusitgroup/cds/internal/cerr"
-	"github.com/amadeusitgroup/cds/internal/clog"
-	"github.com/amadeusitgroup/cds/internal/db"
+	cg "github.com/amadeusitgroup/cds/internal/global"
+	"github.com/amadeusitgroup/cds/internal/shexec"
 )
 
 var _ baseCmd = (*projectSsh)(nil)
@@ -40,24 +37,13 @@ func (pssh *projectSsh) subCommands() []baseCmd {
 func (pssh *projectSsh) execute(cmd *cobra.Command, args []string) error {
 	projectName := getProjectNameFromArgsOrContext(args)
 
-	// TODO: Leverage ContainerConf package once implemented — validate devcontainer configuration
-	clog.Debug("Skipping devcontainer configuration validation — ContainerConf not yet implemented")
-
-	containers := db.ProjectContainersName(projectName)
-	if len(containers) == 0 {
-		return cerr.NewError("No containers to ssh into.\n" +
-			getTipRun(projectName) + "\n" +
-			getTipSsh(projectName))
+	containerName, err := syncedProjectPrimaryContainer(projectName)
+	if err != nil {
+		return err
 	}
-
-	// TODO: Agent Service interaction needed — SSH into container:
-	// 1. Align container statuses via engine (alignContainerStatuses)
-	// 2. Verify running containers exist
-	// 3. Get first running container info (including SSH port mapping)
-	// 4. Build target host with SSH key paths (db.GetHostKey, db.GetHostPubKey)
-	// 5. Resolve remote user (db.ProjectContainerRemoteUser)
-	// 6. Attach shell using key (shexec.AttachShellUsingKey)
-	clog.Info(fmt.Sprintf("Project '%s' has containers configured. Agent service required for SSH access.", projectName))
-	clog.Info(getTipStartAndSsh(projectName))
-	return cerr.NewError("TODO: Agent service not yet implemented — cannot execute 'ssh' operation")
+	target, err := containerSSHTarget(projectName, containerName, cg.EmptyStr)
+	if err != nil {
+		return err
+	}
+	return shexec.AttachShellUsingKey(target)
 }

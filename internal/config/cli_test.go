@@ -132,3 +132,22 @@ func TestAgentCRUDHelpersWithoutInit(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, agents)
 }
+
+func TestUpsertAgentForHostInConfig(t *testing.T) {
+	setupConfigTestFS(t)
+
+	require.NoError(t, UpsertAgentForHostInConfig("localhost", NewAgent(WithTargetAddress("localhost:8087"))))
+	require.NoError(t, UpsertAgentForHostInConfig("remote.example.com", NewAgent(WithTargetAddress("remote.example.com:8087"))))
+	// re-registering a host replaces its entry instead of appending a duplicate
+	require.NoError(t, UpsertAgentForHostInConfig("localhost", NewAgent(WithTargetAddress("localhost:9090"))))
+
+	agents, err := RegisteredAgents()
+	require.NoError(t, err)
+	require.Len(t, agents, 2)
+	addr, err := AgentAddress("localhost")
+	require.NoError(t, err)
+	assert.Equal(t, "localhost:9090", addr)
+	addr, err = AgentAddress("remote.example.com")
+	require.NoError(t, err)
+	assert.Equal(t, "remote.example.com:8087", addr)
+}

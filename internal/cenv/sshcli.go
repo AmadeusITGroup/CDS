@@ -33,6 +33,11 @@ func GetUserHomeDir() string {
 	return homeDir
 }
 
+// SSHConfigPath returns the path of the user SSH client configuration.
+func SSHConfigPath() string {
+	return sshDefaultConfigPath()
+}
+
 func sshDefaultConfigPath() string {
 	return filepath.Join(GetUserHomeDir(), ".ssh", "config")
 }

@@ -91,6 +91,27 @@ func CreateAgentInConfig(a agent) error {
 	})
 }
 
+// UpsertAgentForHostInConfig creates, or replaces, the agent entry registered for hostname.
+func UpsertAgentForHostInConfig(hostname string, a agent) error {
+	normalizedAgent, err := normalizeAgent(a)
+	if err != nil {
+		return err
+	}
+	normalizedHostname := strings.TrimSpace(hostname)
+
+	return updateCLIAgentData(func(c *cliAgentData) error {
+		index := slices.IndexFunc(c.Agents, func(existing agent) bool {
+			return targetServerHostname(existing.TargetSrv) == normalizedHostname
+		})
+		if index >= 0 {
+			c.Agents[index] = normalizedAgent
+			return nil
+		}
+		c.Agents = append(c.Agents, normalizedAgent)
+		return nil
+	})
+}
+
 // UpdateAgentInConfig updates an existing agent entry identified by targetServer.
 func UpdateAgentInConfig(targetServer string, updated agent) error {
 	normalizedTarget, err := normalizeTargetServer(targetServer)

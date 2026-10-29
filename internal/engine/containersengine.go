@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -26,12 +27,8 @@ import (
 )
 
 const (
-	kCacheDir              = "cache"
-	kContainersFlavoursUrl = "https://github.com/Amadeus-xDLC/devenv.cds_containers"
-	kConfigSpecUrl         = "https://userguide-cds.cicd.rnd.amadeus.net/specifications/config.html"
-	kImageBuildFile        = "Dockerfile"
-	kPermFile              = fs.FileMode(0600)
-	kPermDir               = fs.FileMode(0700)
+	kPermFile = fs.FileMode(0600)
+	kPermDir  = fs.FileMode(0700)
 	// https://code.visualstudio.com/docs/remote/devcontainerjson-reference#_variables-in-devcontainerjson
 	kDevContainerVarRegXp  = `\$\{([A-Za-z_]+):([0-9A-Za-z_]+)\}`
 	kDefaultUser           = "root"
@@ -533,13 +530,14 @@ func (ce *ContainersEngine) sshKeyHandler() (*RunEvent, error) {
 		return nil, cerr.AppendError("Failed reading public key to configure ssh", err)
 	}
 	rEvent := executeMap[K_EXEC_CMD_SSH]
+	// root installs the keys since the remote user may not own its home yet
 	cmd := fmt.Sprintf(
 		`%v %v -u %v -i %v %v`,
 		engineName(ce.name),
 		formatActionName(engineAction(K_ACTION_EXE)),
-		ce.getRemoteUser(),
+		KRootUsr,
 		ce.getContainerName(),
-		fmt.Sprintf(rEvent.cmd, ce.getRemoteUser(), strings.Trim(string(pubKey), " \n")),
+		AuthorizedKeysCommand(true, ce.getRemoteUser(), string(pubKey)),
 	)
 	clog.Debug(fmt.Sprintf(kExecutingDebugMsg, cmd))
 
@@ -1056,7 +1054,7 @@ func (ce *ContainersEngine) handleCustomCommand() (*RunEvent, error) {
 		formatActionName(engineAction(K_ACTION_EXE)),
 		ce.getRemoteUser(),
 		ce.getContainerName(),
-		fmt.Sprintf(rEvent.cmd, ce.getCustomCommand()),
+		fmt.Sprintf(rEvent.cmd, cg.ShellSingleQuote(ce.getCustomCommand())),
 	)
 
 	rEvent.cmd = cmd
@@ -1149,6 +1147,7 @@ func (ce *ContainersEngine) ps() error {
 	cmd := cg.VariadicJoin(" ", engineName(ce.name),
 		engineAction(ce.action),
 		"-a",
+		cg.VariadicJoin(" ", ce.args...),
 		preComputedFormat(ce.format),
 	)
 	rEvent := &RunEvent{
@@ -1193,6 +1192,9 @@ func (ce *ContainersEngine) run() error {
 	}
 	if err := ce.containerRun(); err != nil {
 		return cerr.AppendError("Failed to run podman run step of container run", err)
+	}
+	if err := ce.ensureConfiguredUsers(); err != nil {
+		return cerr.AppendError("Failed to run user setup step of container run", err)
 	}
 	if err := ce.postContainerRun(); err != nil {
 		return cerr.AppendError("Failed to run post container step of container run", err)
@@ -1252,7 +1254,7 @@ func (ce *ContainersEngine) build() error {
 //
 //	(Ex: podman sibling)
 func (ce *ContainersEngine) preServer() error {
-	if err := ce.addMandatoryConfigurationFiles(); err != nil {
+	if err := ce.addHostConfigurationFiles(); err != nil {
 		return cerr.AppendError("Failed to copy configuration files", err)
 	}
 
@@ -1271,6 +1273,9 @@ func (ce *ContainersEngine) preServer() error {
 				continue
 			}
 			if err := ce.executeFileOnHost(tmpPath); err != nil {
+				if removeErr := cenv.RemoveTempFile(tmpPath); removeErr != nil {
+					clog.Warn(fmt.Sprintf("Failed to remove temporary file '%v': %v\n", tmpPath, removeErr))
+				}
 				clog.Warn(fmt.Sprintf("Failed to append file '%v': %v\n", relPath, err))
 			}
 		}
@@ -1278,20 +1283,25 @@ func (ce *ContainersEngine) preServer() error {
 	return nil
 }
 
-func (ce *ContainersEngine) addMandatoryConfigurationFiles() error {
+func (ce *ContainersEngine) addHostConfigurationFiles() error {
 	identifier, err := containerconf.SingletonIdentifier(containerconf.KindAuthFile)
 	if err != nil {
 		return cerr.AppendError("Failed to resolve auth file identifier", err)
 	}
+	if !ce.resourceProvider.FileExists(containerconf.ResourceTypeFile, identifier) {
+		clog.Debug("No auth file artifact found, skipping host container auth configuration")
+		return nil
+	}
+
 	// ~/.config/containers/auth.json
 	authFileData, err := ce.resourceProvider.FetchFile(containerconf.ResourceTypeFile, identifier)
 	if err != nil {
-		return cerr.AppendError("Failed to read auth file data to copy mandatory container configuration file", err)
+		return cerr.AppendError("Failed to read auth file data to copy host container configuration file", err)
 	}
 
 	authFilePath := filepath.Join(cenv.GetUserHomeDir(), ".config", "containers", cg.KContainerAuthFileName)
 	if err := cos.WriteFile(authFilePath, authFileData, kPermFile); err != nil {
-		return cerr.AppendError(fmt.Sprintf("Failed to write auth file at '%s' to copy mandatory container configuration file", authFilePath), err)
+		return cerr.AppendError(fmt.Sprintf("Failed to write auth file at '%s' to copy host container configuration file", authFilePath), err)
 	}
 
 	return nil
@@ -1323,10 +1333,9 @@ func (ce *ContainersEngine) preContainerRun() error {
 	}
 
 	if len(ic) > 0 {
-		icCmd := fmt.Sprintf(
-			"/bin/sh -c '%v' ",
-			ic,
-		)
+		// quote the whole command as one argument, like the custom-exec path, so
+		// a command containing quotes/spaces reaches the shell unchanged
+		icCmd := fmt.Sprintf("/bin/sh -c %s", cg.ShellSingleQuote(ic))
 
 		rEvent := &RunEvent{
 			cmd:       icCmd,
@@ -1376,6 +1385,11 @@ func (ce *ContainersEngine) prepareImage() (string, error) {
 		if err != nil {
 			return "", cerr.AppendError("Failed to create temporary dockerfile", err)
 		}
+		defer func() {
+			if err := cenv.RemoveTempFile(dockerFilePath); err != nil {
+				clog.Warn(fmt.Sprintf("Failed to remove temporary dockerfile '%v': %v\n", dockerFilePath, err))
+			}
+		}()
 		// Image names need to be lowercase
 		imageName := strings.ToLower(ce.getContainerName())
 		if err := buildDockerfile(dockerFilePath, imageName); err != nil {
@@ -1407,7 +1421,10 @@ func (ce *ContainersEngine) containerRun() error {
 
 	options = append(options, fmt.Sprintf("--name %v", ce.getContainerName()))
 
-	options = append(options, fmt.Sprintf("-u %v", ce.getContainerUser()))
+	options = append(options, "--detach")
+
+	// Start as root so CDS can create configured users before post-create and SSH setup commands use them.
+	options = append(options, fmt.Sprintf("-u %v", KRootUsr))
 
 	options = append(options, fmt.Sprintf("--network=%v", kPodmanNetwork))
 
@@ -1419,8 +1436,12 @@ func (ce *ContainersEngine) containerRun() error {
 
 	// best effort
 	if runArgs, ok := ce.configGet(containerconf.KRunArgs).([]interface{}); ok {
-		for _, arg := range runArgs {
-			arg := arg.(string)
+		for _, raw := range runArgs {
+			arg, ok := raw.(string)
+			if !ok {
+				clog.Warn(fmt.Sprintf("run argument '%v' skipped: not a string", raw))
+				continue
+			}
 			if err := ce.validateRunArg(arg); err != nil {
 				clog.Warn(fmt.Sprintf("run argument '%s' skipped:\n", arg), err)
 				continue
@@ -1429,10 +1450,11 @@ func (ce *ContainersEngine) containerRun() error {
 		}
 	}
 
-	if appPorts, ok := ce.configGet(containerconf.KAppPort).([]interface{}); ok {
-		for _, port := range appPorts {
-			options = append(options, fmt.Sprintf("-p %s", port))
-		}
+	for _, portSpec := range ce.appPorts() {
+		options = append(options, fmt.Sprintf("-p %s", portSpec))
+	}
+	if !configPublishesContainerPort(ce.containerConfig(), "22") {
+		options = append(options, "-p 22")
 	}
 
 	mountsOptions, errMountOptions := ce.getMountOptions()
@@ -1460,11 +1482,243 @@ func (ce *ContainersEngine) containerRun() error {
 	cCmd := `/bin/sh -c 'while sleep 1000; do :; done'`
 	xCmd := cg.VariadicJoin(" ", eCmd, eOptions, parsedImage.ToString(), cCmd)
 	rEvent := &RunEvent{
-		cmd:       xCmd,
-		eventInfo: fmt.Sprintf("Creating container '%s'", ce.getContainerName()),
+		cmd:              xCmd,
+		eventInfo:        fmt.Sprintf("Creating container '%s'", ce.getContainerName()),
+		createsContainer: true,
 	}
 	ce.cmds = append(ce.cmds, rEvent)
 	return nil
+}
+
+func (ce *ContainersEngine) ensureConfiguredUsers() error {
+	for _, user := range uniqueNonRootUsers(ce.getContainerUser(), ce.getRemoteUser()) {
+		rEvent := &RunEvent{
+			cmd: fmt.Sprintf(
+				`%v %v -u %v -i %v /bin/sh -c %s`,
+				engineName(ce.name),
+				formatActionName(engineAction(K_ACTION_EXE)),
+				KRootUsr,
+				ce.getContainerName(),
+				cg.ShellSingleQuote(ensureContainerUserScript(user)),
+			),
+			continueProcess: true,
+			eventInfo:       fmt.Sprintf("Ensuring container user '%s' exists", user),
+		}
+		ce.cmds = append(ce.cmds, rEvent)
+	}
+	return nil
+}
+
+func uniqueNonRootUsers(users ...string) []string {
+	uniqueUsers := []string{}
+	seen := map[string]struct{}{}
+	for _, user := range users {
+		user = strings.TrimSpace(user)
+		// the account is the first field of a "user[:group]" / "uid[:gid]" spec
+		account := user
+		if i := strings.IndexByte(account, ':'); i >= 0 {
+			account = account[:i]
+		}
+		if user == "" || account == KRootUsr || account == "0" {
+			continue
+		}
+		if _, exists := seen[user]; exists {
+			continue
+		}
+		seen[user] = struct{}{}
+		uniqueUsers = append(uniqueUsers, user)
+	}
+	return uniqueUsers
+}
+
+func ensureContainerUserScript(user string) string {
+	quotedSpec := cg.ShellSingleQuote(user)
+	return fmt.Sprintf(`set -eu
+spec=%s
+# a container user may be "name", "name:group", "uid", or "uid:gid"; only the
+# account (first field) is created here, the group part is passed through
+user=${spec%%%%:*}
+group=""
+case "$spec" in *:*) group=${spec#*:} ;; esac
+
+# the account already exists when resolvable by login name or by numeric uid
+account_exists() {
+	id -u "$user" >/dev/null 2>&1 && return 0
+	case "$user" in
+		''|*[!0-9]*) return 1 ;;
+		*) awk -F: -v id="$user" '$3 == id { found = 1 } END { exit !found }' /etc/passwd ;;
+	esac
+}
+
+if ! account_exists; then
+	case "$user" in
+		''|*[!0-9]*)
+			# a login name: create it, honouring an existing named group
+			if command -v useradd >/dev/null 2>&1; then
+				case "$group" in
+					''|*[!0-9]*) [ -n "$group" ] && gopt="-g $group" || gopt="" ;;
+					*) gopt="-g $group" ;;
+				esac
+				# shellcheck disable=SC2086
+				useradd -m -s /bin/sh $gopt "$user"
+			elif command -v adduser >/dev/null 2>&1; then
+				# shellcheck disable=SC2086
+				adduser -D -s /bin/sh ${group:+-G $group} "$user"
+			else
+				echo "Unable to create user '$user': useradd/adduser is not available" >&2
+				exit 1
+			fi
+			;;
+		*)
+			# a bare numeric uid with no matching account: create one with that uid
+			if command -v useradd >/dev/null 2>&1; then
+				useradd -m -s /bin/sh -u "$user" "cds-$user"
+			elif command -v adduser >/dev/null 2>&1; then
+				adduser -D -s /bin/sh -u "$user" "cds-$user"
+			else
+				echo "Unable to create user with uid '$user': useradd/adduser is not available" >&2
+				exit 1
+			fi
+			;;
+	esac
+fi
+
+# resolve the home directory of the account by login name or uid
+home_dir=$(awk -F: -v u="$user" '$1 == u || $3 == u { print $6; exit }' /etc/passwd)
+if [ -z "$home_dir" ]; then
+	home_dir="/home/$user"
+fi
+mkdir -p "$home_dir"
+chown "$user" "$home_dir"
+chmod u+rwx "$home_dir"`, quotedSpec)
+}
+
+// kRemoveAuthorizedKeysScript removes the public keys given as second
+// positional parameter (one per line) from the authorized keys of the user
+// given as first one.
+const kRemoveAuthorizedKeysScript = `set -eu
+user="$1"
+keys="$2"
+home_dir=$(awk -F: -v user="$user" '$1 == user { print $6 }' /etc/passwd)
+if [ -z "$home_dir" ]; then
+	home_dir="/home/$user"
+fi
+auth="$home_dir/.ssh/authorized_keys"
+[ -f "$auth" ] || exit 0
+tmp=$(mktemp)
+printf '%s\n' "$keys" > "$tmp.keys"
+grep -Fxv -f "$tmp.keys" "$auth" > "$tmp" || true
+cat "$tmp" > "$auth"
+rm -f "$tmp" "$tmp.keys"`
+
+// AuthorizedKeysCommand returns a shell command installing (or removing) the
+// given public keys, one per line, in the authorized keys of user. It is meant
+// to be run as root in the container.
+func AuthorizedKeysCommand(install bool, user, keys string) string {
+	script := kRemoveAuthorizedKeysScript
+	if install {
+		script = kInstallAuthorizedKeysScript
+	}
+	return fmt.Sprintf("/bin/sh -c %s sh %s %s", cg.ShellSingleQuote(script), cg.ShellSingleQuote(user), cg.ShellSingleQuote(strings.TrimSpace(keys)))
+}
+
+// kInstallAuthorizedKeysScript installs, idempotently, the public keys given as
+// second positional parameter (one per line) for the user given as first one.
+const kInstallAuthorizedKeysScript = `set -eu
+user="$1"
+keys="$2"
+home_dir=$(awk -F: -v user="$user" '$1 == user { print $6 }' /etc/passwd)
+if [ -z "$home_dir" ]; then
+	home_dir="/home/$user"
+fi
+ssh_dir="$home_dir/.ssh"
+mkdir -p "$ssh_dir"
+touch "$ssh_dir/authorized_keys"
+# a pre-existing file whose last key has no trailing newline would otherwise
+# get the new key appended to that same line, installing neither key properly
+if [ -s "$ssh_dir/authorized_keys" ] && [ -n "$(tail -c 1 "$ssh_dir/authorized_keys")" ]; then
+	printf '\n' >> "$ssh_dir/authorized_keys"
+fi
+printf '%s\n' "$keys" | while IFS= read -r key; do
+	[ -n "$key" ] || continue
+	grep -Fxq -- "$key" "$ssh_dir/authorized_keys" || printf '%s\n' "$key" >> "$ssh_dir/authorized_keys"
+done
+chown -R "$user" "$ssh_dir"
+chmod 700 "$ssh_dir"
+chmod 600 "$ssh_dir/authorized_keys"`
+
+func configPublishesContainerPort(config *containerconf.Config, containerPort string) bool {
+	for _, portSpec := range normalizeAppPorts(config) {
+		if portSpecPublishesContainerPort(portSpec, containerPort) {
+			return true
+		}
+	}
+	return false
+}
+
+// appPorts returns the normalized appPort specifications configured for the engine.
+func (ce *ContainersEngine) appPorts() []string {
+	return normalizeAppPorts(ce.containerConfig())
+}
+
+// normalizeAppPorts returns the appPort values of config as podman -p specs,
+// accepting the supported forms: a scalar or an array, whose elements are
+// strings ("18080", "8080:80") or integers (18080). Per the devcontainer
+// schema, a numeric value maps to the same host port (18080 -> "18080:18080"),
+// while a string is passed through unchanged. Unsupported element types are
+// skipped with a warning rather than silently dropped or panicking.
+func normalizeAppPorts(config *containerconf.Config) []string {
+	if config == nil {
+		return nil
+	}
+	raw := config.Get(containerconf.KAppPort)
+	if raw == nil {
+		return nil
+	}
+	var elements []interface{}
+	if list, ok := raw.([]interface{}); ok {
+		elements = list
+	} else {
+		// a scalar form (string or number) is a single port specification
+		elements = []interface{}{raw}
+	}
+
+	ports := make([]string, 0, len(elements))
+	for _, element := range elements {
+		switch v := element.(type) {
+		case string:
+			if spec := strings.TrimSpace(v); spec != cg.EmptyStr {
+				ports = append(ports, spec)
+			}
+		case int:
+			ports = append(ports, sameHostPort(strconv.Itoa(v)))
+		case int64:
+			ports = append(ports, sameHostPort(strconv.FormatInt(v, 10)))
+		case float64:
+			// JSON numbers decode to float64; accept whole numbers as ports
+			if v == float64(int64(v)) {
+				ports = append(ports, sameHostPort(strconv.FormatInt(int64(v), 10)))
+			} else {
+				clog.Warn(fmt.Sprintf("Invalid appPort configuration, '%v' is not an integer port", v))
+			}
+		default:
+			clog.Warn(fmt.Sprintf("Invalid appPort configuration, '%v' is not a string or integer", element))
+		}
+	}
+	return ports
+}
+
+// sameHostPort maps a numeric container port to the same host port, matching
+// the devcontainer schema ("A number is mapped to the same port on the host").
+func sameHostPort(port string) string {
+	return port + ":" + port
+}
+
+func portSpecPublishesContainerPort(portSpec, containerPort string) bool {
+	parts := strings.Split(strings.TrimSpace(portSpec), ":")
+	publishedPort := strings.TrimSpace(parts[len(parts)-1])
+	publishedPort = strings.TrimSuffix(publishedPort, "/tcp")
+	return publishedPort == containerPort
 }
 
 func (ce *ContainersEngine) getMountOptions() ([]string, error) {
@@ -1559,13 +1813,16 @@ func (ce *ContainersEngine) postContainerRun() error {
 	}
 
 	if len(pcc) > 0 {
+		// quote the whole post-create command as one argument (reusing the
+		// custom-exec policy) so `echo 'hello world'` reaches the container
+		// unchanged instead of being re-split by the surrounding single quotes
 		pccCmd := fmt.Sprintf(
-			"%v %v -u %v -i %v /bin/sh -c '%v' ",
+			"%v %v -u %v -i %v /bin/sh -c %s",
 			engineName(ce.name),
 			formatActionName(engineAction(K_ACTION_EXE)),
 			ce.getContainerUser(),
 			ce.getContainerName(),
-			pcc,
+			cg.ShellSingleQuote(pcc),
 		)
 		rEvent := &RunEvent{
 			cmd: pccCmd,
@@ -1615,6 +1872,9 @@ func (ce *ContainersEngine) executeFeatureOnContainer(f features.ResolvedFeature
 			continue
 		}
 		if err := ce.executeScriptOnContainerFromHost(tmpPath, f.OnContainer.As); err != nil {
+			if removeErr := cenv.RemoveTempFile(tmpPath); removeErr != nil {
+				executionErrs = append(executionErrs, cerr.AppendErrorFmt("Failed to remove temporary file %q", removeErr, tmpPath))
+			}
 			executionErrs = append(executionErrs, cerr.AppendErrorFmt("Failed to execute file %q", err, relPath))
 		}
 	}
@@ -1630,7 +1890,8 @@ func (ce *ContainersEngine) expand(a interface{}) (string, error) {
 }
 
 func (ce *ContainersEngine) executeFileOnHost(fileLocationForExec string) error {
-	cmd := fmt.Sprintf("bash %v; exit $rc", fileLocationForExec)
+	quotedPath := cg.ShellSingleQuote(fileLocationForExec)
+	cmd := fmt.Sprintf("bash %s; rc=$?; rm -f %s; exit $rc", quotedPath, quotedPath)
 	rEvent := &RunEvent{
 		cmd: cmd,
 
@@ -1652,13 +1913,15 @@ func (ce *ContainersEngine) executeScriptOnContainerFromHost(pathOnHost, user st
 		execCmdUsr = KRootUsr
 	}
 
+	quotedPath := cg.ShellSingleQuote(pathOnHost)
 	cmd := fmt.Sprintf(
-		"%v %v -u %v -i %v /bin/sh -l < %v",
+		"%v %v -u %v -i %v /bin/sh -l < %v; rc=$?; rm -f %v; exit $rc",
 		engineName(ce.name),
 		formatActionName(engineAction(K_ACTION_EXE)),
 		execCmdUsr,
 		ce.getContainerName(),
-		pathOnHost,
+		quotedPath,
+		quotedPath,
 	)
 	rEvent := &RunEvent{
 		cmd: cmd,
@@ -2048,13 +2311,26 @@ func StopContainer(containerName string) error {
 func DeleteContainer(containerName string) error {
 	es := NewContainerEngine()
 	es.SetAction(K_ACTION_REMOVE)
-	es.AddArg(containerName)
 
 	es.AddArg("-f")
 	es.AddArg(containerName)
 	if _, exCmdErr := ExecuteCommand(es, shexec.RunLocalCmdWithOutput); exCmdErr != nil {
 		return cerr.AppendError(
 			fmt.Sprintf("Failed to delete container %s", containerName),
+			exCmdErr,
+		)
+	}
+	return nil
+}
+
+func RenameContainer(containerName, newContainerName string) error {
+	es := NewContainerEngine()
+	es.SetAction(K_ACTION_RENAME)
+	es.AddArg(containerName, newContainerName)
+
+	if _, exCmdErr := ExecuteCommand(es, shexec.RunLocalCmdWithOutput); exCmdErr != nil {
+		return cerr.AppendError(
+			fmt.Sprintf("Failed to rename container %s to %s", containerName, newContainerName),
 			exCmdErr,
 		)
 	}

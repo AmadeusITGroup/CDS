@@ -1,6 +1,7 @@
 package command
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/spf13/cobra"
@@ -14,6 +15,7 @@ type projectRebuild struct {
 	overrideImageTag string
 	pullLatest       bool
 	pullGiven        bool
+	projectName      string
 	defaultCmd
 }
 
@@ -75,6 +77,7 @@ func (pr *projectRebuild) preRunE(cmd *cobra.Command, args []string) error {
 
 	projectName := getProjectNameFromArgsOrContext(args)
 	clog.Info(fmt.Sprintf("Using project '%s'.", projectName))
+	pr.projectName = projectName
 
 	// TODO: Artifactory Service interaction needed — verify if project's flavour needs update
 	if db.IsProjectConfiguredWithFlavour(projectName) {
@@ -95,14 +98,23 @@ func (pr *projectRebuild) runE(cmd *cobra.Command, args []string) error {
 	clog.Debug("[commands.projectRebuild.runE] Start")
 	defer clog.Debug("[commands.projectRebuild.runE] End")
 
-	projectName := db.GetCurrentProject()
+	projectName := pr.projectName
+	if len(db.ProjectContainersName(projectName)) == 0 {
+		return cerr.NewError(fmt.Sprintf("Project '%s' has no containers to rebuild.\n%s", projectName, getTipRun(projectName)))
+	}
+	plan, err := buildProjectDeployPlan(projectName)
+	if err != nil {
+		return err
+	}
+	if err := onProjectAgent(projectName, func(services agentServices, ctx context.Context) error {
+		return rebuildProject(ctx, services, plan)
+	}, withLongTimeout()); err != nil {
+		return err
+	}
 
-	// TODO: Agent Service interaction needed — full rebuild sequence:
-	// 1. Stop and remove existing containers (stopRemoveContainersThenSync)
-	// 2. Verify containers are deleted (checkContainerDeletion)
-	// 3. Re-run the full build (runE with orchestration, registry, SSM, devcontainer)
-	clog.Info(fmt.Sprintf("Project '%s' is ready for rebuilding. Agent service required to proceed.", projectName))
-	return cerr.NewError("TODO: Agent service not yet implemented — cannot execute 'rebuild' operation")
+	clog.Info(fmt.Sprintf("Project '%s' rebuilt container '%s'.", projectName, plan.containerName))
+	clog.Info(getTipContainerSSH(plan.containerName))
+	return nil
 }
 
 /************************************************************/

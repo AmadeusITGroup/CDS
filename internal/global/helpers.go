@@ -120,3 +120,8 @@ func GetFirstParentDir(path string) string {
 	}
 	return files[0]
 }
+
+// ShellSingleQuote quotes value as a single POSIX shell word.
+func ShellSingleQuote(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", `'\''`) + "'"
+}
