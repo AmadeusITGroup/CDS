@@ -2,7 +2,10 @@ package agent
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -11,6 +14,7 @@ import (
 
 	"github.com/amadeusitgroup/cds/internal/bo"
 	"github.com/amadeusitgroup/cds/internal/containerconf"
+	cg "github.com/amadeusitgroup/cds/internal/global"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -65,11 +69,12 @@ func TestDefaultContainerOpsExecuteReturnsExitCode(t *testing.T) {
 			require.NoError(t, err)
 			assert.Equal(t, tc.wantOutput, output)
 			assert.Equal(t, tc.wantCode, code)
-			// the command exports a cancellation token, then exec's the user command
-			// (under setsid when available)
+			// the command exports a cancellation token, then exec's the user
+			// command as a single quoted argument (no setsid)
 			logged := readLog(t, logPath)
 			assert.True(t, strings.HasPrefix(logged, "exec -u developer -i dev-1 /bin/sh -c export CDS_EXEC_TOKEN=cds-exec-"), logged)
-			assert.Contains(t, logged, "setsid echo 'hi'", logged)
+			assert.Contains(t, logged, "exec sh -c "+cg.ShellSingleQuote("echo 'hi'"), logged)
+			assert.NotContains(t, logged, "setsid", "setsid is not used")
 		})
 	}
 }
@@ -120,14 +125,112 @@ func TestKillByEnvTokenScriptMatchesEnvironNotCmdlineAndSkipsSelf(t *testing.T) 
 	assert.Contains(t, s, "CDS_EXEC_TOKEN=cds-exec-abc")
 	assert.Contains(t, s, `[ "$pid" = "$self" ] && continue`, "the killer skips its own pid")
 	assert.NotContains(t, s, "pkill", "does not depend on pkill")
-	// kills the whole process group (negative pgid) so trapped/children die too
-	assert.Contains(t, s, `kill -TERM "-$g"`)
-	assert.Contains(t, s, `kill -KILL "-$g"`)
+	assert.Contains(t, s, "signal TERM")
+	assert.Contains(t, s, "signal KILL")
+}
+
+// TestKillByEnvTokenScriptAgainstRealProcesses runs the kill script against real
+// background processes that carry the token in their environment, confirming it
+// signals matching processes (and their children) and spares non-matching ones.
+func TestKillByEnvTokenScriptAgainstRealProcesses(t *testing.T) {
+	if _, err := os.Stat("/proc/self/environ"); err != nil {
+		t.Skip("requires /proc (Linux); the kill script scans /proc/<pid>/environ")
+	}
+	dir := t.TempDir()
+	marker := filepath.Join(dir, "ran")
+	other := filepath.Join(dir, "other-ran")
+
+	// a tagged workload (re-exec'd shell + child sleep) that would touch marker
+	tagged := exec.Command("/bin/sh", "-c", "exec sh -c 'sleep 3; touch "+marker+"'")
+	tagged.Env = append(os.Environ(), "CDS_EXEC_TOKEN=cds-exec-real")
+	require.NoError(t, tagged.Start())
+	t.Cleanup(func() { _ = tagged.Process.Kill() })
+
+	// an untagged process that must survive
+	survivor := exec.Command("/bin/sh", "-c", "sleep 3; touch "+other)
+	require.NoError(t, survivor.Start())
+	t.Cleanup(func() { _ = survivor.Process.Kill() })
+
+	time.Sleep(200 * time.Millisecond)
+	out, err := exec.Command("/bin/sh", "-c", killByEnvTokenScript("cds-exec-real")).CombinedOutput()
+	require.NoError(t, err, string(out))
+
+	_ = tagged.Wait()
+	assert.NoFileExists(t, marker, "the tagged workload (and its child) was killed before it could run")
+
+	require.NoError(t, survivor.Wait())
+	assert.FileExists(t, other, "a process without the token is left alone")
 }
 
 func TestExecTokenIsUnique(t *testing.T) {
 	assert.NotEqual(t, execToken(), execToken())
 	assert.True(t, strings.HasPrefix(execToken(), "cds-exec-"))
+}
+
+// TestExecWrapperRunsThroughRealShell runs the exact wrapper the agent builds
+// through a real /bin/sh — exactly as the container's `/bin/sh -c` would — and
+// checks it waits for the command and returns its real exit code and output,
+// for simple, failing, output, compound and multiline commands. This is what
+// the fake-podman tests could not catch (the setsid regression returned exit 0
+// with empty output for everything).
+func TestExecWrapperRunsThroughRealShell(t *testing.T) {
+	run := func(command string) (string, int) {
+		t.Helper()
+		wrapper := execWrapper("cds-exec-test", command)
+		cmd := exec.Command("/bin/sh", "-c", wrapper)
+		out, err := cmd.CombinedOutput()
+		code := 0
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			code = exitErr.ExitCode()
+		} else if err != nil {
+			t.Fatalf("run %q: %v", command, err)
+		}
+		return string(out), code
+	}
+
+	t.Run("exit code is preserved", func(t *testing.T) {
+		_, code := run("exit 7")
+		assert.Equal(t, 7, code)
+	})
+	t.Run("false returns 1", func(t *testing.T) {
+		_, code := run("false")
+		assert.Equal(t, 1, code)
+	})
+	t.Run("output is returned", func(t *testing.T) {
+		out, code := run("echo visible-output")
+		assert.Equal(t, 0, code)
+		assert.Equal(t, "visible-output\n", out)
+	})
+	t.Run("compound command runs fully", func(t *testing.T) {
+		dir := t.TempDir()
+		out, code := run(fmt.Sprintf("touch %s/a; touch %s/b; echo both", dir, dir))
+		assert.Equal(t, 0, code)
+		assert.Equal(t, "both\n", out)
+		assert.FileExists(t, filepath.Join(dir, "a"))
+		assert.FileExists(t, filepath.Join(dir, "b"), "the second part of the compound command must run")
+	})
+	t.Run("multiline command runs", func(t *testing.T) {
+		out, code := run("if true; then echo yes; fi")
+		assert.Equal(t, 0, code)
+		assert.Equal(t, "yes\n", out)
+	})
+	t.Run("command with quotes is preserved", func(t *testing.T) {
+		out, code := run("echo 'hello world'")
+		assert.Equal(t, 0, code)
+		assert.Equal(t, "hello world\n", out)
+	})
+	t.Run("token is exported to the environment", func(t *testing.T) {
+		out, code := run("printenv CDS_EXEC_TOKEN")
+		assert.Equal(t, 0, code)
+		assert.Equal(t, "cds-exec-test\n", out, "the token must be in the environment for the cancellation killer to find it")
+	})
+	t.Run("command waits for completion", func(t *testing.T) {
+		start := time.Now()
+		_, code := run("sleep 1")
+		assert.Equal(t, 0, code)
+		assert.GreaterOrEqual(t, time.Since(start), 900*time.Millisecond, "the wrapper must wait for the command")
+	})
 }
 
 func TestDeployContainerStopsOnCancelledContext(t *testing.T) {
@@ -288,35 +391,41 @@ func TestDeployContainerCompensatesWhenOutputSendFailsAfterCreation(t *testing.T
 
 // TestDeployContainerRemovesOrphanOnFailedCreate covers P2: when `podman run`
 // fails after creating the container (e.g. port in use), the orphan is removed
-// — but only when a cds-labelled container of that name is present.
+// TestDeployContainerRemovesOrphanOnFailedCreate covers P2: when `podman run`
+// fails after creating the container (e.g. port in use), the orphan — a
+// container that did not exist before this run — is removed.
 func TestDeployContainerRemovesOrphanOnFailedCreate(t *testing.T) {
-	// run fails; ps (ListContainers) reports the orphan exists with the name;
-	// rm is expected. Everything is logged.
-	logPath := fakePodman(t, `case "$*" in
-  *"ps -a"*) echo 'ID=o1,Name=dev-orphan,Status=Created;' ;;
-  run*) echo "bind: address already in use" >&2; exit 125 ;;
+	// stateful fake: inspect returns no id before the run and a new id after the
+	// (failed) run created the container; run fails after creating it.
+	dir := t.TempDir()
+	stateFile := filepath.Join(dir, "created")
+	logPath := fakePodman(t, `case "$1" in
+  inspect) [ -f `+stateFile+` ] && echo new-orphan-id || true ;;
+  run) : > `+stateFile+`; echo "bind: address already in use" >&2; exit 125 ;;
   *) exit 0 ;;
 esac`)
 	spec := deploySpecForTest(t, "dev-orphan", `{"image":"ubuntu:24.04"}`)
 	_, err := defaultContainerOps{}.DeployContainer(context.Background(), spec, func(deployProgress) error { return nil })
 
 	require.Error(t, err)
-	assert.Contains(t, readLog(t, logPath), "rm -f dev-orphan", "the orphaned cds container is removed")
+	assert.Contains(t, readLog(t, logPath), "rm -f dev-orphan", "the container this run created is removed")
 }
 
-func TestDeployContainerDoesNotRemoveOnFailedCreateWhenNoOrphan(t *testing.T) {
-	// run fails and ps reports no matching cds container -> nothing is removed
-	// (a genuine name collision with a non-cds container must be left alone)
-	logPath := fakePodman(t, `case "$*" in
-  *"ps -a"*) echo '' ;;
-  run*) echo "name already in use" >&2; exit 125 ;;
+// TestDeployContainerDoesNotRemovePreexistingOnFailedCreate covers P2: a name
+// collision with a container that already existed (same id before and after the
+// failed run) must NOT be removed — its data would be lost.
+func TestDeployContainerDoesNotRemovePreexistingOnFailedCreate(t *testing.T) {
+	// inspect always returns the same pre-existing id; run fails on the collision
+	logPath := fakePodman(t, `case "$1" in
+  inspect) echo preexisting-id ;;
+  run) echo "name already in use by preexisting-id" >&2; exit 125 ;;
   *) exit 0 ;;
 esac`)
 	spec := deploySpecForTest(t, "dev-collision", `{"image":"ubuntu:24.04"}`)
 	_, err := defaultContainerOps{}.DeployContainer(context.Background(), spec, func(deployProgress) error { return nil })
 
 	require.Error(t, err)
-	assert.NotContains(t, readLog(t, logPath), "rm -f dev-collision", "a pre-existing non-cds container is not removed")
+	assert.NotContains(t, readLog(t, logPath), "rm -f dev-collision", "a pre-existing container with the same name is never removed")
 }
 
 func TestDefaultContainerOpsLifecycle(t *testing.T) {

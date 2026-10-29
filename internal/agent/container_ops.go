@@ -149,15 +149,7 @@ func (defaultContainerOps) RenameContainer(name, newName string) error {
 // after the deadline.
 func (defaultContainerOps) ExecuteInContainer(ctx context.Context, containerName, command, user string) (string, int, error) {
 	token := execToken()
-	// Export the token into the environment before exec'ing the user command, so
-	// it is inherited by the command and all its children and survives a shell
-	// that replaces itself (`sh -c '...'`). Run under setsid when available so
-	// the command leads its own process group; on cancellation the killer finds
-	// the process(es) whose /proc/<pid>/environ contains the token and KILLs
-	// their whole process group — covering re-exec'd shells, trailing children
-	// and processes that trap TERM, which per-PID TERM alone would miss.
-	tagged := fmt.Sprintf("export CDS_EXEC_TOKEN=%s\nif command -v setsid >/dev/null 2>&1; then exec setsid %s; else exec %s; fi",
-		token, command, command)
+	tagged := execWrapper(token, command)
 
 	es := engine.NewContainerEngine()
 	es.SetAction(engine.K_ACTION_EXE)
@@ -181,6 +173,23 @@ func (defaultContainerOps) ExecuteInContainer(ctx context.Context, containerName
 	defer stop()
 
 	return shexec.RunLocalCmdWithExitCodeContext(ctx, cmds[0])
+}
+
+// execWrapper builds the shell snippet run inside the container for an
+// execution: it runs the user command as a single quoted argument of a shell
+// whose environment carries the token, so:
+//   - the exact command (including compound/multiline forms) runs unchanged
+//     and the shell waits for it, returning its real exit status and output;
+//   - the token is inherited by the command and every child, surviving a shell
+//     that replaces itself (`sh -c '...'`), so the cancellation killer can find
+//     the whole tree via /proc/<pid>/environ.
+//
+// setsid is deliberately not used: util-linux setsid forks and returns
+// immediately when the caller already leads its process group (as a
+// `podman exec` process does), which would make every command report exit 0
+// with no output, and busybox setsid lacks the --wait needed to avoid that.
+func execWrapper(token, command string) string {
+	return fmt.Sprintf("export CDS_EXEC_TOKEN=%s\nexec sh -c %s", token, cg.ShellSingleQuote(command))
 }
 
 // execToken returns a unique marker embedded in an execution's in-container
@@ -246,27 +255,26 @@ func killInContainer(containerName, token string) {
 	}
 }
 
-// killByEnvTokenScript returns a POSIX sh script that finds processes whose
-// environment contains CDS_EXEC_TOKEN=<token> and kills their process groups,
-// excluding the script's own process. It signals the whole group (negative
-// PID) so a process that traps TERM, a trailing child, or a re-exec'd shell is
-// still terminated; KILL cannot be trapped. It relies only on /proc and the
-// shell, so it works on minimal images without pkill.
+// killByEnvTokenScript returns a POSIX sh script that finds every process whose
+// environment contains CDS_EXEC_TOKEN=<token> and signals it, TERM first then
+// KILL after a short grace period, excluding the script's own process. Because
+// the token is inherited, this matches the command, any shell it re-exec'd into
+// and all its children. It relies only on /proc and the shell, so it works on
+// minimal images without pkill.
 func killByEnvTokenScript(token string) string {
 	return fmt.Sprintf(`self=$$
-groups() {
+signal() {
 	for d in /proc/[0-9]*; do
 		pid=${d#/proc/}
 		[ "$pid" = "$self" ] && continue
 		if tr '\0' '\n' < "$d/environ" 2>/dev/null | grep -qx 'CDS_EXEC_TOKEN=%s'; then
-			pgid=$(sed 's/.*) [^ ]* [^ ]* \([0-9]*\).*/\1/' "$d/stat" 2>/dev/null)
-			[ -n "$pgid" ] && echo "$pgid"
+			kill -"$1" "$pid" 2>/dev/null || true
 		fi
-	done | sort -u
+	done
 }
-for g in $(groups); do kill -TERM "-$g" 2>/dev/null || true; done
+signal TERM
 sleep 2
-for g in $(groups); do kill -KILL "-$g" 2>/dev/null || true; done
+signal KILL
 true`, token)
 }
 
@@ -296,6 +304,10 @@ func (defaultContainerOps) DeployContainer(ctx context.Context, spec deployConta
 	// is streamed as progress, so the accumulator need not grow with the command
 	output := &boundedTail{limit: kMaxDeployOutput}
 	created := false
+	// id of a container that already has this name before we try to create one,
+	// so a create failure never removes a pre-existing container (only the one
+	// this run actually created, which has a different id)
+	preexistingID := containerIDByName(spec.containerName)
 	for _, cmd := range cmds {
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			result.output = boundedOutput(output.String())
@@ -323,11 +335,11 @@ func (defaultContainerOps) DeployContainer(ctx context.Context, spec deployConta
 			result.output = boundedOutput(output.String())
 			if commandCreatesContainer(cmd) {
 				// Podman can fail after creating the container (e.g. a published
-				// port already in use leaves it in Created state). Remove such an
-				// orphan — but only when it carries this deployment's cds labels,
-				// so a pre-existing container that merely shares the name is never
-				// removed on a name-collision failure.
-				compensateOrphanedCreate(spec)
+				// port already in use leaves it in Created state). Remove only the
+				// container this run created — identified by a container id that
+				// differs from any that already had this name — so a name
+				// collision with a pre-existing container never deletes it.
+				compensateOrphanedCreate(spec.containerName, preexistingID)
 				return result, cerr.AppendError("failed to create container", runErr)
 			}
 			compensateFailedDeploy(created, spec.containerName)
@@ -541,25 +553,36 @@ func compensateFailedDeploy(created bool, containerName string) {
 	}
 }
 
+// containerIDByName returns the id of the container named name, or "" when none
+// exists (or it cannot be determined). Used to tell a container this deployment
+// created apart from a pre-existing one with the same name. It inspects by id
+// directly so a missing container is simply an empty id, not an error.
+func containerIDByName(name string) string {
+	es := engine.NewContainerEngine()
+	es.SetAction(engine.K_ACTION_INSPECT)
+	es.SetContainerName(name)
+	es.SetFormat(engine.K_FID)
+	out, err := engine.ExecuteCommand(es, shexec.RunLocalCmdWithOutput)
+	if err != nil {
+		return cg.EmptyStr
+	}
+	return strings.TrimSpace(out)
+}
+
 // compensateOrphanedCreate removes a container left behind when `podman run`
 // failed after creating it (e.g. a published port already in use leaves it in
-// Created state). It removes the container only when one with this deployment's
-// name is present among the cds-labelled containers — so a pre-existing
-// container that is not cds-managed, or a genuine name collision with another
-// owner's container, is never removed.
-func compensateOrphanedCreate(spec deployContainerSpec) {
-	containers, err := defaultContainerOps{}.ListContainers()
-	if err != nil {
-		clog.Warn(fmt.Sprintf("Failed to list containers while cleaning up a failed create of %s", spec.containerName), err)
+// Created state). It removes the container only when the one now bearing the
+// name is NOT the one that already existed before this run (different id), so a
+// name collision with a pre-existing container never deletes it or its data.
+func compensateOrphanedCreate(containerName, preexistingID string) {
+	currentID := containerIDByName(containerName)
+	if currentID == cg.EmptyStr || currentID == preexistingID {
+		// nothing new was created (or a pre-existing container still owns the
+		// name): do not remove it
 		return
 	}
-	for _, c := range containers {
-		if string(c.Name) == spec.containerName {
-			if err := engine.DeleteContainer(spec.containerName); err != nil {
-				clog.Warn(fmt.Sprintf("Failed to remove orphaned container %s after a failed create, it may need manual cleanup", spec.containerName), err)
-			}
-			return
-		}
+	if err := engine.DeleteContainer(containerName); err != nil {
+		clog.Warn(fmt.Sprintf("Failed to remove orphaned container %s after a failed create, it may need manual cleanup", containerName), err)
 	}
 }
 

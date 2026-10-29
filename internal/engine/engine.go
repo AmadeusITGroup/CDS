@@ -50,6 +50,7 @@ const (
 	K_FPORT Format_t = iota
 	K_FCONTAINER_ID_STATUS
 	K_FNetworks
+	K_FID
 )
 
 const (
@@ -325,6 +326,7 @@ func preComputedFormat(f Format_t) string {
 		`'{{range $port, $port_obj := .NetworkSettings.Ports}}"{{ $port }}":{{ range $pval := $port_obj }}"{{ $pval.HostPort }}",{{end}}{{end}}'`,
 		`'{{ range . }}ID={{ .ID }},Name={{ .Names }},Status={{ .Status }};{{ end }}'`,
 		`'{{ range $networkName, $networkData := .NetworkSettings.Networks }}{{ $networkName }},{{ end }}'`,
+		`'{{ .Id }}'`,
 	}[f]
 	return cg.VariadicJoin(" ", "--format", goTemplate)
 }
