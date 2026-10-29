@@ -675,10 +675,13 @@ func TestDeployContainerAllowsEmptyFeatures(t *testing.T) {
 // InvalidArgument at the RPC boundary, not panic the agent deep in the builder.
 func TestDeployContainerRejectsMalformedConfigTypes(t *testing.T) {
 	for name, cfg := range map[string]string{
-		"numeric runArg":     `{"image":"ubuntu:24.04","runArgs":[1]}`,
-		"non-array runArgs":  `{"image":"ubuntu:24.04","runArgs":"-t"}`,
-		"object appPort":     `{"image":"ubuntu:24.04","appPort":[{"x":1}]}`,
-		"fractional appPort": `{"image":"ubuntu:24.04","appPort":[80.5]}`,
+		"numeric runArg":      `{"image":"ubuntu:24.04","runArgs":[1]}`,
+		"non-array runArgs":   `{"image":"ubuntu:24.04","runArgs":"-t"}`,
+		"object appPort":      `{"image":"ubuntu:24.04","appPort":[{"x":1}]}`,
+		"fractional appPort":  `{"image":"ubuntu:24.04","appPort":[80.5]}`,
+		"array postCreate":    `{"image":"ubuntu:24.04","postCreateCommand":["echo","hi"]}`,
+		"array initializeCmd": `{"image":"ubuntu:24.04","initializeCommand":["echo","hi"]}`,
+		"non-string image":    `{"image":123}`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			ops := &mockContainerOps{}
@@ -698,19 +701,26 @@ func TestDeployContainerRejectsMalformedConfigTypes(t *testing.T) {
 // TestRebuildContainerRejectsMalformedConfigBeforeDeleting covers P1: Rebuild
 // must validate the configuration before deleting the existing container.
 func TestRebuildContainerRejectsMalformedConfigBeforeDeleting(t *testing.T) {
-	ops := &mockContainerOps{}
-	svc := newTestContainerService(t, ops)
-	require.NoError(t, svc.core.deployments().save(&cdspb.DeployContainerRequest{
-		ContainerName:      "my-dev",
-		ProjectName:        "test-project",
-		DevcontainerConfig: []byte(`{"image":"ubuntu:24.04","runArgs":[1]}`),
-	}))
+	for name, cfg := range map[string]string{
+		"numeric runArg":   `{"image":"ubuntu:24.04","runArgs":[1]}`,
+		"array postCreate": `{"image":"ubuntu:24.04","postCreateCommand":["echo","hi"]}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			ops := &mockContainerOps{}
+			svc := newTestContainerService(t, ops)
+			require.NoError(t, svc.core.deployments().save(&cdspb.DeployContainerRequest{
+				ContainerName:      "my-dev",
+				ProjectName:        "test-project",
+				DevcontainerConfig: []byte(cfg),
+			}))
 
-	_, err := svc.RebuildContainer(context.Background(), &cdspb.RebuildContainerRequest{ContainerName: "my-dev"})
+			_, err := svc.RebuildContainer(context.Background(), &cdspb.RebuildContainerRequest{ContainerName: "my-dev"})
 
-	require.Error(t, err)
-	assert.Equal(t, codes.InvalidArgument, status.Code(err))
-	assert.Empty(t, ops.lastDeleted, "the container is not deleted when the config is rejected")
+			require.Error(t, err)
+			assert.Equal(t, codes.InvalidArgument, status.Code(err))
+			assert.Empty(t, ops.lastDeleted, "the container is not deleted when the config is rejected")
+		})
+	}
 }
 
 // TestDeployContainerAcceptsValidAppPortForms covers P2: numeric and string

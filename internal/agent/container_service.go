@@ -305,6 +305,18 @@ func validateConfigTypes(config *containerconf.Config) error {
 			return err
 		}
 	}
+	// lifecycle commands and the image are resolved as strings by the engine
+	// (engine.expand), which casts interface{} to string: a non-string value
+	// (the devcontainer spec also allows a command as an array) would otherwise
+	// only fail deep in BuildCommands — after RebuildContainer has already
+	// deleted the old container. Reject the unsupported shapes here instead.
+	for _, key := range []string{containerconf.KPostCreateCommand, containerconf.KInitializeCommand, containerconf.KImage} {
+		if config.IsSet(key) {
+			if _, ok := config.Get(key).(string); !ok {
+				return status.Errorf(codes.InvalidArgument, "%s must be a string, got %T", key, config.Get(key))
+			}
+		}
+	}
 	return nil
 }
 
