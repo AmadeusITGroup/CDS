@@ -77,9 +77,9 @@ func TestDefaultContainerOpsExecuteReturnsExitCode(t *testing.T) {
 func TestDefaultContainerOpsExecuteCancelsOnContext(t *testing.T) {
 	// a slow command is aborted when the context deadline is reached, well before
 	// it would finish naturally (the WaitDelay bounds any grandchild-held pipe).
-	// the cleanup exec (the /proc-scan kill script) returns immediately so stop()
-	// is not delayed.
-	fakePodman(t, `case "$*" in *CDS_EXEC_TOKEN*) exit 0 ;; *) sleep 5 ;; esac`)
+	// the cleanup exec (the /proc-scan kill script, matched by "environ") returns
+	// immediately so stop() is not delayed; the real command sleeps.
+	fakePodman(t, `case "$*" in *environ*) exit 0 ;; *) sleep 5 ;; esac`)
 	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 	defer cancel()
 
@@ -95,10 +95,10 @@ func TestDefaultContainerOpsExecuteCancelsOnContext(t *testing.T) {
 // exec token in its environment, so the workload cannot keep running past the
 // deadline — regardless of command shape.
 func TestExecuteInContainerKillsInContainerOnCancel(t *testing.T) {
-	// fake podman: the first exec (the actual command) sleeps so it is still
-	// running when the deadline fires; the kill exec (carrying the token in its
-	// script) returns immediately; every invocation is logged
-	logPath := fakePodman(t, `case "$*" in *CDS_EXEC_TOKEN*) exit 0 ;; *) sleep 5 ;; esac`)
+	// fake podman: the real command sleeps so it is still running when the
+	// deadline fires; the kill exec (the /proc-scan script, matched by "environ")
+	// returns immediately; every invocation is logged.
+	logPath := fakePodman(t, `case "$*" in *environ*) exit 0 ;; *) sleep 5 ;; esac`)
 	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 	defer cancel()
 
