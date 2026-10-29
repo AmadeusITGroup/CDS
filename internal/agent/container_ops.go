@@ -255,26 +255,43 @@ func killInContainer(containerName, token string) {
 	}
 }
 
-// killByEnvTokenScript returns a POSIX sh script that finds every process whose
-// environment contains CDS_EXEC_TOKEN=<token> and signals it, TERM first then
-// KILL after a short grace period, excluding the script's own process. Because
-// the token is inherited, this matches the command, any shell it re-exec'd into
-// and all its children. It relies only on /proc and the shell, so it works on
-// minimal images without pkill.
+// killByEnvTokenScript returns a POSIX sh script that terminates every process
+// whose environment contains CDS_EXEC_TOKEN=<token> (the command and, since the
+// token is inherited, any shell it re-exec'd into and all its children),
+// excluding the script's own process. It relies only on /proc and the shell, so
+// it works on minimal images without pkill.
+//
+// It freezes the whole tree with SIGSTOP before killing: a plain TERM pass walks
+// /proc in lexical order with a gap between kills, so if a child's pid sorts
+// before its parent's the child is signalled first and the (still-alive) parent
+// shell sees it exit and runs its next command before its own signal arrives.
+// A stopped process cannot exit, so no parent can advance while the tree is
+// frozen. The STOP scan repeats until it finds no new pids (children spawned
+// between scans), then every match is KILLed.
 func killByEnvTokenScript(token string) string {
 	return fmt.Sprintf(`self=$$
-signal() {
+match() {
 	for d in /proc/[0-9]*; do
 		pid=${d#/proc/}
 		[ "$pid" = "$self" ] && continue
 		if tr '\0' '\n' < "$d/environ" 2>/dev/null | grep -qx 'CDS_EXEC_TOKEN=%s'; then
-			kill -"$1" "$pid" 2>/dev/null || true
+			echo "$pid"
 		fi
 	done
 }
-signal TERM
-sleep 2
-signal KILL
+# freeze the tree: STOP every match, repeating until no new pid appears, so a
+# child cannot exit and let its parent run the next command while we work
+prev=""
+i=0
+while [ "$i" -lt 100 ]; do
+	cur=$(match)
+	for p in $cur; do kill -STOP "$p" 2>/dev/null || true; done
+	[ "$cur" = "$prev" ] && break
+	prev="$cur"
+	i=$((i + 1))
+done
+# now kill the frozen processes
+for p in $(match); do kill -KILL "$p" 2>/dev/null || true; done
 true`, token)
 }
 

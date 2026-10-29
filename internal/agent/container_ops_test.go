@@ -125,41 +125,54 @@ func TestKillByEnvTokenScriptMatchesEnvironNotCmdlineAndSkipsSelf(t *testing.T) 
 	assert.Contains(t, s, "CDS_EXEC_TOKEN=cds-exec-abc")
 	assert.Contains(t, s, `[ "$pid" = "$self" ] && continue`, "the killer skips its own pid")
 	assert.NotContains(t, s, "pkill", "does not depend on pkill")
-	assert.Contains(t, s, "signal TERM")
-	assert.Contains(t, s, "signal KILL")
+	// freezes the tree with STOP before KILL so a child cannot exit and let its
+	// parent run the next command during the scan
+	assert.Contains(t, s, "kill -STOP")
+	assert.Contains(t, s, "kill -KILL")
+	assert.Less(t, strings.Index(s, "kill -STOP"), strings.Index(s, "kill -KILL"), "STOP comes before KILL")
 }
 
 // TestKillByEnvTokenScriptAgainstRealProcesses runs the kill script against real
 // background processes that carry the token in their environment, confirming it
-// signals matching processes (and their children) and spares non-matching ones.
+// stops-then-kills the matching tree (command + re-exec'd shell + child) before
+// it can run its next command, and spares non-matching ones. It repeats several
+// times because the previous TERM-pass ordering let the workload win roughly 1
+// run in 10 (a child killed before its parent let the parent advance); the
+// STOP-freeze must make that impossible, so a flake here would be a real bug.
 func TestKillByEnvTokenScriptAgainstRealProcesses(t *testing.T) {
 	if _, err := os.Stat("/proc/self/environ"); err != nil {
 		t.Skip("requires /proc (Linux); the kill script scans /proc/<pid>/environ")
 	}
-	dir := t.TempDir()
-	marker := filepath.Join(dir, "ran")
-	other := filepath.Join(dir, "other-ran")
+	for i := 0; i < 15; i++ {
+		dir := t.TempDir()
+		marker := filepath.Join(dir, "ran")
+		other := filepath.Join(dir, "other-ran")
+		token := fmt.Sprintf("cds-exec-real-%d", i)
 
-	// a tagged workload (re-exec'd shell + child sleep) that would touch marker
-	tagged := exec.Command("/bin/sh", "-c", "exec sh -c 'sleep 3; touch "+marker+"'")
-	tagged.Env = append(os.Environ(), "CDS_EXEC_TOKEN=cds-exec-real")
-	require.NoError(t, tagged.Start())
-	t.Cleanup(func() { _ = tagged.Process.Kill() })
+		// a tagged workload: a shell that re-exec's into a child which, after a
+		// short sleep, would touch the marker — i.e. its next command runs only
+		// if the kill fails to freeze it in time
+		tagged := exec.Command("/bin/sh", "-c", "exec sh -c 'sleep 1; touch "+marker+"'")
+		tagged.Env = append(os.Environ(), "CDS_EXEC_TOKEN="+token)
+		require.NoError(t, tagged.Start())
+		taggedProc := tagged.Process
+		t.Cleanup(func() { _ = taggedProc.Kill() })
 
-	// an untagged process that must survive
-	survivor := exec.Command("/bin/sh", "-c", "sleep 3; touch "+other)
-	require.NoError(t, survivor.Start())
-	t.Cleanup(func() { _ = survivor.Process.Kill() })
+		// an untagged process that must survive
+		survivor := exec.Command("/bin/sh", "-c", "sleep 1; touch "+other)
+		require.NoError(t, survivor.Start())
+		t.Cleanup(func() { _ = survivor.Process.Kill() })
 
-	time.Sleep(200 * time.Millisecond)
-	out, err := exec.Command("/bin/sh", "-c", killByEnvTokenScript("cds-exec-real")).CombinedOutput()
-	require.NoError(t, err, string(out))
+		time.Sleep(150 * time.Millisecond)
+		out, err := exec.Command("/bin/sh", "-c", killByEnvTokenScript(token)).CombinedOutput()
+		require.NoError(t, err, string(out))
 
-	_ = tagged.Wait()
-	assert.NoFileExists(t, marker, "the tagged workload (and its child) was killed before it could run")
+		_ = tagged.Wait()
+		assert.NoFileExists(t, marker, "iteration %d: the frozen workload must not run its next command", i)
 
-	require.NoError(t, survivor.Wait())
-	assert.FileExists(t, other, "a process without the token is left alone")
+		require.NoError(t, survivor.Wait())
+		assert.FileExists(t, other, "iteration %d: a process without the token is left alone", i)
+	}
 }
 
 func TestExecTokenIsUnique(t *testing.T) {
