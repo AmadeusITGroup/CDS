@@ -65,10 +65,11 @@ func TestDefaultContainerOpsExecuteReturnsExitCode(t *testing.T) {
 			require.NoError(t, err)
 			assert.Equal(t, tc.wantOutput, output)
 			assert.Equal(t, tc.wantCode, code)
-			// the command carries a cancellation token prefix, then the user command
+			// the command exports a cancellation token, then exec's the user command
+			// (under setsid when available)
 			logged := readLog(t, logPath)
-			assert.True(t, strings.HasPrefix(logged, "exec -u developer -i dev-1 /bin/sh -c : cds-exec-"), logged)
-			assert.True(t, strings.HasSuffix(logged, ";\necho 'hi'\n"), logged)
+			assert.True(t, strings.HasPrefix(logged, "exec -u developer -i dev-1 /bin/sh -c export CDS_EXEC_TOKEN=cds-exec-"), logged)
+			assert.Contains(t, logged, "setsid echo 'hi'", logged)
 		})
 	}
 }
@@ -76,8 +77,9 @@ func TestDefaultContainerOpsExecuteReturnsExitCode(t *testing.T) {
 func TestDefaultContainerOpsExecuteCancelsOnContext(t *testing.T) {
 	// a slow command is aborted when the context deadline is reached, well before
 	// it would finish naturally (the WaitDelay bounds any grandchild-held pipe).
-	// the pkill cleanup exec returns immediately so stop() is not delayed.
-	fakePodman(t, `case "$*" in *pkill*) exit 0 ;; *) sleep 5 ;; esac`)
+	// the cleanup exec (the /proc-scan kill script) returns immediately so stop()
+	// is not delayed.
+	fakePodman(t, `case "$*" in *CDS_EXEC_TOKEN*) exit 0 ;; *) sleep 5 ;; esac`)
 	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 	defer cancel()
 
@@ -89,23 +91,38 @@ func TestDefaultContainerOpsExecuteCancelsOnContext(t *testing.T) {
 }
 
 // TestExecuteInContainerKillsInContainerOnCancel covers P2: on cancellation the
-// agent issues a podman exec that pkills the tagged in-container process tree,
-// so the workload cannot keep running past the deadline.
+// agent issues a podman exec that kills every in-container process carrying the
+// exec token in its environment, so the workload cannot keep running past the
+// deadline — regardless of command shape.
 func TestExecuteInContainerKillsInContainerOnCancel(t *testing.T) {
 	// fake podman: the first exec (the actual command) sleeps so it is still
-	// running when the deadline fires; every invocation is logged
-	logPath := fakePodman(t, `case "$*" in *pkill*) exit 0 ;; *) sleep 5 ;; esac`)
+	// running when the deadline fires; the kill exec (carrying the token in its
+	// script) returns immediately; every invocation is logged
+	logPath := fakePodman(t, `case "$*" in *CDS_EXEC_TOKEN*) exit 0 ;; *) sleep 5 ;; esac`)
 	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 	defer cancel()
 
 	_, _, err := defaultContainerOps{}.ExecuteInContainer(ctx, "dev-1", "sleep 5", "root")
 	require.Error(t, err)
 
-	// give the kill watcher a moment to issue the pkill exec
+	// give the kill watcher a moment to issue the kill exec, which scans
+	// /proc/<pid>/environ for the token
 	assert.Eventually(t, func() bool {
 		data, _ := os.ReadFile(logPath)
-		return strings.Contains(string(data), "pkill") && strings.Contains(string(data), "cds-exec-")
-	}, 3*time.Second, 50*time.Millisecond, "a pkill for the exec token was issued into the container")
+		s := string(data)
+		return strings.Contains(s, "environ") && strings.Contains(s, "CDS_EXEC_TOKEN=cds-exec-")
+	}, 3*time.Second, 50*time.Millisecond, "a kill scanning /proc for the exec token was issued into the container")
+}
+
+func TestKillByEnvTokenScriptMatchesEnvironNotCmdlineAndSkipsSelf(t *testing.T) {
+	s := killByEnvTokenScript("cds-exec-abc")
+	assert.Contains(t, s, "/environ")
+	assert.Contains(t, s, "CDS_EXEC_TOKEN=cds-exec-abc")
+	assert.Contains(t, s, `[ "$pid" = "$self" ] && continue`, "the killer skips its own pid")
+	assert.NotContains(t, s, "pkill", "does not depend on pkill")
+	// kills the whole process group (negative pgid) so trapped/children die too
+	assert.Contains(t, s, `kill -TERM "-$g"`)
+	assert.Contains(t, s, `kill -KILL "-$g"`)
 }
 
 func TestExecTokenIsUnique(t *testing.T) {
@@ -150,6 +167,32 @@ func TestBoundedHeadKeepsValidUTF8(t *testing.T) {
 	got := boundedHead(euro)
 	assert.True(t, utf8.ValidString(got), "bounded head must be valid UTF-8")
 	assert.Contains(t, got, "truncated")
+}
+
+// TestBoundingSanitizesInvalidUTF8 covers P2: binary / non-UTF-8 output must be
+// sanitized to a valid protobuf string, not rejected on send.
+func TestBoundingSanitizesInvalidUTF8(t *testing.T) {
+	invalid := "ok\xff\xfeend"
+	assert.True(t, utf8.ValidString(boundedOutput(invalid)))
+	assert.True(t, utf8.ValidString(boundedHead(invalid)))
+	assert.True(t, utf8.ValidString(validUTF8(invalid)))
+	// a Latin-1 'é' (0xE9) is replaced, not dropped silently
+	assert.True(t, utf8.ValidString(boundedHead("caf\xe9")))
+}
+
+func TestReportCommandOutputSanitizesInvalidUTF8(t *testing.T) {
+	var chunks []string
+	report := func(p deployProgress) error {
+		if p.phase == "output" {
+			chunks = append(chunks, p.message)
+		}
+		return nil
+	}
+	require.NoError(t, reportCommandOutput(report, "before\xffafter"))
+	require.NotEmpty(t, chunks)
+	for _, c := range chunks {
+		assert.True(t, utf8.ValidString(c), "each streamed chunk is valid UTF-8")
+	}
 }
 
 func TestReportCommandOutputChunksKeepValidUTF8(t *testing.T) {
@@ -241,6 +284,39 @@ func TestDeployContainerCompensatesWhenOutputSendFailsAfterCreation(t *testing.T
 	require.Error(t, err)
 	assert.Contains(t, readLog(t, logPath), "rm -f dev-reportfail",
 		"the created container is removed even though the failure was reporting its output")
+}
+
+// TestDeployContainerRemovesOrphanOnFailedCreate covers P2: when `podman run`
+// fails after creating the container (e.g. port in use), the orphan is removed
+// — but only when a cds-labelled container of that name is present.
+func TestDeployContainerRemovesOrphanOnFailedCreate(t *testing.T) {
+	// run fails; ps (ListContainers) reports the orphan exists with the name;
+	// rm is expected. Everything is logged.
+	logPath := fakePodman(t, `case "$*" in
+  *"ps -a"*) echo 'ID=o1,Name=dev-orphan,Status=Created;' ;;
+  run*) echo "bind: address already in use" >&2; exit 125 ;;
+  *) exit 0 ;;
+esac`)
+	spec := deploySpecForTest(t, "dev-orphan", `{"image":"ubuntu:24.04"}`)
+	_, err := defaultContainerOps{}.DeployContainer(context.Background(), spec, func(deployProgress) error { return nil })
+
+	require.Error(t, err)
+	assert.Contains(t, readLog(t, logPath), "rm -f dev-orphan", "the orphaned cds container is removed")
+}
+
+func TestDeployContainerDoesNotRemoveOnFailedCreateWhenNoOrphan(t *testing.T) {
+	// run fails and ps reports no matching cds container -> nothing is removed
+	// (a genuine name collision with a non-cds container must be left alone)
+	logPath := fakePodman(t, `case "$*" in
+  *"ps -a"*) echo '' ;;
+  run*) echo "name already in use" >&2; exit 125 ;;
+  *) exit 0 ;;
+esac`)
+	spec := deploySpecForTest(t, "dev-collision", `{"image":"ubuntu:24.04"}`)
+	_, err := defaultContainerOps{}.DeployContainer(context.Background(), spec, func(deployProgress) error { return nil })
+
+	require.Error(t, err)
+	assert.NotContains(t, readLog(t, logPath), "rm -f dev-collision", "a pre-existing non-cds container is not removed")
 }
 
 func TestDefaultContainerOpsLifecycle(t *testing.T) {

@@ -259,20 +259,24 @@ func sha256Probe(file string) string {
 }
 
 // startRemoteService runs the agent as a systemd user service of the host. The
-// units are reconciled with the installed binary and port; the service is
-// restarted when the units changed or when credentialsChanged is set (a renewed
-// certificate the running process must reload), to pick up updated material
-// without needlessly disrupting a running service and its containers otherwise.
+// units are reconciled with the installed binary and port, then the service is
+// restarted when: the units changed, the credentials changed, or the service
+// was already running. The last case matters because bootstrap only runs when
+// the agent is unhealthy — so an already-active service is unhealthy (e.g. it
+// is still presenting a certificate a previous interrupted run uploaded but
+// never loaded) and must be restarted. A freshly enabled (not previously
+// running) service needs no extra restart.
 func startRemoteService(h remoteHost, binary string, port int, credentialsChanged bool) error {
 	sysd := systemd.New(systemd.WithTarget(h), systemd.WithServicePort(port), systemd.WithServiceBinary(binary))
 	if !sysd.In() {
 		return cerr.NewError("a systemd user session is required to run the agent, consider `loginctl enable-linger`")
 	}
+	wasUp := sysd.IsServiceUp()
 	changed, err := sysd.StartService()
 	if err != nil {
 		return err
 	}
-	if changed || credentialsChanged {
+	if changed || credentialsChanged || wasUp {
 		return sysd.RestartService()
 	}
 	return nil

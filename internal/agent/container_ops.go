@@ -149,9 +149,15 @@ func (defaultContainerOps) RenameContainer(name, newName string) error {
 // after the deadline.
 func (defaultContainerOps) ExecuteInContainer(ctx context.Context, containerName, command, user string) (string, int, error) {
 	token := execToken()
-	// the token rides as a leading no-op in the args of the in-container shell,
-	// so pkill -f can find the process tree spawned for this execution
-	tagged := fmt.Sprintf(": %s;\n%s", token, command)
+	// Export the token into the environment before exec'ing the user command, so
+	// it is inherited by the command and all its children and survives a shell
+	// that replaces itself (`sh -c '...'`). Run under setsid when available so
+	// the command leads its own process group; on cancellation the killer finds
+	// the process(es) whose /proc/<pid>/environ contains the token and KILLs
+	// their whole process group — covering re-exec'd shells, trailing children
+	// and processes that trap TERM, which per-PID TERM alone would miss.
+	tagged := fmt.Sprintf("export CDS_EXEC_TOKEN=%s\nif command -v setsid >/dev/null 2>&1; then exec setsid %s; else exec %s; fi",
+		token, command, command)
 
 	es := engine.NewContainerEngine()
 	es.SetAction(engine.K_ACTION_EXE)
@@ -211,13 +217,18 @@ func watchAndKillInContainer(ctx context.Context, containerName, token string) f
 	}
 }
 
-// killInContainer terminates the in-container process tree tagged with token,
-// TERM first then KILL after a short grace period. It uses its own bounded
+// killInContainer terminates every in-container process whose environment
+// carries CDS_EXEC_TOKEN=<token> (the exec'd command and all its children),
+// TERM first then KILL after a short grace period. It scans /proc/<pid>/environ
+// with a plain shell loop rather than pkill (absent on slim images), matches on
+// the NUL-delimited environment (not the command line), and skips its own
+// process so the killer does not terminate itself. It uses its own bounded
 // context since the caller's context is already cancelled.
 func killInContainer(containerName, token string) {
-	killCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	killCtx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 	defer cancel()
-	script := fmt.Sprintf("pkill -TERM -f %q 2>/dev/null; sleep 2; pkill -KILL -f %q 2>/dev/null; true", token, token)
+
+	script := killByEnvTokenScript(token)
 
 	es := engine.NewContainerEngine()
 	es.SetAction(engine.K_ACTION_EXE)
@@ -233,6 +244,30 @@ func killInContainer(containerName, token string) {
 	if _, _, err := shexec.RunLocalCmdWithExitCodeContext(killCtx, cmds[0]); err != nil {
 		clog.Warn(fmt.Sprintf("Failed to terminate in-container process for %s after cancellation", containerName), err)
 	}
+}
+
+// killByEnvTokenScript returns a POSIX sh script that finds processes whose
+// environment contains CDS_EXEC_TOKEN=<token> and kills their process groups,
+// excluding the script's own process. It signals the whole group (negative
+// PID) so a process that traps TERM, a trailing child, or a re-exec'd shell is
+// still terminated; KILL cannot be trapped. It relies only on /proc and the
+// shell, so it works on minimal images without pkill.
+func killByEnvTokenScript(token string) string {
+	return fmt.Sprintf(`self=$$
+groups() {
+	for d in /proc/[0-9]*; do
+		pid=${d#/proc/}
+		[ "$pid" = "$self" ] && continue
+		if tr '\0' '\n' < "$d/environ" 2>/dev/null | grep -qx 'CDS_EXEC_TOKEN=%s'; then
+			pgid=$(sed 's/.*) [^ ]* [^ ]* \([0-9]*\).*/\1/' "$d/stat" 2>/dev/null)
+			[ -n "$pgid" ] && echo "$pgid"
+		fi
+	done | sort -u
+}
+for g in $(groups); do kill -TERM "-$g" 2>/dev/null || true; done
+sleep 2
+for g in $(groups); do kill -KILL "-$g" 2>/dev/null || true; done
+true`, token)
 }
 
 func (defaultContainerOps) DeployContainer(ctx context.Context, spec deployContainerSpec, report deployProgressReporter) (deployContainerResult, error) {
@@ -257,7 +292,9 @@ func (defaultContainerOps) DeployContainer(ctx context.Context, spec deployConta
 	}
 	cmds = append(cmds, sshKeyCommands...)
 
-	var output strings.Builder
+	// retain only a bounded tail of the combined command output; the full output
+	// is streamed as progress, so the accumulator need not grow with the command
+	output := &boundedTail{limit: kMaxDeployOutput}
 	created := false
 	for _, cmd := range cmds {
 		if ctxErr := ctx.Err(); ctxErr != nil {
@@ -284,10 +321,13 @@ func (defaultContainerOps) DeployContainer(ctx context.Context, spec deployConta
 		}
 		if runErr != nil {
 			result.output = boundedOutput(output.String())
-			// Only clean up a container this deployment created. A creation
-			// failure (e.g. a name collision with a pre-existing container)
-			// must not remove that other container.
 			if commandCreatesContainer(cmd) {
+				// Podman can fail after creating the container (e.g. a published
+				// port already in use leaves it in Created state). Remove such an
+				// orphan — but only when it carries this deployment's cds labels,
+				// so a pre-existing container that merely shares the name is never
+				// removed on a name-collision failure.
+				compensateOrphanedCreate(spec)
 				return result, cerr.AppendError("failed to create container", runErr)
 			}
 			compensateFailedDeploy(created, spec.containerName)
@@ -321,26 +361,59 @@ const (
 // boundedOutput returns at most the last kMaxDeployOutput bytes of output,
 // prefixed with an explicit truncation marker when it had to drop content, so
 // diagnostics are neither unbounded nor silently lost. The cut is moved to a
-// UTF-8 boundary so the result stays a valid string (a protobuf string field
-// rejects invalid UTF-8).
+// UTF-8 boundary and the result is sanitized so it is always a valid protobuf
+// string (invalid bytes, e.g. binary or Latin-1 output, become U+FFFD).
 func boundedOutput(output string) string {
 	if len(output) <= kMaxDeployOutput {
-		return output
+		return validUTF8(output)
 	}
 	tail := trimToValidUTF8Start(output[len(output)-kMaxDeployOutput:])
-	return fmt.Sprintf("[... %d earlier bytes truncated ...]\n%s", len(output)-len(tail), tail)
+	return validUTF8(fmt.Sprintf("[... %d earlier bytes truncated ...]\n%s", len(output)-len(tail), tail))
 }
 
 // boundedHead returns at most kMaxDeployOutput bytes from the start of output,
-// cut on a UTF-8 boundary, with a trailing marker when truncated. It is used
-// for execute and error payloads, where the beginning of the output is the most
-// useful part.
+// cut on a UTF-8 boundary and sanitized to valid UTF-8, with a trailing marker
+// when truncated. It is used for execute and error payloads, where the start of
+// the output is the most useful part.
 func boundedHead(output string) string {
 	if len(output) <= kMaxDeployOutput {
-		return output
+		return validUTF8(output)
 	}
 	head := trimToValidUTF8End(output[:kMaxDeployOutput])
-	return fmt.Sprintf("%s\n[... %d later bytes truncated ...]", head, len(output)-len(head))
+	return validUTF8(fmt.Sprintf("%s\n[... %d later bytes truncated ...]", head, len(output)-len(head)))
+}
+
+// validUTF8 replaces invalid UTF-8 bytes with the replacement character so the
+// string can be carried in a protobuf string field. Command output may be
+// binary or non-UTF-8 (e.g. Latin-1), which would otherwise be rejected on send
+// and lose the result (and, on the deploy progress path, trigger compensation).
+func validUTF8(s string) string {
+	return strings.ToValidUTF8(s, "\uFFFD")
+}
+
+// boundedTail accumulates written output but retains only the last limit bytes,
+// so the deploy accumulator does not grow with a command's output (which is
+// also streamed as progress). It tracks the total to report how much was
+// dropped.
+type boundedTail struct {
+	limit int
+	buf   []byte
+	total int
+}
+
+func (b *boundedTail) WriteString(s string) {
+	b.total += len(s)
+	b.buf = append(b.buf, s...)
+	if len(b.buf) > b.limit {
+		b.buf = b.buf[len(b.buf)-b.limit:]
+	}
+}
+
+func (b *boundedTail) String() string {
+	if b.total <= len(b.buf) {
+		return string(b.buf)
+	}
+	return fmt.Sprintf("[... %d earlier bytes truncated ...]\n%s", b.total-len(b.buf), trimToValidUTF8Start(string(b.buf)))
 }
 
 // trimToValidUTF8Start drops leading bytes that are a UTF-8 continuation so s
@@ -366,7 +439,7 @@ func trimToValidUTF8End(s string) string {
 
 // reportCommandOutput streams non-empty command output as progress events,
 // split into bounded chunks so no single event is unbounded. Each chunk is cut
-// on a UTF-8 boundary so it is a valid protobuf string.
+// on a UTF-8 boundary and sanitized so it is a valid protobuf string.
 func reportCommandOutput(report deployProgressReporter, stdout string) error {
 	for len(stdout) > 0 {
 		chunk := stdout
@@ -378,7 +451,7 @@ func reportCommandOutput(report deployProgressReporter, stdout string) error {
 			}
 		}
 		stdout = stdout[len(chunk):]
-		if err := report(deployProgress{phase: "output", message: chunk}); err != nil {
+		if err := report(deployProgress{phase: "output", message: validUTF8(chunk)}); err != nil {
 			return err
 		}
 	}
@@ -465,6 +538,28 @@ func compensateFailedDeploy(created bool, containerName string) {
 	}
 	if err := engine.DeleteContainer(containerName); err != nil {
 		clog.Warn(fmt.Sprintf("Failed to remove container %s after a failed deployment, it may need manual cleanup", containerName), err)
+	}
+}
+
+// compensateOrphanedCreate removes a container left behind when `podman run`
+// failed after creating it (e.g. a published port already in use leaves it in
+// Created state). It removes the container only when one with this deployment's
+// name is present among the cds-labelled containers — so a pre-existing
+// container that is not cds-managed, or a genuine name collision with another
+// owner's container, is never removed.
+func compensateOrphanedCreate(spec deployContainerSpec) {
+	containers, err := defaultContainerOps{}.ListContainers()
+	if err != nil {
+		clog.Warn(fmt.Sprintf("Failed to list containers while cleaning up a failed create of %s", spec.containerName), err)
+		return
+	}
+	for _, c := range containers {
+		if string(c.Name) == spec.containerName {
+			if err := engine.DeleteContainer(spec.containerName); err != nil {
+				clog.Warn(fmt.Sprintf("Failed to remove orphaned container %s after a failed create, it may need manual cleanup", spec.containerName), err)
+			}
+			return
+		}
 	}
 }
 

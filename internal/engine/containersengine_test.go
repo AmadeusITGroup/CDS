@@ -352,7 +352,7 @@ func TestContainerRunToleratesNonStringRunArgsAndPublishesNumericPorts(t *testin
 	require.NotEqual(t, -1, runIndex)
 	run := cmds[runIndex].Cmd()
 	assert.Contains(t, run, "-t", "the valid string runArg is kept")
-	assert.Contains(t, run, "-p 18080", "the numeric appPort is published")
+	assert.Contains(t, run, "-p 18080:18080", "the numeric appPort maps to the same host port")
 	assert.Contains(t, run, "-p 9090:90", "the string appPort is published")
 }
 
@@ -362,10 +362,10 @@ func TestNormalizeAppPorts(t *testing.T) {
 		c.Set(containerconf.KAppPort, v)
 		return c
 	}
-	assert.Equal(t, []string{"18080"}, normalizeAppPorts(mk([]interface{}{18080})))
+	assert.Equal(t, []string{"18080:18080"}, normalizeAppPorts(mk([]interface{}{18080})))
 	assert.Equal(t, []string{"8080:80"}, normalizeAppPorts(mk([]interface{}{"8080:80"})))
-	assert.Equal(t, []string{"18080"}, normalizeAppPorts(mk(18080)))                // scalar number
-	assert.Equal(t, []string{"18080"}, normalizeAppPorts(mk("18080")))              // scalar string
+	assert.Equal(t, []string{"18080:18080"}, normalizeAppPorts(mk(18080)))          // scalar number -> same host port
+	assert.Equal(t, []string{"18080"}, normalizeAppPorts(mk("18080")))              // scalar string unchanged
 	assert.Empty(t, normalizeAppPorts(mk([]interface{}{map[string]interface{}{}}))) // unsupported skipped
 	assert.Nil(t, normalizeAppPorts(containerconf.NewConfig()))                     // unset
 }

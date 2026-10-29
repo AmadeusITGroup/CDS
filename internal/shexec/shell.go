@@ -48,13 +48,16 @@ func RunLocalCmdWithOutput(cmd []ExecuteEvent) (string, error) {
 
 // RunLocalCmdWithOutputContext behaves like RunLocalCmdWithOutput but aborts the
 // command when ctx is cancelled (the process is killed and ctx.Err is returned).
+// Output is captured into a capped buffer so a command producing huge output
+// cannot exhaust agent memory; the retained excerpt keeps the first and last
+// bytes up to the cap.
 func RunLocalCmdWithOutputContext(ctx context.Context, cmd []ExecuteEvent) (string, error) {
-	var stdout bytes.Buffer
-	var stderr bytes.Buffer
+	stdout := newCappedBuffer(defaultCapBytes)
+	stderr := newCappedBuffer(defaultCapBytes)
 
 	exeCmd := localShellCmdContext(ctx, cmd[0].Cmd())
-	exeCmd.Stdout = &stdout
-	exeCmd.Stderr = &stderr
+	exeCmd.Stdout = stdout
+	exeCmd.Stderr = stderr
 
 	if err := exeCmd.Run(); err != nil {
 		if ctxErr := ctx.Err(); ctxErr != nil {
@@ -80,12 +83,13 @@ func RunLocalCmdWithExitCode(cmd ExecuteEvent) (string, int, error) {
 }
 
 // RunLocalCmdWithExitCodeContext behaves like RunLocalCmdWithExitCode but aborts
-// the command when ctx is cancelled.
+// the command when ctx is cancelled. Output is captured into a capped buffer so
+// a command producing huge output cannot exhaust agent memory.
 func RunLocalCmdWithExitCodeContext(ctx context.Context, cmd ExecuteEvent) (string, int, error) {
-	var output bytes.Buffer
+	output := newCappedBuffer(defaultCapBytes)
 	exeCmd := localShellCmdContext(ctx, cmd.Cmd())
-	exeCmd.Stdout = &output
-	exeCmd.Stderr = &output
+	exeCmd.Stdout = output
+	exeCmd.Stderr = output
 
 	err := exeCmd.Run()
 	var exitErr *exec.ExitError

@@ -1661,9 +1661,11 @@ func (ce *ContainersEngine) appPorts() []string {
 	return normalizeAppPorts(ce.containerConfig())
 }
 
-// normalizeAppPorts returns the appPort values of config as strings, accepting
-// the supported forms: a scalar or an array, whose elements are strings
-// ("18080", "8080:80") or integers (18080). Unsupported element types are
+// normalizeAppPorts returns the appPort values of config as podman -p specs,
+// accepting the supported forms: a scalar or an array, whose elements are
+// strings ("18080", "8080:80") or integers (18080). Per the devcontainer
+// schema, a numeric value maps to the same host port (18080 -> "18080:18080"),
+// while a string is passed through unchanged. Unsupported element types are
 // skipped with a warning rather than silently dropped or panicking.
 func normalizeAppPorts(config *containerconf.Config) []string {
 	if config == nil {
@@ -1689,13 +1691,13 @@ func normalizeAppPorts(config *containerconf.Config) []string {
 				ports = append(ports, spec)
 			}
 		case int:
-			ports = append(ports, strconv.Itoa(v))
+			ports = append(ports, sameHostPort(strconv.Itoa(v)))
 		case int64:
-			ports = append(ports, strconv.FormatInt(v, 10))
+			ports = append(ports, sameHostPort(strconv.FormatInt(v, 10)))
 		case float64:
 			// JSON numbers decode to float64; accept whole numbers as ports
 			if v == float64(int64(v)) {
-				ports = append(ports, strconv.FormatInt(int64(v), 10))
+				ports = append(ports, sameHostPort(strconv.FormatInt(int64(v), 10)))
 			} else {
 				clog.Warn(fmt.Sprintf("Invalid appPort configuration, '%v' is not an integer port", v))
 			}
@@ -1704,6 +1706,12 @@ func normalizeAppPorts(config *containerconf.Config) []string {
 		}
 	}
 	return ports
+}
+
+// sameHostPort maps a numeric container port to the same host port, matching
+// the devcontainer schema ("A number is mapped to the same port on the host").
+func sameHostPort(port string) string {
+	return port + ":" + port
 }
 
 func portSpecPublishesContainerPort(portSpec, containerPort string) bool {
