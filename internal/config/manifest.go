@@ -49,10 +49,24 @@ func InitCLIConfig() error {
 	return nil
 }
 
+// ProfileReader returns a reader over the user's profile content.
+//
+// A profile is optional: on a fresh install the user has not run
+// `cds space profile init`, so the profile source legitimately does not
+// exist. In that case ProfileReader returns (nil, nil) so callers can skip
+// profile loading silently instead of surfacing a spurious error.
 func ProfileReader() (io.Reader, error) {
 	src, err := profileSource()
 	if err != nil {
 		return nil, err
+	}
+	exists, err := src.Exists()
+	if err != nil {
+		return nil, cerr.AppendError("failed to check profile source existence", err)
+	}
+	if !exists {
+		// No profile configured yet — not an error.
+		return nil, nil
 	}
 	return src.Read()
 }

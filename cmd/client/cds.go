@@ -46,12 +46,16 @@ func init() {
 
 	// Agents are started on demand, by the commands calling them.
 
-	// Init profile from config-resolved reader
+	// Init profile from config-resolved reader. A profile is optional: on a
+	// fresh install none has been configured yet (ProfileReader returns a nil
+	// reader with no error), so skip silently rather than warning.
 	r, profileErr := config.ProfileReader()
 	if profileErr != nil {
 		clog.Warn("Failed to read profile source, skipping", profileErr)
-	} else {
+	} else if r != nil {
 		profile.New(profile.WithReader(r))
+	} else {
+		clog.Debug("No profile configured, skipping profile initialization")
 	}
 }
 
