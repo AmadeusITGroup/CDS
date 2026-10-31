@@ -75,6 +75,43 @@ func TestDeployProject(t *testing.T) {
 	assert.NotContains(t, agent.calls, "upload "+pubKeyID)
 }
 
+const kTestOrchestrationDevcontainer = `{
+	"name": "dev",
+	"image": "alpine:3.20",
+	"remoteUser": "developer",
+	"orchestration": {
+		"engine": "kind",
+		"registry": {
+			"secure": true
+		}
+	}
+}`
+
+func TestDeployProjectRecordsOrchestrationUsage(t *testing.T) {
+	agent := setupTestAgent(t)
+	setupTestProject(t, "p1", kTestOrchestrationDevcontainer)
+
+	// before deploy, usage is not set
+	assert.False(t, db.IsOrchestrationUsed("p1"))
+	assert.False(t, db.IsRegistryUsed("p1"))
+
+	deployTestProject(t, agent, "p1")
+
+	// after deploy, db.json reflects what the devcontainer requested
+	assert.True(t, db.IsOrchestrationUsed("p1"), "cluster usage must be recorded")
+	assert.True(t, db.IsRegistryUsed("p1"), "registry usage must be recorded")
+}
+
+func TestDeployProjectWithoutOrchestrationLeavesUsageUnset(t *testing.T) {
+	agent := setupTestAgent(t)
+	setupTestProject(t, "p1", kTestDevcontainer)
+
+	deployTestProject(t, agent, "p1")
+
+	assert.False(t, db.IsOrchestrationUsed("p1"), "plain devcontainer must not record cluster usage")
+	assert.False(t, db.IsRegistryUsed("p1"), "plain devcontainer must not record registry usage")
+}
+
 func TestDeployProjectFailure(t *testing.T) {
 	agent := setupTestAgent(t)
 	agent.deployErr = "image not found"

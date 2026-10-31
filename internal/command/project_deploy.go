@@ -33,6 +33,10 @@ type projectDeployPlan struct {
 	remoteUser    string
 	labels        map[string]string
 	artifacts     []artifactCandidate
+	// orchestration usage requested by the devcontainer config, recorded on the
+	// project after a successful deploy so db.json reflects what was deployed.
+	clusterRequested  bool
+	registryRequested bool
 }
 
 type artifactCandidate struct {
@@ -67,13 +71,17 @@ func buildProjectDeployPlan(projectName string) (projectDeployPlan, error) {
 		containerName = existing[0]
 	}
 
+	orchestration := config.OrchestrationConfig()
+
 	return projectDeployPlan{
-		projectName:   projectName,
-		configBytes:   configBytes,
-		containerName: containerName,
-		remoteUser:    engine.ResolveRemoteUserFromConfig(config),
-		labels:        projectContainerLabels(projectName),
-		artifacts:     artifacts,
+		projectName:       projectName,
+		configBytes:       configBytes,
+		containerName:     containerName,
+		remoteUser:        engine.ResolveRemoteUserFromConfig(config),
+		labels:            projectContainerLabels(projectName),
+		artifacts:         artifacts,
+		clusterRequested:  orchestration.Requested,
+		registryRequested: orchestration.Requested && orchestration.Registry.Requested,
 	}, nil
 }
 
@@ -243,7 +251,27 @@ func deployProject(ctx context.Context, services agentServices, plan projectDepl
 	if err := recordProjectContainer(ctx, services.container, plan.projectName, containerName, plan.remoteUser, bo.KContainerStatusRunning); err != nil {
 		return cg.EmptyStr, cerr.AppendError("Failed to record the deployed container", err)
 	}
+	if err := recordProjectOrchestrationUsage(plan); err != nil {
+		return cg.EmptyStr, err
+	}
 	return containerName, nil
+}
+
+// recordProjectOrchestrationUsage persists, on the project, whether the deploy
+// used an orchestration cluster and/or registry, so db.json reflects what the
+// devcontainer requested and what was actually deployed.
+func recordProjectOrchestrationUsage(plan projectDeployPlan) error {
+	if plan.clusterRequested {
+		if err := db.SetOrchestrationRequested(plan.projectName); err != nil {
+			return cerr.AppendError("Failed to record orchestration usage on the project", err)
+		}
+	}
+	if plan.registryRequested {
+		if err := db.SetProjectRegistryUsage(plan.projectName); err != nil {
+			return cerr.AppendError("Failed to record registry usage on the project", err)
+		}
+	}
+	return nil
 }
 
 // rebuildProject stages the artifacts and has the agent rebuild the project
@@ -264,7 +292,10 @@ func rebuildProject(ctx context.Context, services agentServices, plan projectDep
 	if response.GetError() != cg.EmptyStr {
 		return cerr.NewError(response.GetError())
 	}
-	return recordProjectContainer(ctx, services.container, plan.projectName, plan.containerName, plan.remoteUser, bo.KContainerStatusRunning)
+	if err := recordProjectContainer(ctx, services.container, plan.projectName, plan.containerName, plan.remoteUser, bo.KContainerStatusRunning); err != nil {
+		return err
+	}
+	return recordProjectOrchestrationUsage(plan)
 }
 
 func receiveDeployResponse(stream grpc.ServerStreamingClient[cdspb.DeployContainerEvent]) (*cdspb.DeployContainerResponse, error) {
