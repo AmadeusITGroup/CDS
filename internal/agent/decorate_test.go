@@ -79,3 +79,40 @@ func TestContainerDecorationCommandsSkipEmpty(t *testing.T) {
 	require.Len(t, onlyKube, 1)
 	assert.Contains(t, onlyKube[0].script, "/root/.kube/config")
 }
+
+func TestEnsureOrchestrationAppliesMirrors(t *testing.T) {
+	cluster := &mockClusterOps{}
+	reg := &mockRegistryOps{}
+
+	oc := containerconf.KindOrchestrationConfig{
+		Requested: true,
+		Mirrors: []containerconf.Mirror{
+			{Registry: "docker.io", Endpoint: "https://mirror/docker"},
+		},
+	}
+	err := ensureOrchestration(context.Background(), cluster, reg, oc, func(deployProgress) error { return nil })
+	require.NoError(t, err)
+	require.Len(t, cluster.appliedMirrors, 1)
+	assert.Equal(t, "docker.io", cluster.appliedMirrors[0].Registry)
+	assert.Equal(t, "https://mirror/docker", cluster.appliedMirrors[0].Endpoint)
+}
+
+func TestEnsureOrchestrationDeploysIngressWhenRequested(t *testing.T) {
+	cluster := &mockClusterOps{}
+	reg := &mockRegistryOps{}
+
+	oc := containerconf.KindOrchestrationConfig{Requested: true, Ingress: true}
+	err := ensureOrchestration(context.Background(), cluster, reg, oc, func(deployProgress) error { return nil })
+	require.NoError(t, err)
+	assert.True(t, cluster.ingressDeployed, "ingress is deployed when requested")
+}
+
+func TestEnsureOrchestrationSkipsIngressWhenNotRequested(t *testing.T) {
+	cluster := &mockClusterOps{}
+	reg := &mockRegistryOps{}
+
+	oc := containerconf.KindOrchestrationConfig{Requested: true, Ingress: false}
+	err := ensureOrchestration(context.Background(), cluster, reg, oc, func(deployProgress) error { return nil })
+	require.NoError(t, err)
+	assert.False(t, cluster.ingressDeployed)
+}
