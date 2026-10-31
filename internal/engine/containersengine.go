@@ -75,6 +75,7 @@ type ContainersEngine struct {
 	azureDomainName     string
 	networkCmd          Network_t
 	networkName         string
+	networkCreateArgs   []string
 	runNetwork          string
 	containerLabels     map[string]string
 	config              *containerconf.Config
@@ -2414,11 +2415,10 @@ func (ce *ContainersEngine) connectNetwork() (*RunEvent, error) {
 }
 
 func (ce *ContainersEngine) createNetwork() (*RunEvent, error) {
-	cmd := cg.VariadicJoin(" ", engineName(ce.name),
-		engineAction(ce.action),
-		networkAction(ce.networkCmd),
-		ce.networkName,
-	)
+	parts := []string{engineName(ce.name), engineAction(ce.action), networkAction(ce.networkCmd)}
+	parts = append(parts, ce.networkCreateArgs...)
+	parts = append(parts, ce.networkName)
+	cmd := cg.VariadicJoin(" ", parts...)
 	rEvent := &RunEvent{
 		cmd: cmd,
 
@@ -2466,6 +2466,12 @@ func (ce *ContainersEngine) SetNetworkName(networkName string) {
 
 func (ce *ContainersEngine) SetNetworkCmd(cmd Network_t) {
 	ce.networkCmd = cmd
+}
+
+// SetNetworkCreateArgs sets extra flags passed to `network create`, e.g.
+// --ipv6=false or --subnet, before the network name.
+func (ce *ContainersEngine) SetNetworkCreateArgs(args ...string) {
+	ce.networkCreateArgs = args
 }
 
 // Returns the list of networks the container is connected to using inspect with K_FNetworks format
@@ -2521,6 +2527,43 @@ func CreateNetwork(engineName, networkName string) error {
 		)
 	}
 	return nil
+}
+
+// CreateNetworkWithArgs creates a network passing extra flags to
+// '$engine network create <args...> $network' (e.g. --ipv6=false, --subnet).
+func CreateNetworkWithArgs(engineName, networkName string, args ...string) error {
+	ce := NewContainerEngine()
+	SetEngineName(ce, engineName)
+	ce.SetAction(K_ACTION_NETWORK)
+	ce.SetNetworkCmd(K_NETWORK_CREATE)
+	ce.SetNetworkName(networkName)
+	ce.SetNetworkCreateArgs(args...)
+
+	if out, exCmdErr := ExecuteCommand(ce, shexec.RunLocalCmdWithOutput); exCmdErr != nil {
+		return cerr.AppendError(
+			fmt.Sprintf("Failed to create network %s. Output: %v", networkName, out),
+			exCmdErr,
+		)
+	}
+	return nil
+}
+
+// KindNetworkName is the podman network kind attaches its nodes to. CDS creates
+// it explicitly (IPv4-only) before kind does, because kind creates it
+// IPv6-enabled by default, which fails on hosts where IPv6 is disabled in the
+// kernel (netavark cannot set the ipv6 forwarding sysctl). See the phase-0
+// spike finding on azrnedbx0201.
+const KindNetworkName = "kind"
+
+// EnsureKindNetwork makes sure the `kind` podman network exists and is
+// IPv4-only. It is idempotent: when the network is already present it is left
+// as is (the caller is responsible for removing a wrongly-configured network
+// first). It must run before `kind create cluster`.
+func EnsureKindNetwork(engineName string) error {
+	if NetworkExists(engineName, KindNetworkName) {
+		return nil
+	}
+	return CreateNetworkWithArgs(engineName, KindNetworkName, "--ipv6=false")
 }
 
 // NetworkExists checks if a network exists using '$engine network exists $network'
