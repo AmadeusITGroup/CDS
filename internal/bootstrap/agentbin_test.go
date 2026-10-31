@@ -75,7 +75,7 @@ func TestResolveAgentBinaryFromSetting(t *testing.T) {
 func TestResolveAgentBinaryFromCache(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("CDS_CONFIG_PATH", root)
-	cached := filepath.Join(root, ".xcds", "cache", "agents", cg.Version, "linux-riscv64", "cds-api-agent")
+	cached := filepath.Join(root, ".cds", "cache", "agents", cg.Version, "linux-riscv64", "cds-api-agent")
 	writeExecutable(t, cached, "agent")
 
 	path, err := resolveAgentBinary(remotePlatform)
@@ -101,7 +101,7 @@ func TestResolveAgentBinaryDownloadsIntoCache(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Equal(t, "/"+cg.Version+"/cds-api-agent-linux-riscv64", requested)
-	assert.Equal(t, filepath.Join(root, ".xcds", "cache", "agents", cg.Version, "linux-riscv64", "cds-api-agent"), path)
+	assert.Equal(t, filepath.Join(root, ".cds", "cache", "agents", cg.Version, "linux-riscv64", "cds-api-agent"), path)
 	content, err := os.ReadFile(path)
 	require.NoError(t, err)
 	assert.Equal(t, "downloaded agent", string(content))
@@ -127,7 +127,7 @@ func TestResolveAgentBinaryDownloadFailures(t *testing.T) {
 			_, err := resolveAgentBinary(remotePlatform)
 
 			require.Error(t, err)
-			entries, _ := os.ReadDir(filepath.Join(root, ".xcds", "cache", "agents", cg.Version, "linux-riscv64"))
+			entries, _ := os.ReadDir(filepath.Join(root, ".cds", "cache", "agents", cg.Version, "linux-riscv64"))
 			assert.Empty(t, entries, "nothing is left in the cache")
 		})
 	}

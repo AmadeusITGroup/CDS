@@ -12,8 +12,8 @@ import (
 func TestAgentAddressLoadsRegisteredAgentsWithoutInit(t *testing.T) {
 	setupConfigTestFS(t)
 
-	require.NoError(t, cos.Fs.MkdirAll("/tmp/testconfig/.xcds", 0755))
-	require.NoError(t, cos.WriteFile("/tmp/testconfig/.xcds/cliconfig.yaml", []byte(`apiVersion: v1
+	require.NoError(t, cos.Fs.MkdirAll("/tmp/testconfig/.cds", 0755))
+	require.NoError(t, cos.WriteFile("/tmp/testconfig/.cds/cliconfig.yaml", []byte(`apiVersion: v1
 agents:
   - targetServer: https://agent.example:8443
 `), 0600))
@@ -46,8 +46,8 @@ func TestAgentAddressUsesConfiguredLocalhostTargetServer(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			setupConfigTestFS(t)
 
-			require.NoError(t, cos.Fs.MkdirAll("/tmp/testconfig/.xcds", 0755))
-			require.NoError(t, cos.WriteFile("/tmp/testconfig/.xcds/cliconfig.yaml", []byte(fmt.Sprintf(`apiVersion: v1
+			require.NoError(t, cos.Fs.MkdirAll("/tmp/testconfig/.cds", 0755))
+			require.NoError(t, cos.WriteFile("/tmp/testconfig/.cds/cliconfig.yaml", []byte(fmt.Sprintf(`apiVersion: v1
 agents:
   - targetServer: %s
 `, tt.targetServer)), 0600))

@@ -32,7 +32,7 @@ const (
 // registry. Paths are directories mounted into the registry container.
 type material struct {
 	// root is the registry material directory on the host, e.g.
-	// ~/.xcds-agent/registry.
+	// ~/.cds-agent/registry.
 	root string
 	// username/password are the generated basic-auth credentials.
 	username string

@@ -30,7 +30,7 @@ type SourceRef struct {
 	Ref  string `yaml:"ref"`
 }
 
-// Manifest is the root configuration file that maps well-known keys to their SourceRef definitions. It is always stored locally at ~/.xcds/cdsconfig.yaml.
+// Manifest is the root configuration file that maps well-known keys to their SourceRef definitions. It is always stored locally at ~/.cds/cdsconfig.yaml.
 type Manifest struct {
 	APIVersion string               `yaml:"apiVersion"`
 	Sources    map[string]SourceRef `yaml:"sources"`

@@ -20,7 +20,7 @@ import (
 )
 
 const (
-	kRemoteAgentDir    = ".xcds-agent"
+	kRemoteAgentDir    = ".cds-agent"
 	kRemoteUploadExt   = ".upload"
 	kRemoteDirPerm     = "700"
 	kRemoteBinaryPerm  = "700"
@@ -35,7 +35,7 @@ type remoteHost interface {
 
 // remoteBootstrap installs and starts an agent on a remote host, in the
 // spirit of the VS Code server: the agent binary matching the CLI version is
-// uploaded under ~/.xcds-agent/bin/<version> when missing or different, along
+// uploaded under ~/.cds-agent/bin/<version> when missing or different, along
 // with a server certificate issued for the host, then run as a systemd user
 // service.
 type remoteBootstrap struct {

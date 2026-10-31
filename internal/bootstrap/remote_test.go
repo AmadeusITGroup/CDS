@@ -51,7 +51,7 @@ func (f *fakeRemoteHost) Copy(localPath, remoteDir string) error {
 }
 
 const (
-	kTestAgentDir = "/srv/home/alice/.xcds-agent"
+	kTestAgentDir = "/srv/home/alice/.cds-agent"
 	kTestBinary   = kTestAgentDir + "/bin/" + "%s" + "/cds-api-agent"
 )
 

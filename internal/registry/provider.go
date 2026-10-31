@@ -192,7 +192,7 @@ func (p *podmanProvider) Stop() error {
 }
 
 // Delete removes the Quadlet unit and the registry container. It deliberately
-// leaves the material directory (~/.xcds-agent/registry) in place, so the
+// leaves the material directory (~/.cds-agent/registry) in place, so the
 // pushed images under data/ and the TLS material survive: a later Build reuses
 // them (material generation is idempotent). Deleting the registry thus removes
 // the service, not the stored images. force is accepted for interface parity.

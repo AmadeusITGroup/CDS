@@ -16,11 +16,11 @@ import (
 func TestCertFilePathsFollowConfigPath(t *testing.T) {
 	first := t.TempDir()
 	t.Setenv("CDS_CONFIG_PATH", first)
-	assert.Equal(t, filepath.Join(first, ".xcds", "certs", "ca.pem"), CAFilePath())
+	assert.Equal(t, filepath.Join(first, ".cds", "certs", "ca.pem"), CAFilePath())
 
 	second := t.TempDir()
 	t.Setenv("CDS_CONFIG_PATH", second)
-	certsDir := filepath.Join(second, ".xcds", "certs")
+	certsDir := filepath.Join(second, ".cds", "certs")
 	assert.Equal(t, filepath.Join(certsDir, "ca.pem"), CAFilePath())
 	assert.Equal(t, filepath.Join(certsDir, "agent-srv.pem"), AgentServerCertFilePath())
 	assert.Equal(t, filepath.Join(certsDir, "agent-srv-key.pem"), AgentServerKeyFilePath())
@@ -34,8 +34,8 @@ func TestCertFilePathsFollowAgentMode(t *testing.T) {
 	cenv.SetConfigDirForAgent()
 	t.Cleanup(cenv.SetConfigDirForClient)
 
-	assert.Equal(t, filepath.Join(root, ".xcds-agent", "certs", "ca.pem"), CAFilePath())
-	assert.Equal(t, filepath.Join(root, ".xcds-agent", "certs", "agent-srv.pem"), AgentServerCertFilePath())
+	assert.Equal(t, filepath.Join(root, ".cds-agent", "certs", "ca.pem"), CAFilePath())
+	assert.Equal(t, filepath.Join(root, ".cds-agent", "certs", "agent-srv.pem"), AgentServerCertFilePath())
 }
 
 func TestInstallCertsSplitsClientAndAgentMaterial(t *testing.T) {
@@ -66,8 +66,8 @@ func TestInstallCertsSplitsClientAndAgentMaterial(t *testing.T) {
 		}
 		assert.ElementsMatch(t, want, got)
 	}
-	assertDirContent(filepath.Join(root, ".xcds", "certs"), "ca.pem", "ca-key.pem", "client.pem", "client-key.pem")
-	assertDirContent(filepath.Join(root, ".xcds-agent", "certs"), "ca.pem", "agent-srv.pem", "agent-srv-key.pem")
+	assertDirContent(filepath.Join(root, ".cds", "certs"), "ca.pem", "ca-key.pem", "client.pem", "client-key.pem")
+	assertDirContent(filepath.Join(root, ".cds-agent", "certs"), "ca.pem", "agent-srv.pem", "agent-srv-key.pem")
 }
 
 func TestInstallCertsFailsOnMissingMaterial(t *testing.T) {
@@ -106,8 +106,8 @@ func TestEnsureCertsKeepsTheCA(t *testing.T) {
 	requireCfssl(t)
 	root := t.TempDir()
 	t.Setenv("CDS_CONFIG_PATH", root)
-	clientDir := filepath.Join(root, ".xcds", "certs")
-	agentDir := filepath.Join(root, ".xcds-agent", "certs")
+	clientDir := filepath.Join(root, ".cds", "certs")
+	agentDir := filepath.Join(root, ".cds-agent", "certs")
 
 	require.NoError(t, EnsureCerts())
 	ca, err := os.ReadFile(filepath.Join(clientDir, "ca.pem"))
@@ -134,8 +134,8 @@ func TestAgentCertsDir(t *testing.T) {
 
 	dir, err := AgentCertsDir("remote.example.com")
 	require.NoError(t, err)
-	assert.Equal(t, filepath.Join(root, ".xcds", "certs", "agents", "remote.example.com"), dir)
-	verifyCert(t, filepath.Join(root, ".xcds", "certs", "ca.pem"), filepath.Join(dir, "agent-srv.pem"), x509.ExtKeyUsageServerAuth, "remote.example.com")
+	assert.Equal(t, filepath.Join(root, ".cds", "certs", "agents", "remote.example.com"), dir)
+	verifyCert(t, filepath.Join(root, ".cds", "certs", "ca.pem"), filepath.Join(dir, "agent-srv.pem"), x509.ExtKeyUsageServerAuth, "remote.example.com")
 	assert.FileExists(t, filepath.Join(dir, "ca.pem"))
 	assert.FileExists(t, filepath.Join(dir, "agent-srv-key.pem"))
 	assert.NoFileExists(t, filepath.Join(dir, "ca-key.pem"), "the CA key never leaves the client certs dir")

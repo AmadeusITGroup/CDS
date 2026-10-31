@@ -12,8 +12,8 @@ const (
 	// KConfigPathEnvVar is the name of the environment variable that can be used to override the default configuration path
 	kConfigPathEnvVar = "CDS_CONFIG_PATH"
 
-	kClientConfigDirName = ".xcds"
-	kAgentConfigDirName  = ".xcds-agent"
+	kClientConfigDirName = ".cds"
+	kAgentConfigDirName  = ".cds-agent"
 
 	kCacheDirName = "cache"
 )

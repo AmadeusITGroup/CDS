@@ -26,10 +26,10 @@ func TestConfigDirFollowsProcessMode(t *testing.T) {
 	root := setupCenvTest(t)
 
 	SetConfigDirForClient()
-	assert.Equal(t, filepath.Join(root, ".xcds", "certs"), ConfigDir("certs"))
+	assert.Equal(t, filepath.Join(root, ".cds", "certs"), ConfigDir("certs"))
 
 	SetConfigDirForAgent()
-	assert.Equal(t, filepath.Join(root, ".xcds-agent", "certs"), ConfigDir("certs"))
+	assert.Equal(t, filepath.Join(root, ".cds-agent", "certs"), ConfigDir("certs"))
 }
 
 func TestClientAndAgentConfigDirIgnoreProcessMode(t *testing.T) {
@@ -37,8 +37,8 @@ func TestClientAndAgentConfigDirIgnoreProcessMode(t *testing.T) {
 
 	for _, setMode := range []func(){SetConfigDirForClient, SetConfigDirForAgent} {
 		setMode()
-		assert.Equal(t, filepath.Join(root, ".xcds", "certs"), ClientConfigDir("certs"))
-		assert.Equal(t, filepath.Join(root, ".xcds-agent", "certs"), AgentConfigDir("certs"))
+		assert.Equal(t, filepath.Join(root, ".cds", "certs"), ClientConfigDir("certs"))
+		assert.Equal(t, filepath.Join(root, ".cds-agent", "certs"), AgentConfigDir("certs"))
 	}
 }
 
@@ -59,7 +59,7 @@ func TestCacheDirFollowsProcessMode(t *testing.T) {
 	root := setupCenvTest(t)
 
 	SetConfigDirForAgent()
-	assert.Equal(t, filepath.Join(root, ".xcds-agent", "cache"), CacheDir())
+	assert.Equal(t, filepath.Join(root, ".cds-agent", "cache"), CacheDir())
 }
 
 func TestRemoveTempFile(t *testing.T) {
@@ -71,7 +71,7 @@ func TestRemoveTempFile(t *testing.T) {
 	assert.False(t, cos.Exists(path))
 	require.NoError(t, RemoveTempFile(path), "removing an already removed temp file is not an error")
 
-	configFile := filepath.Join(root, ".xcds", "cliconfig.yaml")
+	configFile := filepath.Join(root, ".cds", "cliconfig.yaml")
 	require.NoError(t, cos.WriteFile(configFile, []byte("content"), 0600))
 	for _, outside := range []string{configFile, ConfigDir(kTmp), filepath.Join(ConfigDir(kTmp), "..", "cliconfig.yaml")} {
 		assert.Error(t, RemoveTempFile(outside), outside)

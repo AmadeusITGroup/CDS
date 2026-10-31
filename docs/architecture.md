@@ -18,14 +18,14 @@ CDS is a client/server application made of two binaries:
 flowchart LR
     subgraph laptop[User machine]
         cli[cds CLI]
-        state[(~/.xcds<br/>db, config, certs)]
+        state[(~/.cds<br/>db, config, certs)]
         sshcfg[(~/.ssh/config<br/>managed blocks)]
         cli --- state
         cli --- sshcfg
     end
     subgraph host[Agent host: localhost or remote Linux]
         agent[cds-api-agent<br/>systemd user service]
-        astate[(~/.xcds-agent<br/>certs, staging, deployments)]
+        astate[(~/.cds-agent<br/>certs, staging, deployments)]
         engine[podman]
         c1[[dev container]]
         agent --- astate
@@ -88,7 +88,7 @@ The configuration root is `$HOME`, or `$CDS_CONFIG_PATH` when set. Set it to a
 scratch directory to keep experiments away from your real configuration.
 
 ```
-<root>/.xcds/                      CLI (cenv client mode)
+<root>/.cds/                      CLI (cenv client mode)
     cdsconfig.yaml                 manifest: where the files below come from
     cliconfig.yaml                 registered agents (address + TLS material)
     db.json                        projects, containers, hosts, context
@@ -98,7 +98,7 @@ scratch directory to keep experiments away from your real configuration.
     certs/agents/<host>/           server certificate issued for a remote host
     cache/agents/<version>/<os>-<arch>/cds-api-agent   downloaded agent binaries
 
-<root>/.xcds-agent/                agent (cenv agent mode)
+<root>/.cds-agent/                agent (cenv agent mode)
     aconfig.yaml                   clients registered on the agent
     certs/ca.pem agent-srv.pem agent-srv-key.pem
     bin/<version>/cds-api-agent    remote hosts: installed agent binary
@@ -187,7 +187,7 @@ Otherwise:
 - **remote** (`remote.go`), in the spirit of the VS Code server:
   1. Load the host from the db, or configure SSH access on first use (`host.Build`).
   2. Probe the platform with `uname -sm`, and the home directory with `systemd-path user`.
-  3. Install the agent binary matching the CLI version under `~/.xcds-agent/bin/<version>/` when it is missing or different (sha256 check, uploaded aside and then renamed).
+  3. Install the agent binary matching the CLI version under `~/.cds-agent/bin/<version>/` when it is missing or different (sha256 check, uploaded aside and then renamed).
   4. Install the CA and a server certificate issued for the host (`cdstls.AgentCertsDir`).
   5. Create, enable and restart the systemd user units (`internal/systemd`).
   6. Wait until healthy, then register (`config.UpsertAgentForHostInConfig`).
@@ -225,7 +225,7 @@ environment variables:
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `CDS_CONFIG_PATH` | `$HOME` | Root of `.xcds` / `.xcds-agent` |
+| `CDS_CONFIG_PATH` | `$HOME` | Root of `.cds` / `.cds-agent` |
 | `CDS_AGENT_PORT` | `8087` | Port agents listen on |
 | `CDS_AGENT_BINARY` | | Agent binary path template |
 | `CDS_AGENT_DOWNLOAD_URL` | | Agent binary download URL template |
@@ -291,7 +291,7 @@ component in action:
 
 ```bash
 make build-client build-api-agent
-export CDS_CONFIG_PATH=$(mktemp -d)        # scratch .xcds / .xcds-agent
+export CDS_CONFIG_PATH=$(mktemp -d)        # scratch .cds / .cds-agent
 export PATH=$PWD:$PATH                      # cds-api-agent next to cds, cfssl/cfssljson on PATH too
 ./cds version -v                            # bootstraps the local agent
 ```
