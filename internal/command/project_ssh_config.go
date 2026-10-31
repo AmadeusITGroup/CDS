@@ -8,7 +8,6 @@ import (
 	"github.com/amadeusitgroup/cds/internal/cenv"
 	"github.com/amadeusitgroup/cds/internal/cerr"
 	"github.com/amadeusitgroup/cds/internal/clog"
-	"github.com/amadeusitgroup/cds/internal/containerconf"
 	"github.com/amadeusitgroup/cds/internal/cos"
 	"github.com/amadeusitgroup/cds/internal/engine"
 	cg "github.com/amadeusitgroup/cds/internal/global"
@@ -43,7 +42,7 @@ func upsertContainerSSHConfig(hostName string, container bo.Container) error {
 	if user == cg.EmptyStr {
 		user = engine.KRootUsr
 	}
-	identityFile, _, _ := containerconf.DefaultSSHKeyPair()
+	identityFile := hostContainerIdentityFile(hostName)
 
 	entry := sshHostConfigEntry{alias: containerName, hostName: hostName, port: port, user: user, identityFile: identityFile}
 	for label, value := range map[string]string{"SSH host alias": entry.alias, "SSH host name": entry.hostName, "SSH user": entry.user} {

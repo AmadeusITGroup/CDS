@@ -6,7 +6,6 @@ import (
 
 	"github.com/amadeusitgroup/cds/internal/api/v1/cdspb"
 	"github.com/amadeusitgroup/cds/internal/cerr"
-	"github.com/amadeusitgroup/cds/internal/containerconf"
 	"github.com/amadeusitgroup/cds/internal/db"
 	cg "github.com/amadeusitgroup/cds/internal/global"
 	"github.com/amadeusitgroup/cds/internal/host"
@@ -57,9 +56,9 @@ func containerSSHTarget(projectName, containerName, user string) (sshTarget, err
 	if user == cg.EmptyStr {
 		return nil, cerr.NewError(fmt.Sprintf("Container %q does not have a configured remote user", containerName))
 	}
-	privateKey, publicKey, found := containerconf.DefaultSSHKeyPair()
-	if !found {
-		return nil, cerr.NewError("No SSH key pair found (~/.ssh/id_rsa or ~/.ssh/id_ed25519) to access containers")
+	privateKey, publicKey, err := ensureProjectContainerKeyPair(projectName)
+	if err != nil {
+		return nil, cerr.AppendError("Failed to resolve an SSH key pair to access containers", err)
 	}
 
 	return host.New(

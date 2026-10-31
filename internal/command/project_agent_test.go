@@ -7,6 +7,7 @@ import (
 
 	"github.com/amadeusitgroup/cds/internal/api/v1/cdspb"
 	"github.com/amadeusitgroup/cds/internal/bo"
+	"github.com/amadeusitgroup/cds/internal/config"
 	"github.com/amadeusitgroup/cds/internal/containerconf"
 	"github.com/amadeusitgroup/cds/internal/db"
 	"github.com/amadeusitgroup/cds/internal/engine"
@@ -217,7 +218,17 @@ func TestContainerSSHTarget(t *testing.T) {
 	assert.Equal(t, cg.KLocalhost, target.FQDN())
 	assert.Equal(t, 2222, target.Port())
 	assert.Equal(t, "developer", target.Username())
-	assert.True(t, strings.HasSuffix(target.PathToPrv(), "/.ssh/id_ed25519"))
+	// the container is accessed with the per-host key pair (id_rsa_<hostname>)
+	// recorded on the host, as host.Build creates during bootstrap
+	assert.True(t, strings.HasSuffix(target.PathToPrv(), "/.ssh/id_rsa_"+cg.KLocalhost),
+		"expected per-host key, got %q", target.PathToPrv())
+	assert.True(t, strings.HasSuffix(target.PathToPub(), "/.ssh/id_rsa_"+cg.KLocalhost+".pub"))
+
+	// the resolved key pair is recorded in cliconfig.yaml for the host
+	prv, pub, found := config.HostContainerSSHKey(cg.KLocalhost)
+	require.True(t, found, "the container key must be persisted in cliconfig.yaml")
+	assert.Equal(t, target.PathToPrv(), prv)
+	assert.Equal(t, target.PathToPub(), pub)
 
 	target, err = containerSSHTarget("p1", containerName, "root")
 	require.NoError(t, err)

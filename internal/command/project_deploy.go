@@ -56,7 +56,7 @@ func buildProjectDeployPlan(projectName string) (projectDeployPlan, error) {
 		return projectDeployPlan{}, cerr.AppendErrorFmt("Failed to parse devcontainer configuration %s", err, configFile)
 	}
 
-	artifacts, err := collectArtifactCandidates(config, configDir)
+	artifacts, err := collectArtifactCandidates(projectName, config, configDir)
 	if err != nil {
 		return projectDeployPlan{}, cerr.AppendError("Failed to collect deployment artifacts", err)
 	}
@@ -86,8 +86,20 @@ func projectContainerLabels(projectName string) map[string]string {
 	return labels
 }
 
-func collectArtifactCandidates(config *containerconf.Config, configDir string) ([]artifactCandidate, error) {
-	requiredArtifacts, err := containerconf.CollectArtifacts(config, configDir)
+func collectArtifactCandidates(projectName string, config *containerconf.Config, configDir string) ([]artifactCandidate, error) {
+	var opts []containerconf.CollectOption
+	// Install the project host key pair's public key (id_rsa_<host>) into the
+	// container, generating/recording it as needed. Only the public key is
+	// shipped to the agent; the private key stays under ~/.ssh.
+	if _, pubPath, err := ensureProjectContainerKeyPair(projectName); err != nil {
+		return nil, cerr.AppendError("Failed to resolve container-access SSH key", err)
+	} else if pubData, readErr := cos.ReadFile(pubPath); readErr != nil {
+		return nil, cerr.AppendErrorFmt("Failed to read container-access public key %s", readErr, pubPath)
+	} else {
+		opts = append(opts, containerconf.WithAuthorizedKey(pubData))
+	}
+
+	requiredArtifacts, err := containerconf.CollectArtifacts(config, configDir, opts...)
 	if err != nil {
 		return nil, err
 	}

@@ -99,24 +99,27 @@ func defaultAuthFilePath() (string, error) {
 	return cenv.ConfigFile(cg.KContainerAuthFileName), nil
 }
 
-// defaultAuthorizedKeysSource generates an authorized_keys payload from the
-// user's default public key. The engine consumes it through the pub_key singleton
-// resource and installs the key into the container user's ~/.ssh/authorized_keys.
-func defaultAuthorizedKeysSource(collectContext) (SourceRef, bool, error) {
-	// TODO: Feature: Generate the Key pair per host / per container, instead of relying on the user to have a pre-existing public key.
-	_, publicKeyPath, found := DefaultSSHKeyPair()
-	if !found {
-		return SourceRef{}, false, nil
-	}
+// defaultAuthorizedKeysSource produces the authorized_keys payload installed into
+// the container user's ~/.ssh/authorized_keys. It prefers the public key the
+// caller injected (the project host key pair, per the id_rsa_<host> convention);
+// otherwise it falls back to discovering the user's default key under ~/.ssh.
+// Only the public key is shipped to the agent; the private key stays on the client.
+func defaultAuthorizedKeysSource(ctx collectContext) (SourceRef, bool, error) {
+	line := strings.TrimSpace(string(ctx.AuthorizedKey))
 
-	data, err := cos.ReadFile(publicKeyPath)
-	if err != nil {
-		return SourceRef{}, false, err
-	}
-
-	line := strings.TrimSpace(string(data))
 	if line == "" {
-		return SourceRef{}, false, fmt.Errorf("default SSH public key source %q is empty", publicKeyPath)
+		_, publicKeyPath, found := DefaultSSHKeyPair()
+		if !found {
+			return SourceRef{}, false, nil
+		}
+		data, err := cos.ReadFile(publicKeyPath)
+		if err != nil {
+			return SourceRef{}, false, err
+		}
+		line = strings.TrimSpace(string(data))
+		if line == "" {
+			return SourceRef{}, false, fmt.Errorf("default SSH public key source %q is empty", publicKeyPath)
+		}
 	}
 
 	return SourceRef{
