@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"os"
 
+	"github.com/amadeusitgroup/cds/internal/authmgr"
 	"github.com/amadeusitgroup/cds/internal/cenv"
 	"github.com/amadeusitgroup/cds/internal/cerr"
 	"github.com/amadeusitgroup/cds/internal/clog"
@@ -37,6 +38,11 @@ func init() {
 		err = cerr.AppendError("Failed to initialize CDS config", err)
 		return
 	}
+
+	// Wire interactive SSH password prompting so that connecting to a host that
+	// authenticates by LDAP password prompts the user instead of panicking on
+	// unregistered credential callbacks.
+	authmgr.WireShexecPasswordPrompt()
 
 	// Agents are started on demand, by the commands calling them.
 

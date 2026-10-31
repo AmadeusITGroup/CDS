@@ -162,7 +162,7 @@ func (rec passwordExecuteCallback) execute(cmds []any, sh sessionHandler) ([]str
 	}
 
 	secretValidated = true
-	validationOnShexecPassword(true)
+	notifySecretValidation(true)
 
 	outputs := []string{}
 	errors := []error{}
