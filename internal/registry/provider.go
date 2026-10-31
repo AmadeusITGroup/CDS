@@ -223,6 +223,16 @@ func (p *podmanProvider) CACertificate() (string, error) {
 	return string(data), nil
 }
 
+// Credentials returns the generated registry credentials from the on-host
+// material. Empty when no material has been generated.
+func (p *podmanProvider) Credentials() (string, string, error) {
+	m := material{root: p.materialRoot}
+	if !fileExists(m.credsFile()) {
+		return cg.EmptyStr, cg.EmptyStr, nil
+	}
+	return readPersistedCredentials(m.credsFile())
+}
+
 func reportf(report ProgressReporter, phase, message string) error {
 	if report == nil {
 		return nil

@@ -16,6 +16,7 @@ import (
 	"github.com/amadeusitgroup/cds/internal/clog"
 	"github.com/amadeusitgroup/cds/internal/containerconf"
 	"github.com/amadeusitgroup/cds/internal/engine"
+	"github.com/amadeusitgroup/cds/internal/registry"
 	cg "github.com/amadeusitgroup/cds/internal/global"
 	"github.com/amadeusitgroup/cds/internal/shexec"
 )
@@ -54,6 +55,10 @@ type deployContainerSpec struct {
 	// registryCA is the registry CA PEM installed into the container's trust
 	// store when a registry is requested.
 	registryCA string
+	// registryUser/registryPassword are the registry credentials injected into
+	// the container (docker login) when a registry is requested.
+	registryUser     string
+	registryPassword string
 }
 
 type deployProgress struct {
@@ -633,7 +638,21 @@ func compensateOrphanedCreate(containerName, preexistingID string) {
 // root in the container via a custom command.
 func buildDecorationCommands(spec deployContainerSpec) []shexec.ExecuteEvent {
 	var events []shexec.ExecuteEvent
-	for _, dc := range containerDecorationCommands(cg.EmptyStr, spec.containerName, spec.kubeconfig, spec.registryCA) {
+	reg := registryEnv{}
+	if spec.orchestration.Registry.Requested && spec.registryUser != cg.EmptyStr {
+		port := spec.orchestration.Registry.Port
+		if port == 0 {
+			port = registry.DefaultPort
+		}
+		reg = registryEnv{
+			name:     registry.Hostname,
+			port:     port,
+			caPath:   fmt.Sprintf("/etc/containers/certs.d/%s:%d/ca.crt", registry.Hostname, port),
+			user:     spec.registryUser,
+			password: spec.registryPassword,
+		}
+	}
+	for _, dc := range containerDecorationCommandsFull(spec.kubeconfig, spec.registryCA, reg) {
 		ce := engine.NewContainerEngine(engine.WithContainerConfig(spec.config))
 		ce.SetAction(engine.K_ACTION_EXE)
 		ce.SetExecuteCmd(engine.K_EXEC_CUSTOM_CMD)

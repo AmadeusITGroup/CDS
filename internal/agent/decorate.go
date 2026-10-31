@@ -72,7 +72,30 @@ func ensureOrchestration(
 		})
 	}
 
-	return g.Wait()
+	if err := g.Wait(); err != nil {
+		return err
+	}
+
+	// Once both the cluster and registry are up, create the in-cluster pull
+	// secret so pods can pull from the local registry (the documented
+	// cdsregistrycred secret + default service account patch).
+	if oc.Registry.Requested {
+		user, pass, err := reg.RegistryCredentials()
+		if err != nil {
+			return cerr.AppendError("failed to resolve registry credentials for pull secret", err)
+		}
+		port := oc.Registry.Port
+		if port == 0 {
+			port = registry.DefaultPort
+		}
+		if err := report(deployProgress{phase: "cluster", message: "Creating in-cluster registry pull secret"}); err != nil {
+			return err
+		}
+		if err := cluster.CreateRegistrySecret(registry.Hostname, port, user, pass); err != nil {
+			return cerr.AppendError("failed to create in-cluster registry pull secret", err)
+		}
+	}
+	return nil
 }
 
 // containerDecorationCommands builds the exec commands that decorate a running
@@ -84,6 +107,24 @@ func ensureOrchestration(
 // kubeconfig is the cluster kubeconfig (may be empty to skip), caCert is the
 // registry CA PEM (may be empty to skip).
 func containerDecorationCommands(engineName, containerName, kubeconfig, caCert string) []decorationCommand {
+	return containerDecorationCommandsFull(kubeconfig, caCert, registryEnv{})
+}
+
+// registryEnv carries the registry connection details injected into the
+// devcontainer so a user can log in and push to the local registry.
+type registryEnv struct {
+	name     string
+	port     int
+	caPath   string
+	user     string
+	password string
+}
+
+func (r registryEnv) set() bool { return r.name != "" && r.user != "" }
+
+// containerDecorationCommandsFull builds the decoration steps including the
+// optional registry environment export.
+func containerDecorationCommandsFull(kubeconfig, caCert string, reg registryEnv) []decorationCommand {
 	var cmds []decorationCommand
 	if kubeconfig != "" {
 		cmds = append(cmds, decorationCommand{
@@ -97,7 +138,30 @@ func containerDecorationCommands(engineName, containerName, kubeconfig, caCert s
 			script: installRegistryTrustScript(caCert),
 		})
 	}
+	if reg.set() {
+		cmds = append(cmds, decorationCommand{
+			info:   "Exporting registry environment in container",
+			script: installRegistryEnvScript(reg),
+		})
+	}
 	return cmds
+}
+
+// installRegistryEnvScript writes the CDS_REGISTRY_* variables to a profile
+// script in the container so interactive shells can docker login and push to
+// the local registry.
+func installRegistryEnvScript(reg registryEnv) string {
+	return fmt.Sprintf(`set -eu
+mkdir -p /etc/profile.d
+cat > /etc/profile.d/cds-registry.sh <<'CDS_EOF'
+export CDS_REGISTRY_NAME=%s
+export CDS_REGISTRY_PORT=%d
+export CDS_REGISTRY_PATH_TO_CA=%s
+export CDS_REGISTRY_USR=%s
+export CDS_REGISTRY_PWD=%s
+CDS_EOF
+chmod 644 /etc/profile.d/cds-registry.sh`,
+		reg.name, reg.port, reg.caPath, reg.user, reg.password)
 }
 
 // decorationCommand is a shell snippet run as root inside the container with a
@@ -152,6 +216,11 @@ func (s *containerServiceServer) ensureAndResolveDecoration(
 			return spec, cerr.AppendError("failed to resolve registry CA for decoration", err)
 		}
 		spec.registryCA = ca
+		user, pass, err := s.core.registryOps().RegistryCredentials()
+		if err != nil {
+			return spec, cerr.AppendError("failed to resolve registry credentials for decoration", err)
+		}
+		spec.registryUser, spec.registryPassword = user, pass
 	}
 	return spec, nil
 }

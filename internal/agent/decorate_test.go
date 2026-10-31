@@ -116,3 +116,43 @@ func TestEnsureOrchestrationSkipsIngressWhenNotRequested(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, cluster.ingressDeployed)
 }
+
+func TestContainerDecorationIncludesRegistryEnv(t *testing.T) {
+	reg := registryEnv{name: "cds.sec.io", port: 5000, caPath: "/etc/containers/certs.d/cds.sec.io:5000/ca.crt", user: "cdsabc", password: "secret"}
+	cmds := containerDecorationCommandsFull("KC", "CA", reg)
+	// kubeconfig + trust + registry env
+	require.Len(t, cmds, 3)
+	last := cmds[2].script
+	assert.Contains(t, last, "CDS_REGISTRY_NAME=cds.sec.io")
+	assert.Contains(t, last, "CDS_REGISTRY_PORT=5000")
+	assert.Contains(t, last, "CDS_REGISTRY_USR=cdsabc")
+	assert.Contains(t, last, "CDS_REGISTRY_PWD=secret")
+	assert.Contains(t, last, "/etc/profile.d/cds-registry.sh")
+}
+
+func TestContainerDecorationSkipsRegistryEnvWhenUnset(t *testing.T) {
+	cmds := containerDecorationCommandsFull("KC", "CA", registryEnv{})
+	require.Len(t, cmds, 2, "no registry env step when creds are not set")
+}
+
+func TestEnsureOrchestrationCreatesPullSecret(t *testing.T) {
+	cluster := &mockClusterOps{}
+	reg := &mockRegistryOps{user: "cdsu", pass: "cdsp"}
+
+	oc := containerconf.KindOrchestrationConfig{
+		Requested: true,
+		Registry:  containerconf.RegistryConfig{Requested: true, Secure: true},
+	}
+	err := ensureOrchestration(context.Background(), cluster, reg, oc, func(deployProgress) error { return nil })
+	require.NoError(t, err)
+	assert.True(t, cluster.registrySecretCreated, "in-cluster pull secret is created when a registry is requested")
+}
+
+func TestEnsureOrchestrationNoPullSecretWithoutRegistry(t *testing.T) {
+	cluster := &mockClusterOps{}
+	reg := &mockRegistryOps{}
+	oc := containerconf.KindOrchestrationConfig{Requested: true, Registry: containerconf.RegistryConfig{Requested: false}}
+	err := ensureOrchestration(context.Background(), cluster, reg, oc, func(deployProgress) error { return nil })
+	require.NoError(t, err)
+	assert.False(t, cluster.registrySecretCreated)
+}

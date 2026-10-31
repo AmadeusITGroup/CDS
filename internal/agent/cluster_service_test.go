@@ -31,6 +31,9 @@ type mockClusterOps struct {
 	applyMirrorsErr  error
 	ingressDeployed  bool
 	deployIngressErr error
+
+	registrySecretCreated bool
+	registrySecretErr     error
 }
 
 func (m *mockClusterOps) BuildCluster(_, _ string, report clusterProgressReporter) error {
@@ -60,6 +63,10 @@ func (m *mockClusterOps) ApplyMirrors(mirrors []orchestration.Mirror) error {
 func (m *mockClusterOps) DeployIngress() error {
 	m.ingressDeployed = true
 	return m.deployIngressErr
+}
+func (m *mockClusterOps) CreateRegistrySecret(host string, port int, user, pass string) error {
+	m.registrySecretCreated = true
+	return m.registrySecretErr
 }
 
 func newTestClusterService(t *testing.T, ops clusterOps) *clusterServiceServer {

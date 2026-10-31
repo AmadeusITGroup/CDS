@@ -198,6 +198,35 @@ func (k *kindProvider) Kubeconfig() (string, error) {
 	return out, nil
 }
 
+// kRegistryPullSecret is the Kubernetes docker-registry secret CDS creates so
+// pods can pull from the local secure registry; the default service account is
+// patched to use it.
+const kRegistryPullSecret = "cdsregistrycred"
+
+// CreateRegistrySecret creates (idempotently) the docker-registry pull secret
+// in the default namespace and patches the default service account to
+// reference it, so Deployments can pull from the local secure registry without
+// per-pod imagePullSecrets.
+func (k *kindProvider) CreateRegistrySecret(registryHost string, port int, username, password string) error {
+	server := fmt.Sprintf("%s:%d", registryHost, port)
+	kubectl := fmt.Sprintf("podman exec %s kubectl --kubeconfig /etc/kubernetes/admin.conf", ControlPlaneNode)
+
+	createSecret := fmt.Sprintf(
+		"%s create secret docker-registry %s --docker-server=%s --docker-username=%s --docker-password=%s --dry-run=client -o yaml | %s apply -f -",
+		kubectl, kRegistryPullSecret, server, shellQuote(username), shellQuote(password), kubectl,
+	)
+	if out, err := k.runner(createSecret); err != nil {
+		return cerr.AppendErrorFmt("failed to create registry pull secret: %s", err, out)
+	}
+
+	patch := fmt.Sprintf(`{"imagePullSecrets":[{"name":"%s"}]}`, kRegistryPullSecret)
+	patchSA := fmt.Sprintf("%s patch serviceaccount default -p %s", kubectl, shellQuote(patch))
+	if out, err := k.runner(patchSA); err != nil {
+		return cerr.AppendErrorFmt("failed to patch default service account: %s", err, out)
+	}
+	return nil
+}
+
 // DeployIngress installs the nginx ingress controller on the cluster by
 // applying the kind-provider manifest via kubectl on the control-plane node.
 // It keeps the enterprise implementation (the engine's APPLY_INGRESS command)

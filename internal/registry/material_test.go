@@ -54,3 +54,18 @@ func TestEnsureMaterialIsIdempotent(t *testing.T) {
 	assert.Equal(t, firstCert, secondCert, "certificate is not regenerated")
 	assert.Equal(t, first.username, second.username, "username is preserved")
 }
+
+func TestEnsureMaterialPersistsPlaintextCredentials(t *testing.T) {
+	root := t.TempDir()
+	first, err := ensureMaterial(root)
+	require.NoError(t, err)
+	require.NotEmpty(t, first.username)
+	require.NotEmpty(t, first.password)
+
+	// a second call reuses the SAME plaintext credentials (recovered from the
+	// persisted creds file, not the unrecoverable bcrypt hash).
+	second, err := ensureMaterial(root)
+	require.NoError(t, err)
+	assert.Equal(t, first.username, second.username)
+	assert.Equal(t, first.password, second.password, "password survives reuse via the persisted creds file")
+}

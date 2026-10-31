@@ -11,6 +11,7 @@ import (
 	"math/big"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/amadeusitgroup/cds/internal/cerr"
@@ -44,6 +45,7 @@ func (m material) dataDir() string  { return filepath.Join(m.root, "data") }
 func (m material) certFile() string { return filepath.Join(m.certsDir(), "domain.crt") }
 func (m material) keyFile() string  { return filepath.Join(m.certsDir(), "domain.key") }
 func (m material) htpasswd() string { return filepath.Join(m.authDir(), "htpasswd") }
+func (m material) credsFile() string { return filepath.Join(m.authDir(), "creds") }
 
 // ensure generates the registry material under root if it is not already
 // present: a self-signed TLS certificate/key for Hostname and an htpasswd file
@@ -61,8 +63,8 @@ func ensureMaterial(root string) (material, error) {
 
 	// reuse existing material so repeated builds do not rotate credentials and
 	// certificates out from under clients that already trust them.
-	if fileExists(m.certFile()) && fileExists(m.keyFile()) && fileExists(m.htpasswd()) {
-		user, pass, err := readCredentials(m.htpasswd())
+	if fileExists(m.certFile()) && fileExists(m.keyFile()) && fileExists(m.htpasswd()) && fileExists(m.credsFile()) {
+		user, pass, err := readPersistedCredentials(m.credsFile())
 		if err != nil {
 			return material{}, err
 		}
@@ -141,8 +143,28 @@ func (m *material) generateCredentials() error {
 	if err := os.WriteFile(m.htpasswd(), []byte(line), 0600); err != nil {
 		return cerr.AppendError("failed to write registry htpasswd", err)
 	}
+	// persist the plaintext credentials (agent-side, 0600) so they can be
+	// reused across builds and injected into the user's devcontainer for
+	// `docker login`; the bcrypt hash in htpasswd is not reversible.
+	if err := os.WriteFile(m.credsFile(), []byte(user+"\n"+pass+"\n"), 0600); err != nil {
+		return cerr.AppendError("failed to persist registry credentials", err)
+	}
 	m.username, m.password = user, pass
 	return nil
+}
+
+// readPersistedCredentials reads the plaintext user/password persisted at
+// generation time.
+func readPersistedCredentials(path string) (string, string, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return cg.EmptyStr, cg.EmptyStr, cerr.AppendError("failed to read registry credentials", err)
+	}
+	lines := strings.SplitN(strings.TrimRight(string(data), "\n"), "\n", 2)
+	if len(lines) != 2 {
+		return cg.EmptyStr, cg.EmptyStr, cerr.NewError("registry credentials file is malformed")
+	}
+	return lines[0], lines[1], nil
 }
 
 func randomToken() (string, error) {
@@ -151,23 +173,6 @@ func randomToken() (string, error) {
 		return cg.EmptyStr, cerr.AppendError("failed to read random bytes", err)
 	}
 	return fmt.Sprintf("%x", b), nil
-}
-
-// readCredentials reads the username from an existing htpasswd file. The
-// password cannot be recovered from the bcrypt hash; the empty password is
-// returned, which is acceptable because the credentials are reused in-place by
-// the registry and the already-installed client trust, not re-presented.
-func readCredentials(htpasswdPath string) (string, string, error) {
-	data, err := os.ReadFile(htpasswdPath)
-	if err != nil {
-		return cg.EmptyStr, cg.EmptyStr, cerr.AppendError("failed to read registry htpasswd", err)
-	}
-	for i := 0; i < len(data); i++ {
-		if data[i] == ':' {
-			return string(data[:i]), cg.EmptyStr, nil
-		}
-	}
-	return cg.EmptyStr, cg.EmptyStr, cerr.NewError("registry htpasswd is malformed")
 }
 
 func fileExists(path string) bool {

@@ -60,4 +60,8 @@ type Provider interface {
 	// installed as trust inside devcontainers. It is empty when no material has
 	// been generated yet.
 	CACertificate() (string, error)
+	// Credentials returns the registry basic-auth username and password, so the
+	// agent can inject them into devcontainers (docker login) and create the
+	// in-cluster pull secret. Empty when no material has been generated.
+	Credentials() (username, password string, err error)
 }

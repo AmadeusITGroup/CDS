@@ -25,6 +25,7 @@ type clusterOps interface {
 	GetKubeconfig() (string, error)
 	ApplyMirrors(mirrors []orchestration.Mirror) error
 	DeployIngress() error
+	CreateRegistrySecret(registryHost string, port int, username, password string) error
 }
 
 // defaultClusterOps drives the orchestration package on the agent host.
@@ -102,4 +103,12 @@ func (defaultClusterOps) DeployIngress() error {
 		return err
 	}
 	return provider.DeployIngress()
+}
+
+func (defaultClusterOps) CreateRegistrySecret(registryHost string, port int, username, password string) error {
+	provider, err := orchestration.Provider("")
+	if err != nil {
+		return err
+	}
+	return provider.CreateRegistrySecret(registryHost, port, username, password)
 }
