@@ -118,3 +118,36 @@ func TestKindStopFallsBackToPodmanWhenUnitInactive(t *testing.T) {
 	assert.True(t, r.ranContaining("podman stop cds-kind-control-plane"),
 		"when the supervision unit is inactive, Stop stops the node directly")
 }
+
+func TestKindPrepareNodeForIngress(t *testing.T) {
+	r := newFakeRunner()
+	k := kindProviderWithRunner(r)
+
+	require.NoError(t, k.prepareNodeForIngress())
+
+	// the node is labelled ingress-ready and the controller is made to tolerate
+	// the control-plane taints, so the stock kind manifest schedules on a
+	// default single-node cluster.
+	assert.True(t, r.ranContaining("label node cds-kind-control-plane ingress-ready=true"),
+		"node is labelled ingress-ready")
+	assert.True(t, r.ranContaining("patch deployment ingress-nginx-controller"),
+		"controller is patched to tolerate taints")
+}
+
+func TestKindApplyMirrorsWritesHostsToml(t *testing.T) {
+	r := newFakeRunner()
+	r.replies["kind get nodes"] = "cds-kind-control-plane\n"
+	k := kindProviderWithRunner(r)
+
+	err := k.ApplyMirrors([]Mirror{{Registry: "docker.io", Endpoint: "https://mirror/docker"}})
+	require.NoError(t, err)
+	assert.True(t, r.ranContaining("/etc/containerd/certs.d/docker.io/hosts.toml"))
+	assert.True(t, r.ranContaining("podman exec cds-kind-control-plane"))
+}
+
+func TestKindApplyMirrorsNoopWhenEmpty(t *testing.T) {
+	r := newFakeRunner()
+	k := kindProviderWithRunner(r)
+	require.NoError(t, k.ApplyMirrors(nil))
+	assert.Empty(t, r.ran, "no commands run when there are no mirrors")
+}

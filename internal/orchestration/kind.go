@@ -212,6 +212,45 @@ func (k *kindProvider) DeployIngress() error {
 	if _, err := engine.ExecuteCommand(ce, shexec.RunLocalCmdWithOutput); err != nil {
 		return cerr.AppendError("failed to apply ingress on cluster", err)
 	}
+	// On a default single-node kind cluster the only node is the control plane,
+	// which carries NoSchedule taints (control-plane and the legacy master). The
+	// pinned upstream kind manifest does not tolerate them, so the controller
+	// would stay Pending. Patch the controller deployment to tolerate any taint
+	// so it schedules on the single node. This is version-independent and does
+	// not depend on the (EOL) manifest's own tolerations. Best effort: a patch
+	// failure does not fail ingress (the manifest is already applied).
+	if err := k.prepareNodeForIngress(); err != nil {
+		clog.Warn("failed to prepare node for ingress", err)
+	}
+	return nil
+}
+
+// prepareNodeForIngress makes a default single-node kind cluster able to run
+// the nginx ingress controller, which the stock kind manifest only schedules on
+// a cluster purpose-built for ingress. Two gaps are closed:
+//   - the controller's nodeSelector requires the ingress-ready=true node label,
+//     which a default (non-ingress) kind cluster does not set;
+//   - the only node is the control plane, whose NoSchedule taints the pinned
+//     manifest does not tolerate.
+//
+// The node is labelled ingress-ready and the controller Deployment is patched
+// to tolerate any taint. Best effort and version-independent.
+func (k *kindProvider) prepareNodeForIngress() error {
+	label := fmt.Sprintf(
+		"podman exec %s kubectl --kubeconfig /etc/kubernetes/admin.conf label node %s ingress-ready=true --overwrite",
+		ControlPlaneNode, ControlPlaneNode,
+	)
+	if out, err := k.runner(label); err != nil {
+		return cerr.AppendErrorFmt("failed to label node for ingress: %s", err, out)
+	}
+	patch := `{"spec":{"template":{"spec":{"tolerations":[{"operator":"Exists"}]}}}}`
+	tolerate := fmt.Sprintf(
+		"podman exec %s kubectl --kubeconfig /etc/kubernetes/admin.conf -n ingress-nginx patch deployment ingress-nginx-controller --type merge -p %s",
+		ControlPlaneNode, shellQuote(patch),
+	)
+	if out, err := k.runner(tolerate); err != nil {
+		return cerr.AppendErrorFmt("failed to patch ingress tolerations: %s", err, out)
+	}
 	return nil
 }
 
