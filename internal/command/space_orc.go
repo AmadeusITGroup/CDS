@@ -18,6 +18,7 @@ func (s *spcOrc) initSubCommands() {
 		&spcOrcDelete{},
 		&spcOrcRebuild{},
 		&spcOrcStatus{},
+		&spcOrcKubeconfig{},
 	)
 }
 
