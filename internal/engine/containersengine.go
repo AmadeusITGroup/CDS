@@ -75,6 +75,7 @@ type ContainersEngine struct {
 	azureDomainName     string
 	networkCmd          Network_t
 	networkName         string
+	runNetwork          string
 	containerLabels     map[string]string
 	config              *containerconf.Config
 	resourceProvider    resourceProvider
@@ -140,6 +141,17 @@ func WithContainerConfig(config *containerconf.Config) ContainerEngineOption {
 func WithResolvedFeatures(rf []features.ResolvedFeature) ContainerEngineOption {
 	return func(ce *ContainersEngine) {
 		ce.resolvedFeatures = rf
+	}
+}
+
+// WithNetwork sets the container network the devcontainer run attaches to
+// (podman `--network`). It defaults to the default podman network when unset,
+// preserving the previous hardcoded behaviour. The orchestration deploy path
+// uses it to attach a devcontainer to the `kind` cluster network so the
+// container can reach the in-cluster API server and services.
+func WithNetwork(network string) ContainerEngineOption {
+	return func(ce *ContainersEngine) {
+		ce.runNetwork = network
 	}
 }
 
@@ -1403,6 +1415,15 @@ func (ce *ContainersEngine) prepareImage() (string, error) {
 	return "", cerr.NewError("No image specified")
 }
 
+// runNetworkOrDefault returns the network the devcontainer run attaches to,
+// defaulting to the default podman network when WithNetwork was not set.
+func (ce *ContainersEngine) runNetworkOrDefault() string {
+	if ce.runNetwork == cg.EmptyStr {
+		return kPodmanNetwork
+	}
+	return ce.runNetwork
+}
+
 // handles:
 // 1 - main podman run command
 func (ce *ContainersEngine) containerRun() error {
@@ -1426,7 +1447,7 @@ func (ce *ContainersEngine) containerRun() error {
 	// Start as root so CDS can create configured users before post-create and SSH setup commands use them.
 	options = append(options, fmt.Sprintf("-u %v", KRootUsr))
 
-	options = append(options, fmt.Sprintf("--network=%v", kPodmanNetwork))
+	options = append(options, fmt.Sprintf("--network=%v", ce.runNetworkOrDefault()))
 
 	if ce.ContainerLabels() != nil {
 		for labelKey, labelValue := range ce.ContainerLabels() {
