@@ -1,0 +1,14 @@
+syntax = "proto3";
+
+package api.v1.orchestration;
+option go_package = "github.com/amadeusitgroup/cds/cdspb";
+
+// BuildClusterProgress is a display-oriented progress signal during cluster
+// bring-up.
+message BuildClusterProgress {
+  // phase is the current build stage (network, cluster, ...).
+  string phase = 1;
+
+  // message is a human-readable description of the current work.
+  string message = 2;
+}

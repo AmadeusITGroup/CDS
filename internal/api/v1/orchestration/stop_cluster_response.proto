@@ -1,0 +1,9 @@
+syntax = "proto3";
+
+package api.v1.orchestration;
+option go_package = "github.com/amadeusitgroup/cds/cdspb";
+
+// StopClusterResponse reports the result of stopping the cluster.
+message StopClusterResponse {
+  string output = 1;
+}

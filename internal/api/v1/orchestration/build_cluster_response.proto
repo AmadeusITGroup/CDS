@@ -1,0 +1,13 @@
+syntax = "proto3";
+
+package api.v1.orchestration;
+option go_package = "github.com/amadeusitgroup/cds/cdspb";
+
+// BuildClusterResponse is the final outcome of a cluster build.
+message BuildClusterResponse {
+  // name is the built cluster name.
+  string name = 1;
+
+  // error is a human-readable failure message, empty on success.
+  string error = 2;
+}

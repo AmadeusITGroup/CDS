@@ -1,0 +1,9 @@
+syntax = "proto3";
+
+package api.v1.orchestration;
+option go_package = "github.com/amadeusitgroup/cds/cdspb";
+
+// DeleteClusterResponse reports the result of deleting the cluster.
+message DeleteClusterResponse {
+  string output = 1;
+}

@@ -1,0 +1,20 @@
+syntax = "proto3";
+
+package api.v1.orchestration;
+option go_package = "github.com/amadeusitgroup/cds/cdspb";
+
+// Cluster is the summary of the managed kind cluster on an agent host.
+message Cluster {
+  // name is the kind cluster name.
+  string name = 1;
+
+  // node is the control-plane container name.
+  string node = 2;
+
+  // status is the live status of the control-plane node (running, exited,
+  // deleted, unknown).
+  string status = 3;
+
+  // host is the agent host the cluster runs on.
+  string host = 4;
+}

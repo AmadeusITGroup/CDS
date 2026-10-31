@@ -1,0 +1,11 @@
+syntax = "proto3";
+
+package api.v1.orchestration;
+option go_package = "github.com/amadeusitgroup/cds/cdspb";
+
+import "internal/api/v1/orchestration/cluster.proto";
+
+// GetClusterResponse returns the current cluster summary.
+message GetClusterResponse {
+  Cluster cluster = 1;
+}

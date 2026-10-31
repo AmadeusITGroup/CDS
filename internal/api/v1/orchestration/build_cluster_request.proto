@@ -1,0 +1,14 @@
+syntax = "proto3";
+
+package api.v1.orchestration;
+option go_package = "github.com/amadeusitgroup/cds/cdspb";
+
+// BuildClusterRequest requests creation of the kind cluster.
+message BuildClusterRequest {
+  // engine is the orchestration engine name (empty defaults to kind).
+  string engine = 1;
+
+  // config_file is an optional provider-specific configuration file path on
+  // the agent host (e.g. a kind cluster config). Empty uses the default.
+  string config_file = 2;
+}

@@ -1,0 +1,18 @@
+syntax = "proto3";
+
+package api.v1.orchestration;
+option go_package = "github.com/amadeusitgroup/cds/cdspb";
+
+import "internal/api/v1/orchestration/build_cluster_progress.proto";
+import "internal/api/v1/orchestration/build_cluster_response.proto";
+
+// BuildClusterEvent is the streamed envelope returned by BuildCluster.
+message BuildClusterEvent {
+  oneof payload {
+    // progress is a human-readable status update emitted during build.
+    BuildClusterProgress progress = 1;
+
+    // response is the final build outcome.
+    BuildClusterResponse response = 2;
+  }
+}
