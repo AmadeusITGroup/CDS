@@ -26,6 +26,7 @@ type agentServices struct {
 	info      cdspb.AgentInfoServiceClient
 	container cdspb.ContainerServiceClient
 	artifact  cdspb.ArtifactServiceClient
+	cluster   cdspb.ClusterServiceClient
 }
 
 type stubCallback func(c agentServices, ctx context.Context) error
@@ -74,6 +75,7 @@ func (s stubCallback) executeOn(hostname string, options ...func(*callOptions)) 
 		info:      cdspb.NewAgentInfoServiceClient(conn),
 		container: cdspb.NewContainerServiceClient(conn),
 		artifact:  cdspb.NewArtifactServiceClient(conn),
+		cluster:   cdspb.NewClusterServiceClient(conn),
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), opts.timeout)
 	defer cancel()

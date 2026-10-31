@@ -17,7 +17,7 @@ func (s *spc) initSubCommands() {
 		&spcHost{},
 		//&spcRegistry{},
 		//&spcProfile{},
-		//&spcOrc{},
+		&spcOrc{},
 	)
 }
 
