@@ -23,6 +23,7 @@ type clusterOps interface {
 	DeleteCluster(force bool) error
 	GetCluster() (orchestration.Cluster, error)
 	GetKubeconfig() (string, error)
+	ApplyMirrors(mirrors []orchestration.Mirror) error
 }
 
 // defaultClusterOps drives the orchestration package on the agent host.
@@ -84,4 +85,12 @@ func (defaultClusterOps) GetKubeconfig() (string, error) {
 		return "", err
 	}
 	return provider.Kubeconfig()
+}
+
+func (defaultClusterOps) ApplyMirrors(mirrors []orchestration.Mirror) error {
+	provider, err := orchestration.Provider("")
+	if err != nil {
+		return err
+	}
+	return provider.ApplyMirrors(mirrors)
 }

@@ -9,6 +9,7 @@ import (
 	"github.com/amadeusitgroup/cds/internal/cerr"
 	"github.com/amadeusitgroup/cds/internal/clog"
 	"github.com/amadeusitgroup/cds/internal/containerconf"
+	"github.com/amadeusitgroup/cds/internal/orchestration"
 	"github.com/amadeusitgroup/cds/internal/registry"
 	"golang.org/x/sync/errgroup"
 )
@@ -39,6 +40,14 @@ func ensureOrchestration(
 		})
 		if err != nil {
 			return cerr.AppendError("failed to ensure cluster", err)
+		}
+		if len(oc.Mirrors) > 0 {
+			if err := report(deployProgress{phase: "cluster", message: "Applying registry mirrors"}); err != nil {
+				return err
+			}
+			if err := cluster.ApplyMirrors(toOrchestrationMirrors(oc.Mirrors)); err != nil {
+				return cerr.AppendError("failed to apply registry mirrors", err)
+			}
 		}
 		return nil
 	})
@@ -214,4 +223,13 @@ func (s *grpcServer) containerRunning(name string) bool {
 		return false
 	}
 	return c.Status == bo.KContainerStatusRunning
+}
+
+// toOrchestrationMirrors converts config mirrors to the orchestration type.
+func toOrchestrationMirrors(mirrors []containerconf.Mirror) []orchestration.Mirror {
+	out := make([]orchestration.Mirror, 0, len(mirrors))
+	for _, m := range mirrors {
+		out = append(out, orchestration.Mirror{Registry: m.Registry, Endpoint: m.Endpoint})
+	}
+	return out
 }

@@ -198,6 +198,60 @@ func (k *kindProvider) Kubeconfig() (string, error) {
 	return out, nil
 }
 
+// ApplyMirrors installs a containerd pull-through mirror (hosts.toml) for each
+// configured registry on every kind node. Image pulls for Registry are then
+// served from Endpoint. Idempotent; a no-op when mirrors is empty.
+func (k *kindProvider) ApplyMirrors(mirrors []Mirror) error {
+	if len(mirrors) == 0 {
+		return nil
+	}
+	nodes, err := k.nodes()
+	if err != nil {
+		return err
+	}
+	for _, node := range nodes {
+		for _, m := range mirrors {
+			if err := k.applyMirrorOnNode(node, m); err != nil {
+				return cerr.AppendErrorFmt("failed to apply mirror %s on node %s", err, m.Registry, node)
+			}
+		}
+	}
+	return nil
+}
+
+// nodes lists the kind cluster node container names.
+func (k *kindProvider) nodes() ([]string, error) {
+	out, err := k.runner(fmt.Sprintf("%s kind get nodes --name=%s", kindProviderEnv, ClusterName))
+	if err != nil {
+		return nil, cerr.AppendError("failed to list kind nodes", err)
+	}
+	var nodes []string
+	for _, line := range strings.Split(out, "\n") {
+		if n := strings.TrimSpace(line); n != "" {
+			nodes = append(nodes, n)
+		}
+	}
+	return nodes, nil
+}
+
+// applyMirrorOnNode writes the containerd hosts.toml for one registry on one
+// node. containerd reads /etc/containerd/certs.d/<registry>/hosts.toml.
+func (k *kindProvider) applyMirrorOnNode(node string, m Mirror) error {
+	dir := fmt.Sprintf("/etc/containerd/certs.d/%s", m.Registry)
+	hostsToml := fmt.Sprintf("server = \"https://%s\"\n\n[host.\"%s\"]\n  capabilities = [\"pull\", \"resolve\"]\n  override_path = true\n", m.Registry, m.Endpoint)
+	script := fmt.Sprintf("set -eu; mkdir -p %s; printf '%%s' %s > %s/hosts.toml", dir, shellQuote(hostsToml), dir)
+	cmd := fmt.Sprintf("podman exec %s sh -c %s", node, shellQuote(script))
+	if out, err := k.runner(cmd); err != nil {
+		return cerr.AppendErrorFmt("failed to write hosts.toml: %s", err, out)
+	}
+	return nil
+}
+
+// shellQuote single-quotes s for safe embedding in a shell command.
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
 // supervisionUnit builds the systemd user unit that supervises the kind node.
 func (k *kindProvider) supervisionUnit() ([]byte, error) {
 	podman, err := k.resolvePodman()

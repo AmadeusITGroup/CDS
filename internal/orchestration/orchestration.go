@@ -60,4 +60,16 @@ type ClusterProvider interface {
 	// Kubeconfig returns the cluster's kubeconfig (minified, flattened) as read
 	// from the control-plane node.
 	Kubeconfig() (string, error)
+	// ApplyMirrors installs registry pull-through mirror configuration
+	// (containerd hosts.toml) on the cluster nodes, so image pulls for the
+	// given registries are served from their upstream endpoints. It is
+	// idempotent and a no-op when mirrors is empty.
+	ApplyMirrors(mirrors []Mirror) error
+}
+
+// Mirror is a registry pull-through mirror applied to the cluster nodes: pulls
+// for Registry are served from Endpoint.
+type Mirror struct {
+	Registry string
+	Endpoint string
 }

@@ -25,6 +25,17 @@ type KindOrchestrationConfig struct {
 	// Registry holds the secure-registry configuration requested alongside the
 	// cluster.
 	Registry RegistryConfig
+	// Mirrors are registry pull-through mirrors to install on the cluster nodes
+	// (containerd hosts.toml), so image pulls for the listed registries go
+	// through the given upstream endpoint. Empty when none are configured.
+	Mirrors []Mirror
+}
+
+// Mirror is a single registry pull-through mirror: pulls for Registry (e.g.
+// "docker.io") are served from Endpoint (an upstream mirror URL).
+type Mirror struct {
+	Registry string
+	Endpoint string
 }
 
 // RegistryConfig is the registry part of an orchestration configuration.
@@ -50,6 +61,7 @@ func (c *Config) OrchestrationConfig() KindOrchestrationConfig {
 		ConfigFile:       c.GetOrchestrationConfigFilePath(),
 		PersistentVolume: c.boolAt(KOrchestration, KPersistentVolumeClaim),
 		Registry:         c.registryConfig(),
+		Mirrors:          c.mirrors(),
 	}
 	if engine, ok := c.Get(KOrchestration, KOrchestrationEngine).(string); ok {
 		cfg.Engine = engine
@@ -64,6 +76,29 @@ func (c *Config) registryConfig() RegistryConfig {
 		Secure:    c.boolAt(KOrchestration, KOrchestrationRegistry, KOrchestrationRegistrySecure),
 		Port:      c.intAt(KOrchestration, KOrchestrationRegistry, KOrchestrationRegistryPort),
 	}
+}
+
+// mirrors collects the configured registry pull-through mirrors. Each entry is
+// an object with a registry and an endpoint; malformed entries are skipped.
+func (c *Config) mirrors() []Mirror {
+	raw, ok := c.Get(KOrchestration, KOrchestrationMirrors).([]interface{})
+	if !ok {
+		return nil
+	}
+	var mirrors []Mirror
+	for _, item := range raw {
+		m, ok := item.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		registry, _ := m[KOrchestrationMirrorRegistry].(string)
+		endpoint, _ := m[KOrchestrationMirrorEndpoint].(string)
+		if registry == "" || endpoint == "" {
+			continue
+		}
+		mirrors = append(mirrors, Mirror{Registry: registry, Endpoint: endpoint})
+	}
+	return mirrors
 }
 
 // boolAt returns the bool at the given key path, or false when unset or not a

@@ -17,16 +17,18 @@ import (
 
 // mockClusterOps records calls and returns scripted results.
 type mockClusterOps struct {
-	buildErr      error
-	buildProgress []clusterProgress
-	startErr      error
-	stopErr       error
-	deleteErr     error
-	deleteForce   bool
-	cluster       orchestration.Cluster
-	clusterErr    error
-	kubeconfig    string
-	kubeconfigErr error
+	buildErr        error
+	buildProgress   []clusterProgress
+	startErr        error
+	stopErr         error
+	deleteErr       error
+	deleteForce     bool
+	cluster         orchestration.Cluster
+	clusterErr      error
+	kubeconfig      string
+	kubeconfigErr   error
+	appliedMirrors  []orchestration.Mirror
+	applyMirrorsErr error
 }
 
 func (m *mockClusterOps) BuildCluster(_, _ string, report clusterProgressReporter) error {
@@ -48,6 +50,10 @@ func (m *mockClusterOps) GetCluster() (orchestration.Cluster, error) {
 }
 func (m *mockClusterOps) GetKubeconfig() (string, error) {
 	return m.kubeconfig, m.kubeconfigErr
+}
+func (m *mockClusterOps) ApplyMirrors(mirrors []orchestration.Mirror) error {
+	m.appliedMirrors = mirrors
+	return m.applyMirrorsErr
 }
 
 func newTestClusterService(t *testing.T, ops clusterOps) *clusterServiceServer {
