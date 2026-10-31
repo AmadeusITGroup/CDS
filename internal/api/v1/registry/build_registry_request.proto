@@ -1,0 +1,11 @@
+syntax = "proto3";
+
+package api.v1.registry;
+option go_package = "github.com/amadeusitgroup/cds/cdspb";
+
+// BuildRegistryRequest requests creation of the secure registry.
+message BuildRegistryRequest {
+  // secure requests a secured registry (TLS + auth). It must be true; an
+  // insecure registry is not supported.
+  bool secure = 1;
+}

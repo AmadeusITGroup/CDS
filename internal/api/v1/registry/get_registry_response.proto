@@ -1,0 +1,10 @@
+syntax = "proto3";
+
+package api.v1.registry;
+option go_package = "github.com/amadeusitgroup/cds/cdspb";
+
+import "internal/api/v1/registry/registry.proto";
+
+message GetRegistryResponse {
+  Registry registry = 1;
+}

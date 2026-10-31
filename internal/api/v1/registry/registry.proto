@@ -1,0 +1,22 @@
+syntax = "proto3";
+
+package api.v1.registry;
+option go_package = "github.com/amadeusitgroup/cds/cdspb";
+
+// Registry is the summary of the managed secure registry on an agent host.
+message Registry {
+  // name is the registry container name.
+  string name = 1;
+
+  // status is the live status of the registry container.
+  string status = 2;
+
+  // port is the host port the registry publishes.
+  int32 port = 3;
+
+  // hostname is the TLS server name of the registry.
+  string hostname = 4;
+
+  // host is the agent host the registry runs on.
+  string host = 5;
+}

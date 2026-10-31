@@ -1,0 +1,32 @@
+syntax = "proto3";
+
+package api.v1.services;
+import "internal/api/v1/registry/build_registry_request.proto";
+import "internal/api/v1/registry/build_registry_event.proto";
+import "internal/api/v1/registry/start_registry_request.proto";
+import "internal/api/v1/registry/start_registry_response.proto";
+import "internal/api/v1/registry/stop_registry_request.proto";
+import "internal/api/v1/registry/stop_registry_response.proto";
+import "internal/api/v1/registry/delete_registry_request.proto";
+import "internal/api/v1/registry/delete_registry_response.proto";
+import "internal/api/v1/registry/get_registry_request.proto";
+import "internal/api/v1/registry/get_registry_response.proto";
+option go_package = "github.com/amadeusitgroup/cds/cdspb";
+
+// RegistryService manages the local secure container registry on an agent host.
+service RegistryService {
+  // BuildRegistry creates the registry if absent, streaming progress.
+  rpc BuildRegistry(api.v1.registry.BuildRegistryRequest) returns (stream api.v1.registry.BuildRegistryEvent);
+
+  // StartRegistry starts an existing, stopped registry.
+  rpc StartRegistry(api.v1.registry.StartRegistryRequest) returns (api.v1.registry.StartRegistryResponse);
+
+  // StopRegistry stops a running registry without deleting it.
+  rpc StopRegistry(api.v1.registry.StopRegistryRequest) returns (api.v1.registry.StopRegistryResponse);
+
+  // DeleteRegistry removes the registry (force tears it down even when in use).
+  rpc DeleteRegistry(api.v1.registry.DeleteRegistryRequest) returns (api.v1.registry.DeleteRegistryResponse);
+
+  // GetRegistry returns the current registry summary.
+  rpc GetRegistry(api.v1.registry.GetRegistryRequest) returns (api.v1.registry.GetRegistryResponse);
+}
