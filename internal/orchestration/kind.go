@@ -116,6 +116,12 @@ func (k *kindProvider) Start() error {
 	if !k.units.Available() {
 		return cerr.NewError("a systemd user session is required to start the cluster")
 	}
+	// The kind node runs on the `kind` podman network; a `podman system reset`
+	// (host maintenance) wipes it. Re-ensure it so start/restart after a reset
+	// is self-healing, mirroring Build.
+	if err := engine.EnsureKindNetwork(k.engineName); err != nil {
+		return cerr.AppendError("failed to ensure kind network", err)
+	}
 	unitDir, err := k.units.UserUnitDir()
 	if err != nil {
 		return err

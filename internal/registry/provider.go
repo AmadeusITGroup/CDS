@@ -172,6 +172,14 @@ func (p *podmanProvider) installHostTrust(m material) error {
 }
 
 func (p *podmanProvider) Start() error {
+	// The Quadlet unit runs `podman run --network kind`, so the kind network
+	// must exist. A `podman system reset` (host maintenance) wipes it, which
+	// made a plain restart fail with the container unable to attach its network.
+	// Re-ensure it here so start/restart after a reset is self-healing. The
+	// material bind mounts under ~/.cds-agent/registry survive a reset.
+	if err := engine.EnsureKindNetwork(p.engineName); err != nil {
+		return cerr.AppendError("failed to ensure kind network for registry", err)
+	}
 	if err := p.units.Start(quadletService); err != nil {
 		return cerr.AppendError("failed to start registry", err)
 	}
