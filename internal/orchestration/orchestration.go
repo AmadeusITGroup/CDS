@@ -65,6 +65,9 @@ type ClusterProvider interface {
 	// given registries are served from their upstream endpoints. It is
 	// idempotent and a no-op when mirrors is empty.
 	ApplyMirrors(mirrors []Mirror) error
+	// DeployIngress installs an nginx ingress controller on the cluster. It is
+	// best-effort idempotent (kubectl apply).
+	DeployIngress() error
 }
 
 // Mirror is a registry pull-through mirror applied to the cluster nodes: pulls

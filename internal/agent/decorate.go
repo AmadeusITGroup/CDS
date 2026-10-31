@@ -49,6 +49,14 @@ func ensureOrchestration(
 				return cerr.AppendError("failed to apply registry mirrors", err)
 			}
 		}
+		if oc.Ingress {
+			if err := report(deployProgress{phase: "cluster", message: "Deploying ingress controller"}); err != nil {
+				return err
+			}
+			if err := cluster.DeployIngress(); err != nil {
+				return cerr.AppendError("failed to deploy ingress", err)
+			}
+		}
 		return nil
 	})
 

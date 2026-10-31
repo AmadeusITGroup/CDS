@@ -21,6 +21,7 @@ const (
 	KOrchestrationRegistry       = "registry"
 	KOrchestrationRegistrySecure = "secure"
 	KOrchestrationRegistryPort   = "port"
+	KOrchestrationIngress        = "ingress"
 	KOrchestrationMirrors        = "mirrors"
 	KOrchestrationMirrorRegistry = "registry"
 	KOrchestrationMirrorEndpoint = "endpoint"

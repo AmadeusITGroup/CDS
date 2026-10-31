@@ -22,6 +22,9 @@ type KindOrchestrationConfig struct {
 	// PersistentVolume reports whether a persistent volume claim mount was
 	// requested (orchestration.pvc).
 	PersistentVolume bool
+	// Ingress reports whether an nginx ingress controller should be installed
+	// on the cluster (orchestration.ingress).
+	Ingress bool
 	// Registry holds the secure-registry configuration requested alongside the
 	// cluster.
 	Registry RegistryConfig
@@ -60,6 +63,7 @@ func (c *Config) OrchestrationConfig() KindOrchestrationConfig {
 		Requested:        c.IsSet(KOrchestration),
 		ConfigFile:       c.GetOrchestrationConfigFilePath(),
 		PersistentVolume: c.boolAt(KOrchestration, KPersistentVolumeClaim),
+		Ingress:          c.boolAt(KOrchestration, KOrchestrationIngress),
 		Registry:         c.registryConfig(),
 		Mirrors:          c.mirrors(),
 	}

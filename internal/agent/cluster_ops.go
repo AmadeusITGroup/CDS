@@ -24,6 +24,7 @@ type clusterOps interface {
 	GetCluster() (orchestration.Cluster, error)
 	GetKubeconfig() (string, error)
 	ApplyMirrors(mirrors []orchestration.Mirror) error
+	DeployIngress() error
 }
 
 // defaultClusterOps drives the orchestration package on the agent host.
@@ -93,4 +94,12 @@ func (defaultClusterOps) ApplyMirrors(mirrors []orchestration.Mirror) error {
 		return err
 	}
 	return provider.ApplyMirrors(mirrors)
+}
+
+func (defaultClusterOps) DeployIngress() error {
+	provider, err := orchestration.Provider("")
+	if err != nil {
+		return err
+	}
+	return provider.DeployIngress()
 }

@@ -50,3 +50,13 @@ func TestOrchestrationConfigNoMirrors(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, config.OrchestrationConfig().Mirrors)
 }
+
+func TestOrchestrationConfigCollectsIngress(t *testing.T) {
+	with, err := ParseBytes(strings.NewReader(`{"orchestration": {"engine": "kind", "ingress": true}}`))
+	require.NoError(t, err)
+	assert.True(t, with.OrchestrationConfig().Ingress)
+
+	without, err := ParseBytes(strings.NewReader(`{"orchestration": {"engine": "kind"}}`))
+	require.NoError(t, err)
+	assert.False(t, without.OrchestrationConfig().Ingress)
+}

@@ -198,6 +198,23 @@ func (k *kindProvider) Kubeconfig() (string, error) {
 	return out, nil
 }
 
+// DeployIngress installs the nginx ingress controller on the cluster by
+// applying the kind-provider manifest via kubectl on the control-plane node.
+// It keeps the enterprise implementation (the engine's APPLY_INGRESS command)
+// and is best-effort idempotent (kubectl apply).
+func (k *kindProvider) DeployIngress() error {
+	ce := engine.NewContainerEngine()
+	engine.SetEngineName(ce, k.engineName)
+	ce.SetAction(engine.K_ACTION_EXE)
+	ce.SetExecuteCmd(engine.K_EXEC_CMD_APPLY_INGRESS)
+	ce.SetContainerName(ControlPlaneNode)
+	ce.SetRemoteUser(engine.KRootUsr)
+	if _, err := engine.ExecuteCommand(ce, shexec.RunLocalCmdWithOutput); err != nil {
+		return cerr.AppendError("failed to apply ingress on cluster", err)
+	}
+	return nil
+}
+
 // ApplyMirrors installs a containerd pull-through mirror (hosts.toml) for each
 // configured registry on every kind node. Image pulls for Registry are then
 // served from Endpoint. Idempotent; a no-op when mirrors is empty.
