@@ -6,6 +6,21 @@ follow `CONTRIBUTING.md` and update these instructions.
 
 ## Required project rules
 
+- Start every new piece of development in a dedicated Git worktree created
+  from an up-to-date `main`, never directly in the main checkout. Name the
+  branch `feat/<short-description>` for features or `fix/<short-description>`
+  for bug fixes (lowercase, hyphen-separated), and place the worktree in the
+  sibling `../CDS-worktrees/` directory:
+
+  ```bash
+  git fetch origin
+  git worktree add -b feat/<short-description> ../CDS-worktrees/feat-<short-description> origin/main
+  # or
+  git worktree add -b fix/<short-description> ../CDS-worktrees/fix-<short-description> origin/main
+  ```
+
+  Do all edits, tests, and commits for that task inside the worktree. After the
+  PR is merged, remove it with `git worktree remove <path>`.
 - Read `CONTRIBUTING.md` before changing code, tests, documentation, or
   workflows.
 - Keep changes focused on the requested task. Do not modify unrelated files or
