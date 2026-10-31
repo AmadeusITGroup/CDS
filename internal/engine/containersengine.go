@@ -2556,14 +2556,26 @@ func CreateNetworkWithArgs(engineName, networkName string, args ...string) error
 const KindNetworkName = "kind"
 
 // EnsureKindNetwork makes sure the `kind` podman network exists and is
-// IPv4-only. It is idempotent: when the network is already present it is left
-// as is (the caller is responsible for removing a wrongly-configured network
-// first). It must run before `kind create cluster`.
+// IPv4-only. It is idempotent and safe under concurrency: the orchestration
+// decoration ensures the cluster and registry concurrently, so two callers can
+// race to create the network. When the network already exists (either before
+// the check or created by a concurrent caller between the check and the create)
+// it is treated as success. The caller is responsible for removing a
+// wrongly-configured network first. It must run before `kind create cluster`.
 func EnsureKindNetwork(engineName string) error {
 	if NetworkExists(engineName, KindNetworkName) {
 		return nil
 	}
-	return CreateNetworkWithArgs(engineName, KindNetworkName, "--ipv6=false")
+	if err := CreateNetworkWithArgs(engineName, KindNetworkName, "--ipv6=false"); err != nil {
+		// A concurrent caller may have created the network between our existence
+		// check and our create attempt (podman returns "network already exists",
+		// exit 125). Re-check: if it now exists, the ensure goal is met.
+		if NetworkExists(engineName, KindNetworkName) {
+			return nil
+		}
+		return err
+	}
+	return nil
 }
 
 // NetworkExists checks if a network exists using '$engine network exists $network'
