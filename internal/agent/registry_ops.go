@@ -40,7 +40,12 @@ func (defaultRegistryOps) BuildRegistry(secure bool, report registryProgressRepo
 
 func (defaultRegistryOps) StartRegistry() error        { return registry.New().Start() }
 func (defaultRegistryOps) StopRegistry() error         { return registry.New().Stop() }
-func (defaultRegistryOps) DeleteRegistry(f bool) error { return registry.New().Delete(f) }
+func (defaultRegistryOps) DeleteRegistry(f bool) error {
+	if err := guardClusterDelete("registry", f); err != nil {
+		return err
+	}
+	return registry.New().Delete(f)
+}
 func (defaultRegistryOps) GetRegistry() (registry.Registry, error) {
 	return registry.New().Status()
 }

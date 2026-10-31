@@ -60,6 +60,9 @@ func (defaultClusterOps) StopCluster() error {
 }
 
 func (defaultClusterOps) DeleteCluster(force bool) error {
+	if err := guardClusterDelete("cluster", force); err != nil {
+		return err
+	}
 	provider, err := orchestration.Provider("")
 	if err != nil {
 		return err
