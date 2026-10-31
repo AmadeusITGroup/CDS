@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/amadeusitgroup/cds/internal/bo"
+	"github.com/amadeusitgroup/cds/internal/systemd"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -95,4 +96,25 @@ func TestProviderSelectsKind(t *testing.T) {
 
 	_, err = Provider("k3s")
 	assert.Error(t, err)
+}
+
+// fakeHostOps is a systemd.HostOps whose systemctl is-active always reports
+// inactive, exercising the Stop fallback that stops the node directly.
+type fakeHostOps struct{}
+
+func (fakeHostOps) Execute(name string, args ...string) (string, error) {
+	// is-active -> "inactive" so UnitManager.IsActive returns false
+	return "inactive", nil
+}
+func (fakeHostOps) Copy(localPath, remotePath string) error { return nil }
+
+func TestKindStopFallsBackToPodmanWhenUnitInactive(t *testing.T) {
+	r := newFakeRunner()
+	k := kindProviderWithRunner(r)
+	k.units = systemd.NewUnitManager(fakeHostOps{})
+
+	err := k.Stop()
+	require.NoError(t, err)
+	assert.True(t, r.ranContaining("podman stop cds-kind-control-plane"),
+		"when the supervision unit is inactive, Stop stops the node directly")
 }

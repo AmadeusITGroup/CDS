@@ -138,10 +138,19 @@ func (k *kindProvider) Start() error {
 	return nil
 }
 
-// Stop stops the cluster through its supervision unit.
+// Stop stops the cluster. When the supervision unit is active it is stopped
+// through systemd; otherwise (the cluster was built but never started under
+// supervision, so the node runs as a plain kind-created container) the node is
+// stopped directly. Either way a stopped cluster is the success condition.
 func (k *kindProvider) Stop() error {
-	if err := k.units.Stop(kindSupervisionUnit); err != nil {
-		return cerr.AppendError("failed to stop kind supervision unit", err)
+	if k.units.IsActive(kindSupervisionUnit) {
+		if err := k.units.Stop(kindSupervisionUnit); err != nil {
+			return cerr.AppendError("failed to stop kind supervision unit", err)
+		}
+		return nil
+	}
+	if out, err := k.runner(fmt.Sprintf("podman stop %s", ControlPlaneNode)); err != nil {
+		return cerr.AppendErrorFmt("failed to stop cluster node %s: %s", err, ControlPlaneNode, out)
 	}
 	return nil
 }
