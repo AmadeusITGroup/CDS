@@ -274,3 +274,13 @@ func TestContainerSSHTarget(t *testing.T) {
 	_, err = containerSSHTarget("p1", "unknown", cg.EmptyStr)
 	assert.Error(t, err)
 }
+
+func TestSyncedProjectPrimaryContainerWithoutContainerFailsFast(t *testing.T) {
+	setupTestAgent(t)
+	setupTestProject(t, "p1", kTestDevcontainer) // registered but never deployed: no container
+
+	_, err := syncedProjectPrimaryContainer("p1")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `Project "p1" has no containers`)
+	assert.Contains(t, err.Error(), "cds project run", "should guide the user to deploy first")
+}

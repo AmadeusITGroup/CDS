@@ -32,8 +32,13 @@ func projectPrimaryContainer(projectName string) (string, error) {
 }
 
 // syncedProjectPrimaryContainer syncs the project with its agent and returns
-// its primary container.
+// its primary container. It fails fast when the project has no container
+// recorded, so commands like ssh/rsh/expose do not bootstrap an agent just to
+// discover there is nothing to connect to.
 func syncedProjectPrimaryContainer(projectName string) (string, error) {
+	if len(db.ProjectContainersName(projectName)) == 0 {
+		return cg.EmptyStr, cerr.NewError(fmt.Sprintf("Project %q has no containers.\n%s", projectName, getTipRun(projectName)))
+	}
 	if err := onProjectAgent(projectName, func(services agentServices, ctx context.Context) error {
 		return syncProjectContainers(ctx, services.container, projectName)
 	}); err != nil {
