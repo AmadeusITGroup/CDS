@@ -29,6 +29,7 @@ type bom struct {
 	stateDir     string
 	containerOps containerOps
 	clusterOps   clusterOps
+	registryOps  registryOps
 	hostname     string
 }
 
@@ -75,6 +76,13 @@ func withClusterOps(ops clusterOps) func(*bom) {
 	}
 }
 
+// withRegistryOps overrides the registry operations.
+func withRegistryOps(ops registryOps) func(*bom) {
+	return func(b *bom) {
+		b.registryOps = ops
+	}
+}
+
 type commandManager interface {
 	Version() string
 	Space() map[string]core.Cmd
@@ -95,6 +103,7 @@ func NewAgent(config *bom, opts ...grpc.ServerOption) (*grpc.Server, error) {
 	cdspb.RegisterContainerServiceServer(gsrv, newContainerServiceServer(srv))
 	cdspb.RegisterArtifactServiceServer(gsrv, newArtifactServiceServer(srv))
 	cdspb.RegisterClusterServiceServer(gsrv, newClusterServiceServer(srv))
+	cdspb.RegisterRegistryServiceServer(gsrv, newRegistryServiceServer(srv))
 	return gsrv, nil
 }
 
@@ -130,6 +139,9 @@ func newgrpcServer(b *bom) (srv *grpcServer, err error) {
 	if srv.b.clusterOps == nil {
 		srv.b.clusterOps = defaultClusterOps{}
 	}
+	if srv.b.registryOps == nil {
+		srv.b.registryOps = defaultRegistryOps{}
+	}
 	if srv.b.hostname == cg.EmptyStr {
 		hostname, errHostname := os.Hostname()
 		if errHostname != nil {
@@ -151,6 +163,10 @@ func (s *grpcServer) containerOps() containerOps {
 
 func (s *grpcServer) clusterOps() clusterOps {
 	return s.b.clusterOps
+}
+
+func (s *grpcServer) registryOps() registryOps {
+	return s.b.registryOps
 }
 
 func (s *grpcServer) stagingDir() string {
@@ -199,4 +215,13 @@ type clusterServiceServer struct {
 
 func newClusterServiceServer(core *grpcServer) *clusterServiceServer {
 	return &clusterServiceServer{core: core}
+}
+
+type registryServiceServer struct {
+	cdspb.UnimplementedRegistryServiceServer
+	core *grpcServer
+}
+
+func newRegistryServiceServer(core *grpcServer) *registryServiceServer {
+	return &registryServiceServer{core: core}
 }
