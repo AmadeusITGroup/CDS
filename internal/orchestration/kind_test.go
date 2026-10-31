@@ -151,3 +151,17 @@ func TestKindApplyMirrorsNoopWhenEmpty(t *testing.T) {
 	require.NoError(t, k.ApplyMirrors(nil))
 	assert.Empty(t, r.ran, "no commands run when there are no mirrors")
 }
+
+func TestKindCreateRegistrySecretRunsInsideNode(t *testing.T) {
+	r := newFakeRunner()
+	k := kindProviderWithRunner(r)
+
+	require.NoError(t, k.CreateRegistrySecret("cds.sec.io", 5000, "cdsu", "cdsp"))
+
+	// the create|apply pipe must run inside the node via a single `podman exec
+	// sh -c`, not across two host-side execs (which would drop stdin).
+	assert.True(t, r.ranContaining("podman exec cds-kind-control-plane sh -c"),
+		"secret create|apply runs inside the node")
+	assert.True(t, r.ranContaining("create secret docker-registry cdsregistrycred"))
+	assert.True(t, r.ranContaining("patch serviceaccount default"))
+}

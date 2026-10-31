@@ -213,6 +213,22 @@ func (s *containerServiceServer) RebuildContainer(ctx context.Context, req *cdsp
 	}
 
 	response := &cdspb.RebuildContainerResponse{ContainerName: req.GetContainerName()}
+
+	// Ensure the cluster/registry (and resolve the decoration material) before
+	// rebuilding, same as DeployContainer, so a rebuilt container is wired into
+	// orchestration too.
+	if spec.orchestration.Requested {
+		decorated, decErr := s.ensureAndResolveDecoration(ctx, spec, func(progress deployProgress) error {
+			clog.Debug(fmt.Sprintf("Rebuilding %s [%s]: %s", req.GetContainerName(), progress.phase, progress.message))
+			return nil
+		})
+		if decErr != nil {
+			response.Error = boundedHead(decErr.Error())
+			return response, nil
+		}
+		spec = decorated
+	}
+
 	if err := s.core.containerOps().DeleteContainer(req.GetContainerName()); err != nil {
 		response.Error = cerr.AppendErrorFmt("failed to delete container %s", err, req.GetContainerName()).Error()
 		return response, nil

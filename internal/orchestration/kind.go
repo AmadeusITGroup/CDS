@@ -209,18 +209,22 @@ const kRegistryPullSecret = "cdsregistrycred"
 // per-pod imagePullSecrets.
 func (k *kindProvider) CreateRegistrySecret(registryHost string, port int, username, password string) error {
 	server := fmt.Sprintf("%s:%d", registryHost, port)
-	kubectl := fmt.Sprintf("podman exec %s kubectl --kubeconfig /etc/kubernetes/admin.conf", ControlPlaneNode)
+	kc := "kubectl --kubeconfig /etc/kubernetes/admin.conf"
 
-	createSecret := fmt.Sprintf(
+	// Run the create|apply pipe INSIDE the node via a single `podman exec sh -c`
+	// so stdout->stdin is piped within the container; piping across two separate
+	// `podman exec` invocations on the host drops stdin (apply gets nothing).
+	inner := fmt.Sprintf(
 		"%s create secret docker-registry %s --docker-server=%s --docker-username=%s --docker-password=%s --dry-run=client -o yaml | %s apply -f -",
-		kubectl, kRegistryPullSecret, server, shellQuote(username), shellQuote(password), kubectl,
+		kc, kRegistryPullSecret, server, shellQuote(username), shellQuote(password), kc,
 	)
+	createSecret := fmt.Sprintf("podman exec %s sh -c %s", ControlPlaneNode, shellQuote(inner))
 	if out, err := k.runner(createSecret); err != nil {
 		return cerr.AppendErrorFmt("failed to create registry pull secret: %s", err, out)
 	}
 
 	patch := fmt.Sprintf(`{"imagePullSecrets":[{"name":"%s"}]}`, kRegistryPullSecret)
-	patchSA := fmt.Sprintf("%s patch serviceaccount default -p %s", kubectl, shellQuote(patch))
+	patchSA := fmt.Sprintf("podman exec %s %s patch serviceaccount default -p %s", ControlPlaneNode, kc, shellQuote(patch))
 	if out, err := k.runner(patchSA); err != nil {
 		return cerr.AppendErrorFmt("failed to patch default service account: %s", err, out)
 	}

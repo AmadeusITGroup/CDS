@@ -77,6 +77,13 @@ func (p *podmanProvider) Build(secure bool, report ProgressReporter) error {
 		return err
 	}
 
+	if err := reportf(report, "network", "Ensuring kind network for registry"); err != nil {
+		return err
+	}
+	if err := engine.EnsureKindNetwork(p.engineName); err != nil {
+		return cerr.AppendError("failed to ensure kind network for registry", err)
+	}
+
 	if err := reportf(report, "unit", "Installing registry Quadlet unit"); err != nil {
 		return err
 	}
@@ -118,6 +125,8 @@ Description=CDS secure registry (User)
 ContainerName=%s
 Image=%s
 PublishPort=%d:5000
+Network=%s
+NetworkAlias=%s
 Volume=%s:/certs:Z
 Volume=%s:/auth:Z
 Volume=%s:/var/lib/registry:Z
@@ -133,6 +142,8 @@ WantedBy=default.target
 		Name,
 		Image,
 		p.port,
+		engine.KindNetworkName,
+		Hostname,
 		m.certsDir(),
 		m.authDir(),
 		m.dataDir(),
