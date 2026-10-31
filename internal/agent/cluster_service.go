@@ -23,6 +23,13 @@ func (s *clusterServiceServer) BuildCluster(req *cdspb.BuildClusterRequest, stre
 	buildErr := s.core.clusterOps().BuildCluster(req.GetEngine(), req.GetConfigFile(), func(p clusterProgress) error {
 		return sendClusterProgress(stream, p.phase, p.message)
 	})
+	if buildErr == nil {
+		// a rebuilt cluster issues a fresh kubeconfig; re-decorate running
+		// orchestration containers so they do not keep stale cluster access.
+		s.core.redecorateContainers(stream.Context(), func(p deployProgress) error {
+			return sendClusterProgress(stream, p.phase, p.message)
+		})
+	}
 	return sendClusterResponse(stream, orchestration.ClusterName, buildErr)
 }
 

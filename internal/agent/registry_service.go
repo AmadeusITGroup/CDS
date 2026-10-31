@@ -19,6 +19,13 @@ func (s *registryServiceServer) BuildRegistry(req *cdspb.BuildRegistryRequest, s
 	buildErr := s.core.registryOps().BuildRegistry(req.GetSecure(), func(p registryProgress) error {
 		return sendRegistryProgress(stream, p.phase, p.message)
 	})
+	if buildErr == nil {
+		// a rebuilt registry may present a fresh CA; re-decorate running
+		// orchestration containers so their trust store stays valid.
+		s.core.redecorateContainers(stream.Context(), func(p deployProgress) error {
+			return sendRegistryProgress(stream, p.phase, p.message)
+		})
+	}
 	return sendRegistryResponse(stream, registry.Name, buildErr)
 }
 

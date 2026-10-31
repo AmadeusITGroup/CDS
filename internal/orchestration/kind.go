@@ -155,9 +155,14 @@ func (k *kindProvider) Stop() error {
 	return nil
 }
 
-// Delete removes the supervision unit and the kind cluster. force is accepted
-// for interface parity (the agent decides "in use"); kind delete is
-// unconditional and returns zero even if the cluster is absent.
+// Delete removes the supervision unit and the kind cluster. Deleting a kind
+// cluster destroys the node container and therefore ALL workloads running in
+// it (kind has no persistence for a deleted cluster); this is why the agent
+// guards the delete against containers still attached to the cluster unless
+// forced. A cluster stop/start, by contrast, only stops the node container and
+// preserves the pods. force is accepted for interface parity (the agent decides
+// "in use"); kind delete is unconditional and returns zero even if the cluster
+// is absent.
 func (k *kindProvider) Delete(force bool) error {
 	if unitDir, err := k.units.UserUnitDir(); err == nil {
 		if err := k.units.Remove(unitDir, kindSupervisionUnit); err != nil {

@@ -1,10 +1,13 @@
 package agent
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 
+	"github.com/amadeusitgroup/cds/internal/bo"
 	"github.com/amadeusitgroup/cds/internal/cerr"
+	"github.com/amadeusitgroup/cds/internal/clog"
 	"github.com/amadeusitgroup/cds/internal/containerconf"
 	"github.com/amadeusitgroup/cds/internal/registry"
 	"golang.org/x/sync/errgroup"
@@ -134,4 +137,81 @@ func (s *containerServiceServer) ensureAndResolveDecoration(
 		spec.registryCA = ca
 	}
 	return spec, nil
+}
+
+// redecorateContainers re-installs the cluster kubeconfig and registry trust
+// into every running CDS container whose recorded deployment requested
+// orchestration. It is called after a cluster or registry (re)build so that
+// containers deployed before the rebuild pick up the fresh kubeconfig and CA
+// instead of stale material. Failures for a single container are logged and
+// skipped so one bad container does not fail the whole rebuild.
+//
+// It is best effort and never returns an error that should fail the build: a
+// rebuild succeeds even if re-decoration of some container does not.
+func (s *grpcServer) redecorateContainers(ctx context.Context, report deployProgressReporter) {
+	reqs, err := s.deployments().list()
+	if err != nil {
+		clog.Warn("failed to list deployments for re-decoration", err)
+		return
+	}
+
+	var kubeconfig, registryCA string
+	for _, req := range reqs {
+		config, err := containerconf.ParseBytes(bytes.NewReader(req.GetDevcontainerConfig()))
+		if err != nil {
+			clog.Warn(fmt.Sprintf("skipping re-decoration of %s: invalid config", req.GetContainerName()), err)
+			continue
+		}
+		oc := config.OrchestrationConfig()
+		if !oc.Requested {
+			continue
+		}
+		if !s.containerRunning(req.GetContainerName()) {
+			continue
+		}
+
+		// resolve material once, lazily, only when there is a container to decorate
+		if kubeconfig == "" {
+			if kc, err := s.clusterOps().GetKubeconfig(); err == nil {
+				kubeconfig = kc
+			} else {
+				clog.Warn("failed to resolve kubeconfig for re-decoration", err)
+				return
+			}
+		}
+		if registryCA == "" && oc.Registry.Requested {
+			if ca, err := s.registryOps().RegistryCA(); err == nil {
+				registryCA = ca
+			}
+		}
+
+		ca := ""
+		if oc.Registry.Requested {
+			ca = registryCA
+		}
+		s.redecorateOne(ctx, req.GetContainerName(), kubeconfig, ca, report)
+	}
+}
+
+// redecorateOne runs the decoration install scripts inside a single container
+// via ExecuteInContainer as root.
+func (s *grpcServer) redecorateOne(ctx context.Context, name, kubeconfig, ca string, report deployProgressReporter) {
+	for _, dc := range containerDecorationCommands("", name, kubeconfig, ca) {
+		if report != nil {
+			_ = report(deployProgress{phase: "decorate", message: fmt.Sprintf("%s: %s", name, dc.info)})
+		}
+		_, _, err := s.containerOps().ExecuteInContainer(ctx, name, dc.script, "root")
+		if err != nil {
+			clog.Warn(fmt.Sprintf("failed to re-decorate container %s (%s)", name, dc.info), err)
+		}
+	}
+}
+
+// containerRunning reports whether the named container is currently running.
+func (s *grpcServer) containerRunning(name string) bool {
+	c, err := s.containerOps().GetContainer(name)
+	if err != nil {
+		return false
+	}
+	return c.Status == bo.KContainerStatusRunning
 }

@@ -180,8 +180,11 @@ func (p *podmanProvider) Stop() error {
 	return nil
 }
 
-// Delete removes the Quadlet unit and the registry container. force is accepted
-// for interface parity.
+// Delete removes the Quadlet unit and the registry container. It deliberately
+// leaves the material directory (~/.xcds-agent/registry) in place, so the
+// pushed images under data/ and the TLS material survive: a later Build reuses
+// them (material generation is idempotent). Deleting the registry thus removes
+// the service, not the stored images. force is accepted for interface parity.
 func (p *podmanProvider) Delete(force bool) error {
 	if err := p.units.Remove(p.quadletDir, quadletUnitFile); err != nil {
 		clog.Warn("failed to remove registry Quadlet unit", err)
