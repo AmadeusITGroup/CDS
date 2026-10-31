@@ -193,3 +193,58 @@ func (m *unitManager) remove(unitDir string, unitNames ...string) error {
 	}
 	return m.daemonReload()
 }
+
+
+// HostOps is the public shape of a target host: it runs commands and copies
+// files to the host. internal/host and internal/bootstrap remote hosts satisfy
+// it, as does a localhost host. Consumers outside this package (e.g. the kind
+// supervisor, the registry Quadlet) use it through UnitManager.
+type HostOps = hostOps
+
+// UnitManager is the public facade over the generic systemd user-unit manager.
+// It lets other agent packages install and control arbitrary user units
+// (reconcile by content, enable/start/stop/remove, is-active) on a target host,
+// which is how the kind cluster node and the secure registry are supervised.
+type UnitManager struct {
+	m *unitManager
+}
+
+// NewUnitManager returns a UnitManager bound to the given target host.
+func NewUnitManager(h HostOps) *UnitManager {
+	return &UnitManager{m: newUnitManager(h)}
+}
+
+// Available reports whether a systemd user session is reachable on the target.
+func (u *UnitManager) Available() bool { return u.m.available() }
+
+// IsActive reports whether the named unit is active on the target.
+func (u *UnitManager) IsActive(unitName string) bool { return u.m.isActive(unitName) }
+
+// UserUnitDir returns the systemd user unit directory of the target host.
+func (u *UnitManager) UserUnitDir() (string, error) { return u.m.userUnitDir() }
+
+// Reconcile writes the desired units into unitDir when missing or different,
+// reloading the daemon once if anything changed. It returns whether any unit
+// file was written.
+func (u *UnitManager) Reconcile(unitDir string, units ...Unit) (bool, error) {
+	return u.m.reconcile(unitDir, units...)
+}
+
+// EnableNow enables and starts the given units (also enabling them at boot).
+func (u *UnitManager) EnableNow(unitNames ...string) error { return u.m.enableNow(unitNames...) }
+
+// Start starts the given units without enabling them at boot.
+func (u *UnitManager) Start(unitNames ...string) error { return u.m.start(unitNames...) }
+
+// Restart restarts the given units.
+func (u *UnitManager) Restart(unitNames ...string) error { return u.m.restart(unitNames...) }
+
+// Stop stops the given units.
+func (u *UnitManager) Stop(unitNames ...string) error { return u.m.stop(unitNames...) }
+
+// Remove disables and deletes the given units from unitDir, reloading the
+// daemon afterwards. Disable failures are tolerated so teardown never fails on
+// a unit that was never enabled.
+func (u *UnitManager) Remove(unitDir string, unitNames ...string) error {
+	return u.m.remove(unitDir, unitNames...)
+}
