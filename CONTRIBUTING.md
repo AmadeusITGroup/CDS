@@ -132,7 +132,7 @@ We welcome many types of contributions:
 ### Contribution Workflow
 
 1. **Find or create an issue** describing the work
-2. **Create a feature branch** from `main`
+2. **Create a worktree** from `main` on a `feat/<name>` or `fix/<name>` branch
 3. **Make your changes** following our coding standards
 4. **Write/update tests** for your changes
 5. **Run the test suite** and linter
@@ -156,19 +156,25 @@ Ensure your PR meets these requirements:
 
 ### Creating a Pull Request
 
-1. **Create a feature branch**:
+1. **Create a dedicated worktree** for every new development, using a
+   `feat/` branch for features or a `fix/` branch for bug fixes:
    ```bash
-   git checkout -b feature/your-feature-name
+   git fetch origin
+   git worktree add -b feat/your-feature-name ../CDS-worktrees/feat-your-feature-name origin/main
    # or
-   git checkout -b fix/issue-description
+   git worktree add -b fix/issue-description ../CDS-worktrees/fix-issue-description origin/main
+   cd ../CDS-worktrees/feat-your-feature-name
    ```
 
-2. **Make your changes** and commit them
+2. **Make your changes** inside the worktree and commit them
 
 3. **Push to your fork**:
    ```bash
-   git push origin feature/your-feature-name
+   git push -u origin feat/your-feature-name
    ```
+
+   After the PR is merged, clean up with
+   `git worktree remove ../CDS-worktrees/feat-your-feature-name`.
 
 4. **Open a Pull Request** on GitHub with:
    - Clear title describing the change

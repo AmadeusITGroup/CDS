@@ -9,8 +9,10 @@ instructions summarize the parts that every working agent must apply.
 
 ## Scope and workflow
 
-- Work on a task branch, keep the diff focused, and do not touch unrelated
-  files.
+- Start every new development in a dedicated Git worktree created from
+  `main`, on a `feat/<short-description>` branch for features or a
+  `fix/<short-description>` branch for bug fixes (see `CONTRIBUTING.md`).
+  Keep the diff focused and do not touch unrelated files.
 - Preserve existing behavior unless the task explicitly asks for a behavior
   change.
 - Update documentation when user-facing behavior, setup steps, commands, or
