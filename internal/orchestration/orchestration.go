@@ -72,6 +72,10 @@ type ClusterProvider interface {
 	// cluster and patches the default service account to use it, so pods can
 	// pull images from the local secure registry. Idempotent.
 	CreateRegistrySecret(registryHost string, port int, username, password string) error
+	// TrustRegistryOnNodes installs the registry CA certificate into each kind
+	// node's containerd trust dir so pods can pull from the secure registry over
+	// TLS. Idempotent.
+	TrustRegistryOnNodes(registryHost string, port int, caPEM string) error
 }
 
 // Mirror is a registry pull-through mirror applied to the cluster nodes: pulls

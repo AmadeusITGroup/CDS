@@ -34,6 +34,8 @@ type mockClusterOps struct {
 
 	registrySecretCreated bool
 	registrySecretErr     error
+	registryTrusted       bool
+	registryTrustErr      error
 }
 
 func (m *mockClusterOps) BuildCluster(_, _ string, report clusterProgressReporter) error {
@@ -67,6 +69,10 @@ func (m *mockClusterOps) DeployIngress() error {
 func (m *mockClusterOps) CreateRegistrySecret(host string, port int, user, pass string) error {
 	m.registrySecretCreated = true
 	return m.registrySecretErr
+}
+func (m *mockClusterOps) TrustRegistryOnNodes(host string, port int, caPEM string) error {
+	m.registryTrusted = true
+	return m.registryTrustErr
 }
 
 func newTestClusterService(t *testing.T, ops clusterOps) *clusterServiceServer {

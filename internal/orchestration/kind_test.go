@@ -165,3 +165,19 @@ func TestKindCreateRegistrySecretRunsInsideNode(t *testing.T) {
 	assert.True(t, r.ranContaining("create secret docker-registry cdsregistrycred"))
 	assert.True(t, r.ranContaining("patch serviceaccount default"))
 }
+
+func TestKindTrustRegistryOnNodesWritesCA(t *testing.T) {
+	r := newFakeRunner()
+	r.replies["kind get nodes"] = "cds-kind-control-plane\n"
+	k := kindProviderWithRunner(r)
+
+	require.NoError(t, k.TrustRegistryOnNodes("cds.sec.io", 5000, "-----BEGIN CERTIFICATE-----\nx\n-----END CERTIFICATE-----"))
+	assert.True(t, r.ranContaining("/etc/containerd/certs.d/cds.sec.io:5000/ca.crt"))
+}
+
+func TestKindTrustRegistryNoopWhenNoCA(t *testing.T) {
+	r := newFakeRunner()
+	k := kindProviderWithRunner(r)
+	require.NoError(t, k.TrustRegistryOnNodes("cds.sec.io", 5000, ""))
+	assert.Empty(t, r.ran)
+}

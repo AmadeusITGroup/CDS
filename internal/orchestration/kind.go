@@ -223,6 +223,18 @@ func (k *kindProvider) CreateRegistrySecret(registryHost string, port int, usern
 		return cerr.AppendErrorFmt("failed to create registry pull secret: %s", err, out)
 	}
 
+	// On a freshly created cluster the default service account is created by a
+	// controller shortly after the namespace; patching it too early fails with
+	// "not found". Wait for it (bounded) before patching.
+	waitSA := fmt.Sprintf(
+		"podman exec %s sh -c %s",
+		ControlPlaneNode,
+		shellQuote(fmt.Sprintf("for i in $(seq 1 30); do %s -n default get serviceaccount default >/dev/null 2>&1 && exit 0; sleep 1; done; exit 1", kc)),
+	)
+	if out, err := k.runner(waitSA); err != nil {
+		return cerr.AppendErrorFmt("default service account did not appear: %s", err, out)
+	}
+
 	patch := fmt.Sprintf(`{"imagePullSecrets":[{"name":"%s"}]}`, kRegistryPullSecret)
 	patchSA := fmt.Sprintf("podman exec %s %s patch serviceaccount default -p %s", ControlPlaneNode, kc, shellQuote(patch))
 	if out, err := k.runner(patchSA); err != nil {
@@ -303,6 +315,29 @@ func (k *kindProvider) ApplyMirrors(mirrors []Mirror) error {
 			if err := k.applyMirrorOnNode(node, m); err != nil {
 				return cerr.AppendErrorFmt("failed to apply mirror %s on node %s", err, m.Registry, node)
 			}
+		}
+	}
+	return nil
+}
+
+// TrustRegistryOnNodes writes the registry CA into every kind node's containerd
+// per-registry trust dir (/etc/containerd/certs.d/<host>:<port>/ca.crt) so
+// containerd can pull from the secure registry over TLS. Without this, pods
+// fail with "certificate signed by unknown authority".
+func (k *kindProvider) TrustRegistryOnNodes(registryHost string, port int, caPEM string) error {
+	if caPEM == cg.EmptyStr {
+		return nil
+	}
+	nodes, err := k.nodes()
+	if err != nil {
+		return err
+	}
+	dir := fmt.Sprintf("/etc/containerd/certs.d/%s:%d", registryHost, port)
+	for _, node := range nodes {
+		script := fmt.Sprintf("set -eu; mkdir -p %s; printf '%%s' %s > %s/ca.crt", dir, shellQuote(caPEM), dir)
+		cmd := fmt.Sprintf("podman exec %s sh -c %s", node, shellQuote(script))
+		if out, err := k.runner(cmd); err != nil {
+			return cerr.AppendErrorFmt("failed to install registry CA on node %s: %s", err, node, out)
 		}
 	}
 	return nil

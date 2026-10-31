@@ -26,6 +26,7 @@ type clusterOps interface {
 	ApplyMirrors(mirrors []orchestration.Mirror) error
 	DeployIngress() error
 	CreateRegistrySecret(registryHost string, port int, username, password string) error
+	TrustRegistryOnNodes(registryHost string, port int, caPEM string) error
 }
 
 // defaultClusterOps drives the orchestration package on the agent host.
@@ -111,4 +112,12 @@ func (defaultClusterOps) CreateRegistrySecret(registryHost string, port int, use
 		return err
 	}
 	return provider.CreateRegistrySecret(registryHost, port, username, password)
+}
+
+func (defaultClusterOps) TrustRegistryOnNodes(registryHost string, port int, caPEM string) error {
+	provider, err := orchestration.Provider("")
+	if err != nil {
+		return err
+	}
+	return provider.TrustRegistryOnNodes(registryHost, port, caPEM)
 }

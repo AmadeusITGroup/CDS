@@ -88,6 +88,17 @@ func ensureOrchestration(
 		if port == 0 {
 			port = registry.DefaultPort
 		}
+		// install the registry CA on the nodes so containerd trusts the registry
+		// over TLS, otherwise pods fail with "certificate signed by unknown
+		// authority" when pulling.
+		if ca, caErr := reg.RegistryCA(); caErr == nil && ca != "" {
+			if err := report(deployProgress{phase: "cluster", message: "Trusting registry CA on cluster nodes"}); err != nil {
+				return err
+			}
+			if err := cluster.TrustRegistryOnNodes(registry.Hostname, port, ca); err != nil {
+				return cerr.AppendError("failed to trust registry CA on cluster nodes", err)
+			}
+		}
 		if err := report(deployProgress{phase: "cluster", message: "Creating in-cluster registry pull secret"}); err != nil {
 			return err
 		}
