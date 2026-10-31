@@ -21,6 +21,7 @@ type registryOps interface {
 	StopRegistry() error
 	DeleteRegistry(force bool) error
 	GetRegistry() (registry.Registry, error)
+	RegistryCA() (string, error)
 }
 
 // defaultRegistryOps drives the registry package on the agent host.
@@ -42,4 +43,8 @@ func (defaultRegistryOps) StopRegistry() error         { return registry.New().S
 func (defaultRegistryOps) DeleteRegistry(f bool) error { return registry.New().Delete(f) }
 func (defaultRegistryOps) GetRegistry() (registry.Registry, error) {
 	return registry.New().Status()
+}
+
+func (defaultRegistryOps) RegistryCA() (string, error) {
+	return registry.New().CACertificate()
 }

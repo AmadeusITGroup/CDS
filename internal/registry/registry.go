@@ -56,4 +56,8 @@ type Provider interface {
 	Delete(force bool) error
 	// Status returns the live registry view.
 	Status() (Registry, error)
+	// CACertificate returns the registry CA certificate PEM, so it can be
+	// installed as trust inside devcontainers. It is empty when no material has
+	// been generated yet.
+	CACertificate() (string, error)
 }

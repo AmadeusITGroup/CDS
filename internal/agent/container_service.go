@@ -162,6 +162,19 @@ func (s *containerServiceServer) DeployContainer(req *cdspb.DeployContainerReque
 		return err
 	}
 
+	// When the devcontainer requests orchestration, ensure the cluster and
+	// registry (concurrently) and resolve the material decorated into the
+	// container, before deploying it.
+	if spec.orchestration.Requested {
+		decorated, decErr := s.ensureAndResolveDecoration(stream.Context(), spec, func(progress deployProgress) error {
+			return sendDeployProgress(stream, progress.phase, progress.message)
+		})
+		if decErr != nil {
+			return sendDeployResponse(stream, deployContainerResult{containerName: req.GetContainerName()}, decErr)
+		}
+		spec = decorated
+	}
+
 	result, err := s.core.containerOps().DeployContainer(stream.Context(), spec, func(progress deployProgress) error {
 		return sendDeployProgress(stream, progress.phase, progress.message)
 	})
@@ -248,6 +261,7 @@ func (s *containerServiceServer) deploySpec(req *cdspb.DeployContainerRequest) (
 		containerName: req.GetContainerName(),
 		labels:        labels,
 		config:        config,
+		orchestration: config.OrchestrationConfig(),
 		resourceProvider: stagingResourceProvider{
 			stagingDir:  s.core.stagingDir(),
 			projectName: req.GetProjectName(),

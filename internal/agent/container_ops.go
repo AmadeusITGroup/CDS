@@ -44,6 +44,16 @@ type deployContainerSpec struct {
 	labels           map[string]string
 	config           *containerconf.Config
 	resourceProvider deployResourceProvider
+	// orchestration is the resolved orchestration configuration of the
+	// devcontainer. When Requested, the container joins the kind network and is
+	// decorated with the cluster kubeconfig and registry trust.
+	orchestration containerconf.KindOrchestrationConfig
+	// kubeconfig is the cluster kubeconfig installed into the container when
+	// orchestration is requested (resolved by the service before deploy).
+	kubeconfig string
+	// registryCA is the registry CA PEM installed into the container's trust
+	// store when a registry is requested.
+	registryCA string
 }
 
 type deployProgress struct {
@@ -298,10 +308,16 @@ true`, token)
 func (defaultContainerOps) DeployContainer(ctx context.Context, spec deployContainerSpec, report deployProgressReporter) (deployContainerResult, error) {
 	result := deployContainerResult{containerName: spec.containerName}
 
-	ce := engine.NewContainerEngine(
+	opts := []engine.ContainerEngineOption{
 		engine.WithContainerConfig(spec.config),
 		engine.WithResourceProvider(spec.resourceProvider),
-	)
+	}
+	if spec.orchestration.Requested {
+		// attach the devcontainer to the kind cluster network so it can reach the
+		// in-cluster API server and the registry.
+		opts = append(opts, engine.WithNetwork(engine.KindNetworkName))
+	}
+	ce := engine.NewContainerEngine(opts...)
 	ce.SetAction(engine.K_ACTION_RUN)
 	ce.SetRunType(engine.K_RUN_DEV_CONTAINER)
 	ce.SetContainerName(spec.containerName)
@@ -316,6 +332,12 @@ func (defaultContainerOps) DeployContainer(ctx context.Context, spec deployConta
 		return result, cerr.AppendError("failed to build SSH key install commands", err)
 	}
 	cmds = append(cmds, sshKeyCommands...)
+
+	// decorate the devcontainer with cluster/registry access when orchestration
+	// is requested (kubeconfig + registry trust installed inside the container).
+	if spec.orchestration.Requested {
+		cmds = append(cmds, buildDecorationCommands(spec)...)
+	}
 
 	// retain only a bounded tail of the combined command output; the full output
 	// is streamed as progress, so the accumulator need not grow with the command
@@ -605,6 +627,29 @@ func compensateOrphanedCreate(containerName, preexistingID string) {
 
 // buildSSHKeyInstallCommands installs the staged public key, if any, for the
 // remote user of the container.
+// buildDecorationCommands builds the exec commands that decorate a running
+// devcontainer with cluster/registry access: the cluster kubeconfig and the
+// registry CA are installed inside the container. Each decoration step runs as
+// root in the container via a custom command.
+func buildDecorationCommands(spec deployContainerSpec) []shexec.ExecuteEvent {
+	var events []shexec.ExecuteEvent
+	for _, dc := range containerDecorationCommands(cg.EmptyStr, spec.containerName, spec.kubeconfig, spec.registryCA) {
+		ce := engine.NewContainerEngine(engine.WithContainerConfig(spec.config))
+		ce.SetAction(engine.K_ACTION_EXE)
+		ce.SetExecuteCmd(engine.K_EXEC_CUSTOM_CMD)
+		ce.SetContainerName(spec.containerName)
+		ce.SetRemoteUser(engine.KRootUsr)
+		ce.SetCustomCommand(dc.script)
+		cmds, err := ce.BuildCommands()
+		if err != nil {
+			clog.Warn("failed to build container decoration command", err)
+			continue
+		}
+		events = append(events, cmds...)
+	}
+	return events
+}
+
 func buildSSHKeyInstallCommands(spec deployContainerSpec) ([]shexec.ExecuteEvent, error) {
 	identifier, err := containerconf.SingletonIdentifier(containerconf.KindPubKey)
 	if err != nil {
@@ -614,10 +659,16 @@ func buildSSHKeyInstallCommands(spec deployContainerSpec) ([]shexec.ExecuteEvent
 		return nil, nil
 	}
 
-	ce := engine.NewContainerEngine(
+	opts := []engine.ContainerEngineOption{
 		engine.WithContainerConfig(spec.config),
 		engine.WithResourceProvider(spec.resourceProvider),
-	)
+	}
+	if spec.orchestration.Requested {
+		// attach the devcontainer to the kind cluster network so it can reach the
+		// in-cluster API server and the registry.
+		opts = append(opts, engine.WithNetwork(engine.KindNetworkName))
+	}
+	ce := engine.NewContainerEngine(opts...)
 	ce.SetAction(engine.K_ACTION_EXE)
 	ce.SetExecuteCmd(engine.K_EXEC_CMD_SSH)
 	ce.SetContainerName(spec.containerName)

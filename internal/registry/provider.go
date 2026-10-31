@@ -206,6 +206,20 @@ func (p *podmanProvider) Status() (Registry, error) {
 	}, nil
 }
 
+// CACertificate returns the registry CA certificate PEM read from the on-host
+// material. It is empty when the material has not been generated.
+func (p *podmanProvider) CACertificate() (string, error) {
+	m := material{root: p.materialRoot}
+	if !fileExists(m.certFile()) {
+		return cg.EmptyStr, nil
+	}
+	data, err := os.ReadFile(m.certFile())
+	if err != nil {
+		return cg.EmptyStr, cerr.AppendError("failed to read registry CA certificate", err)
+	}
+	return string(data), nil
+}
+
 func reportf(report ProgressReporter, phase, message string) error {
 	if report == nil {
 		return nil

@@ -24,6 +24,8 @@ type mockRegistryOps struct {
 	secure        bool
 	reg           registry.Registry
 	regErr        error
+	ca            string
+	caErr         error
 }
 
 func (m *mockRegistryOps) BuildRegistry(secure bool, report registryProgressReporter) error {
@@ -42,6 +44,7 @@ func (m *mockRegistryOps) DeleteRegistry(force bool) error {
 	return m.deleteErr
 }
 func (m *mockRegistryOps) GetRegistry() (registry.Registry, error) { return m.reg, m.regErr }
+func (m *mockRegistryOps) RegistryCA() (string, error)             { return m.ca, m.caErr }
 
 func newTestRegistryService(t *testing.T, ops registryOps) *registryServiceServer {
 	t.Helper()
