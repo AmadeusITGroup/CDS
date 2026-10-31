@@ -3,14 +3,9 @@ package systemd
 import (
 	"io"
 	"net"
-	"os"
-	"path"
-	"path/filepath"
 	"strconv"
-	"strings"
 
 	"github.com/amadeusitgroup/cds/internal/cerr"
-	cg "github.com/amadeusitgroup/cds/internal/global"
 	"github.com/coreos/go-systemd/v22/activation"
 	"github.com/coreos/go-systemd/v22/unit"
 )
@@ -46,46 +41,28 @@ func WithServiceBinary(binary string) func(*sysD) {
 	}
 }
 
+// sysD manages the cds gRPC socket/service user units on a target host. It is
+// one consumer of the generic unitManager: the cds.socket/cds.service pair is
+// just the set of units it knows how to build and reconcile.
 type sysD struct {
 	h      hostOps
 	port   int
 	binary string
 }
 
-// hostOps is the target host, prepared by the caller (e.g. SSH access configured).
-type hostOps interface {
-	Execute(name string, args ...string) (string, error)
-	Copy(localPath, remotePath string) error
-}
-
-// userUnitDir returns the systemd user unit directory of the target host.
-// It is resolved on the target itself since its home directory may differ
-// from the local one. Targets are Linux hosts, hence POSIX path joining.
-func (s *sysD) userUnitDir() (string, error) {
-	out, err := s.h.Execute("systemd-path", "user-configuration")
-	if err != nil {
-		return cg.EmptyStr, cerr.AppendError("failed to resolve systemd user configuration directory", err)
-	}
-	configDir := strings.TrimSpace(out)
-	if configDir == cg.EmptyStr {
-		return cg.EmptyStr, cerr.NewError("systemd-path returned an empty user configuration directory")
-	}
-	return path.Join(configDir, "systemd", "user"), nil
+// mgr returns a unit manager bound to this target.
+func (s *sysD) mgr() *unitManager {
+	return newUnitManager(s.h)
 }
 
 // In checks if systemd is available on the target host.
 func (s *sysD) In() bool {
-	_, err := s.h.Execute("systemctl", "--user", "--no-pager")
-	return err == nil
+	return s.mgr().available()
 }
 
 // IsServiceUp checks if the service is running.
 func (s *sysD) IsServiceUp() bool {
-	out, err := s.h.Execute("systemctl", "--user", "is-active", serviceUnitName)
-	if err != nil {
-		return false
-	}
-	return strings.TrimSpace(out) == "active"
+	return s.mgr().isActive(serviceUnitName)
 }
 
 // StartService makes sure the service runs the desired units on the target
@@ -95,64 +72,52 @@ func (s *sysD) IsServiceUp() bool {
 // reports whether the unit files changed, so the caller can decide to restart
 // the service to pick up a new binary (see RestartService).
 func (s *sysD) StartService() (bool, error) {
-	changed, err := s.reconcileUnits()
+	m := s.mgr()
+
+	unitDir, err := m.userUnitDir()
 	if err != nil {
 		return false, err
 	}
-	if err := s.startUnit(); err != nil {
+
+	units, err := s.desiredUnits()
+	if err != nil {
+		return false, err
+	}
+
+	changed, err := m.reconcile(unitDir, units...)
+	if err != nil {
+		return false, err
+	}
+
+	// A daemon-reload before enabling is kept even when reconcile already
+	// reloaded (nothing changed): historically StartService always reloaded
+	// before enabling, and the no-op reload is cheap and harmless.
+	if err := m.daemonReload(); err != nil {
+		return false, err
+	}
+	if err := m.enableNow(socketUnitName, serviceUnitName); err != nil {
 		return false, err
 	}
 	return changed, nil
 }
 
-// reconcileUnits writes the desired unit files when they are missing or differ
-// from what is installed on the target, reloading the systemd daemon when it
-// changes anything. It returns whether any unit file was written.
-func (s *sysD) reconcileUnits() (bool, error) {
+// desiredUnits builds the cds socket and service units for the configured
+// port and binary, applying the defaults used when they are unset.
+func (s *sysD) desiredUnits() ([]Unit, error) {
 	port := s.port
 	if port == 0 {
 		port = 8087
 	}
-	desired, err := s.buildUnits(port)
+	built, err := s.buildUnits(port)
 	if err != nil {
-		return false, err
+		return nil, err
 	}
-
-	unitDir, err := s.userUnitDir()
-	if err != nil {
-		return false, err
-	}
-	if _, err := s.h.Execute("mkdir", "-p", unitDir); err != nil {
-		return false, cerr.AppendErrorFmt("failed to create unit directory %s", err, unitDir)
-	}
-
-	changed := false
-	for _, unitName := range []string{socketUnitName, serviceUnitName} {
-		if s.unitUpToDate(unitDir, unitName, desired[unitName]) {
-			continue
-		}
-		if err := s.createUnitFileOnTarget(unitDir, unitName, desired[unitName]); err != nil {
-			return false, cerr.AppendErrorFmt("failed to install unit file %s", err, unitName)
-		}
-		changed = true
-	}
-
-	if changed {
-		if _, err := s.h.Execute("systemctl", "--user", "daemon-reload"); err != nil {
-			return false, cerr.AppendError("failed to reload systemd daemon", err)
-		}
-	}
-	return changed, nil
-}
-
-// unitUpToDate reports whether the unit file installed on the target has
-// exactly the desired content, so that it does not need to be rewritten.
-func (s *sysD) unitUpToDate(unitDir, unitName string, desired []byte) bool {
-	out, err := s.h.Execute("cat", path.Join(unitDir, unitName))
-	if err != nil {
-		return false
-	}
-	return out == string(desired)
+	// Order matters: the socket is reconciled (and later enabled) before the
+	// service it backs.
+	return []Unit{
+		{Name: socketUnitName, Content: built[socketUnitName]},
+		{Name: serviceUnitName, Content: built[serviceUnitName]},
+	}, nil
 }
 
 // buildUnits builds the systemd unit files for the given port.
@@ -193,48 +158,15 @@ func (s *sysD) buildUnits(port int) (map[string][]byte, error) {
 	return unitsBytes, nil
 }
 
-// createUnitFileOnTarget creates a unit file on the target host.
-func (s *sysD) createUnitFileOnTarget(unitDir, fileName string, data []byte) error {
-	tmpDir, err := os.MkdirTemp("", "cds-units")
-	if err != nil {
-		return cerr.AppendError("failed to create temp dir for unit files", err)
-	}
-	defer func() { _ = os.RemoveAll(tmpDir) }()
-
-	tmpFile := filepath.Join(tmpDir, fileName)
-	if err := os.WriteFile(tmpFile, data, 0644); err != nil {
-		return cerr.AppendError("failed to write temp unit file", err)
-	}
-
-	return s.h.Copy(tmpFile, unitDir)
-}
-
-// startUnit enables and starts the systemd units on the target host.
-func (s *sysD) startUnit() error {
-	if _, err := s.h.Execute("systemctl", "--user", "daemon-reload"); err != nil {
-		return cerr.AppendError("failed to reload systemd daemon", err)
-	}
-	if _, err := s.h.Execute("systemctl", "--user", "enable", "--now", socketUnitName, serviceUnitName); err != nil {
-		return cerr.AppendError("failed to enable systemd units", err)
-	}
-	return nil
-}
-
 // RestartService restarts the service, e.g. to run an updated binary. The
 // socket is kept so that no connection is refused meanwhile.
 func (s *sysD) RestartService() error {
-	if _, err := s.h.Execute("systemctl", "--user", "restart", serviceUnitName); err != nil {
-		return cerr.AppendError("failed to restart systemd service", err)
-	}
-	return nil
+	return s.mgr().restart(serviceUnitName)
 }
 
 // StopService stops the systemd service on the target host.
 func (s *sysD) StopService() error {
-	if _, err := s.h.Execute("systemctl", "--user", "stop", socketUnitName, serviceUnitName); err != nil {
-		return cerr.AppendError("failed to stop systemd units", err)
-	}
-	return nil
+	return s.mgr().stop(socketUnitName, serviceUnitName)
 }
 
 // Listeners returns the list of systemd activation listeners.
