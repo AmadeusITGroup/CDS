@@ -1,12 +1,14 @@
 package command
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"time"
 
 	"github.com/spf13/cobra"
 
+	"github.com/amadeusitgroup/cds/internal/api/v1/cdspb"
 	"github.com/amadeusitgroup/cds/internal/cerr"
 	"github.com/amadeusitgroup/cds/internal/clog"
 	cg "github.com/amadeusitgroup/cds/internal/global"
@@ -57,14 +59,23 @@ func (pexpose *projectExpose) initFlags() {
 func (pexpose *projectExpose) execute(cmd *cobra.Command, args []string) error {
 	projectName := getProjectNameFromArgsOrContext(args)
 
-	// TODO: expose orchestration (KinD) services by name
-	if pexpose.service.serviceName != cg.EmptyStr {
-		return cerr.NewError("exposing a service by name is not supported yet; provide --remote HOST:PORT")
+	if err := validateHostPort("local", pexpose.service.local); err != nil {
+		return err
 	}
-	for flag, address := range map[string]string{"local": pexpose.service.local, "remote": pexpose.service.remote} {
-		if _, _, err := net.SplitHostPort(address); err != nil {
-			return cerr.AppendErrorFmt("invalid --%s address %q, expected HOST:PORT", err, flag, address)
+
+	// Resolve the remote address to forward to. For --service kind the remote is
+	// the cluster API server (and the local kubeconfig is patched to target the
+	// local forward); otherwise --remote is used directly.
+	remote := pexpose.service.remote
+	if pexpose.service.serviceName != cg.EmptyStr {
+		resolved, err := pexpose.resolveServiceRemote(projectName)
+		if err != nil {
+			return err
 		}
+		remote = resolved
+	}
+	if err := validateHostPort("remote", remote); err != nil {
+		return err
 	}
 
 	containerName, err := syncedProjectPrimaryContainer(projectName)
@@ -76,6 +87,66 @@ func (pexpose *projectExpose) execute(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	clog.Info(fmt.Sprintf("Forwarding %s to %s through container %s.", pexpose.service.local, pexpose.service.remote, containerName))
-	return shexec.ForwardPort(target, pexpose.service.local, pexpose.service.remote, pexpose.timeout)
+	clog.Info(fmt.Sprintf("Forwarding %s to %s through container %s.", pexpose.service.local, remote, containerName))
+	return shexec.ForwardPort(target, pexpose.service.local, remote, pexpose.timeout)
+}
+
+// validateHostPort checks addr is a HOST:PORT.
+func validateHostPort(flag, addr string) error {
+	if _, _, err := net.SplitHostPort(addr); err != nil {
+		return cerr.AppendErrorFmt("invalid --%s address %q, expected HOST:PORT", err, flag, addr)
+	}
+	return nil
+}
+
+// resolveServiceRemote resolves the remote HOST:PORT to forward to for a named
+// service. The only supported service today is "kind": the remote is the kind
+// cluster API server (read from the cluster kubeconfig), and the local
+// kubeconfig is patched to target the local forward address so kubectl on this
+// machine reaches the cluster through the tunnel.
+func (pexpose *projectExpose) resolveServiceRemote(projectName string) (string, error) {
+	switch pexpose.service.serviceName {
+	case "kind":
+		return pexpose.exposeKind(projectName)
+	default:
+		return cg.EmptyStr, cerr.NewError(fmt.Sprintf("unknown service %q; supported: kind", pexpose.service.serviceName))
+	}
+}
+
+// exposeKind fetches the cluster kubeconfig from the project's agent, extracts
+// the API server address (the remote to forward to, reachable through the
+// devcontainer on the kind network), and writes a local kubeconfig whose server
+// points at the local forward address.
+func (pexpose *projectExpose) exposeKind(projectName string) (string, error) {
+	var kubeconfig string
+	if err := onProjectAgent(projectName, func(services agentServices, ctx context.Context) error {
+		resp, err := services.cluster.GetKubeconfig(ctx, &cdspb.GetKubeconfigRequest{})
+		if err != nil {
+			return err
+		}
+		kubeconfig = resp.GetKubeconfig()
+		return nil
+	}); err != nil {
+		return cg.EmptyStr, cerr.AppendError("Failed to fetch cluster kubeconfig", err)
+	}
+	if kubeconfig == cg.EmptyStr {
+		return cg.EmptyStr, cerr.NewError("cluster returned an empty kubeconfig; is the cluster built?")
+	}
+
+	remote, err := kubeconfigServerHostPort(kubeconfig)
+	if err != nil {
+		return cg.EmptyStr, err
+	}
+
+	// patch a local kubeconfig so kubectl targets the local forward address.
+	patched, err := rewriteKubeconfigServer(kubeconfig, pexpose.service.local)
+	if err != nil {
+		return cg.EmptyStr, err
+	}
+	path := localKubeconfigPath()
+	if err := writeKubeconfig(path, patched); err != nil {
+		return cg.EmptyStr, err
+	}
+	clog.Info(fmt.Sprintf("Local kubeconfig %s now targets the cluster via %s", path, pexpose.service.local))
+	return remote, nil
 }

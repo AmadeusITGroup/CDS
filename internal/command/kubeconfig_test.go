@@ -48,3 +48,18 @@ func TestRewriteKubeconfigServerErrorsWithoutClusters(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "no clusters")
 }
+
+func TestKubeconfigServerHostPort(t *testing.T) {
+	in := `clusters:
+- cluster:
+    server: https://127.0.0.1:33505
+`
+	hp, err := kubeconfigServerHostPort(in)
+	require.NoError(t, err)
+	assert.Equal(t, "127.0.0.1:33505", hp)
+}
+
+func TestKubeconfigServerHostPortNoClusters(t *testing.T) {
+	_, err := kubeconfigServerHostPort("apiVersion: v1\n")
+	require.Error(t, err)
+}

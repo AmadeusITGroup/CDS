@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 
 	"github.com/amadeusitgroup/cds/internal/cenv"
 	"github.com/amadeusitgroup/cds/internal/cerr"
@@ -14,6 +15,32 @@ import (
 // serverURLRe matches the scheme+host of a kubeconfig server URL so only the
 // host:port is rewritten, preserving any path.
 var serverURLRe = regexp.MustCompile(`^(https?://)[^/]+`)
+
+// kubeconfigServerHostPort extracts the HOST:PORT of the first cluster's server
+// URL from a kubeconfig (dropping the scheme and any path), i.e. the address to
+// forward to.
+func kubeconfigServerHostPort(kubeconfig string) (string, error) {
+	var doc map[string]interface{}
+	if err := yaml.Unmarshal([]byte(kubeconfig), &doc); err != nil {
+		return "", cerr.AppendError("failed to parse kubeconfig", err)
+	}
+	clusters, ok := doc["clusters"].([]interface{})
+	if !ok || len(clusters) == 0 {
+		return "", cerr.NewError("kubeconfig has no clusters")
+	}
+	cluster, _ := clusters[0].(map[string]interface{})
+	spec, _ := cluster["cluster"].(map[string]interface{})
+	server, _ := spec["server"].(string)
+	if server == "" {
+		return "", cerr.NewError("kubeconfig cluster has no server")
+	}
+	// strip scheme and any trailing path, leaving host:port.
+	noScheme := regexp.MustCompile(`^https?://`).ReplaceAllString(server, "")
+	if i := strings.IndexByte(noScheme, '/'); i >= 0 {
+		noScheme = noScheme[:i]
+	}
+	return noScheme, nil
+}
 
 // rewriteKubeconfigServer rewrites the server host:port of every cluster in the
 // kubeconfig to addr (keeping the scheme), so a kubeconfig whose server points
