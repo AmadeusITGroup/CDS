@@ -81,7 +81,11 @@ export CDS_AGENT_BINARY="$WORKTREE/dist/cds-api-agent-{{os}}-{{arch}}"
 
 ## 3. Register and bootstrap a HOST
 
+Run `cds space init` first on a fresh HOME (it initializes `$HOME/.cds`; today it
+is a placeholder and `-p/--use-profile` is rejected as not implemented).
+
 ```sh
+cds space init
 # first use configures SSH access and installs + starts the agent (systemd user
 # service) on the HOST. On macOS, HOST must be a remote Linux box.
 cds space host add <HOST>
@@ -91,8 +95,9 @@ cds space host get <HOST>
 ```
 
 If the HOST is not yet in the CLI db, `space host add` generates an SSH key and
-installs it (needs password access the first time). If you already have a key the
-HOST trusts, that path is reused.
+installs it (needs password access the first time). If a key the HOST trusts is
+found in the default key directories, it is reused; if none is found, a password is
+needed.
 
 ---
 
