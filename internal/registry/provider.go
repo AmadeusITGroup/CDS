@@ -222,10 +222,20 @@ func (p *podmanProvider) Status() (Registry, error) {
 	}
 	return Registry{
 		Name:     Name,
-		Status:   bo.FContainerStatus(status),
+		Status:   bo.FContainerStatus(p.unitAwareStatus(status)),
 		Port:     p.port,
 		Hostname: Hostname,
 	}, nil
+}
+
+// unitAwareStatus reports a registry that was stopped as exited, not deleted.
+// The Quadlet container runs with --rm, so stop removes the container; the
+// installed unit file is what tells stop (unit kept) from delete (unit removed).
+func (p *podmanProvider) unitAwareStatus(status bo.ContainerStatus) bo.ContainerStatus {
+	if status == bo.KContainerStatusDeleted && fileExists(filepath.Join(p.quadletDir, quadletUnitFile)) {
+		return bo.KContainerStatusExited
+	}
+	return status
 }
 
 // CACertificate returns the registry CA certificate PEM read from the on-host

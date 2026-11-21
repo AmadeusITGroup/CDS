@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/amadeusitgroup/cds/internal/bo"
 	"github.com/amadeusitgroup/cds/internal/systemd"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -99,4 +100,14 @@ func TestDeleteRemovesContainer(t *testing.T) {
 	p, r := testProvider(t)
 	require.NoError(t, p.Delete(true))
 	assert.True(t, r.ranContaining("podman rm -f "+Name))
+}
+
+func TestUnitAwareStatusDistinguishesStopFromDelete(t *testing.T) {
+	p, _ := testProvider(t)
+	assert.Equal(t, bo.KContainerStatusDeleted, p.unitAwareStatus(bo.KContainerStatusDeleted), "no unit file: deleted")
+
+	require.NoError(t, os.MkdirAll(p.quadletDir, 0755))
+	require.NoError(t, os.WriteFile(filepath.Join(p.quadletDir, quadletUnitFile), []byte("x"), 0644))
+	assert.Equal(t, bo.KContainerStatusExited, p.unitAwareStatus(bo.KContainerStatusDeleted), "unit kept: exited")
+	assert.Equal(t, bo.KContainerStatusRunning, p.unitAwareStatus(bo.KContainerStatusRunning))
 }
