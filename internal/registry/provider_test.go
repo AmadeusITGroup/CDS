@@ -103,6 +103,33 @@ func TestDeleteRemovesContainer(t *testing.T) {
 	assert.True(t, r.ranContaining("podman rm -f "+Name))
 }
 
+// recordingHostOps reports every unit active and records the commands run.
+type recordingHostOps struct{ cmds []string }
+
+func (r *recordingHostOps) Execute(name string, args ...string) (string, error) {
+	r.cmds = append(r.cmds, name+" "+strings.Join(args, " "))
+	return "active", nil
+}
+func (r *recordingHostOps) Copy(string, string) error { return nil }
+
+func TestDeleteStopsRunningUnitBeforeRemovingIt(t *testing.T) {
+	p, _ := testProvider(t)
+	h := &recordingHostOps{}
+	p.units = systemd.NewUnitManager(h)
+	require.NoError(t, p.Delete(true))
+	stop, rm := -1, -1
+	for i, c := range h.cmds {
+		if c == "systemctl --user stop "+quadletService {
+			stop = i
+		}
+		if strings.HasPrefix(c, "rm -f ") && rm < 0 {
+			rm = i
+		}
+	}
+	require.GreaterOrEqual(t, stop, 0, "running unit must be stopped")
+	assert.Less(t, stop, rm, "stop before the unit file is removed (CDS-011)")
+}
+
 func TestUnitAwareStatusDistinguishesStopFromDelete(t *testing.T) {
 	p, _ := testProvider(t)
 	assert.Equal(t, bo.KContainerStatusDeleted, p.unitAwareStatus(bo.KContainerStatusDeleted), "no unit file: deleted")

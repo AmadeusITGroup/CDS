@@ -211,6 +211,13 @@ func (p *podmanProvider) Stop() error {
 // them (material generation is idempotent). Deleting the registry thus removes
 // the service, not the stored images. force is accepted for interface parity.
 func (p *podmanProvider) Delete(force bool) error {
+	// stop the service before its unit file goes away: a running unit that
+	// loses its file ends up failed (CDS-011).
+	if p.units.IsActive(quadletService) {
+		if err := p.units.Stop(quadletService); err != nil {
+			clog.Warn("failed to stop registry service before delete", err)
+		}
+	}
 	if err := p.units.Remove(p.quadletDir, quadletUnitFile); err != nil {
 		clog.Warn("failed to remove registry Quadlet unit", err)
 	}
