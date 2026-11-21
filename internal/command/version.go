@@ -89,3 +89,16 @@ func agentVersionOn(hostname string, options ...func(*callOptions)) (string, err
 	}).executeOn(hostname, options...)
 	return version, err
 }
+
+// warnOnVersionMismatch logs a warning when the connected agent runs another
+// version than this client. It is read-only and never fails the caller.
+func warnOnVersionMismatch(ctx context.Context, c agentServices) {
+	reply, err := c.info.GetVersion(ctx, &cdspb.GetVersionRequest{})
+	if err != nil {
+		clog.Debug("Failed to get agent version", err)
+		return
+	}
+	if reply.GetCurrent() != cg.Version {
+		clog.Warn(fmt.Sprintf("Agent runs version %s instead of %s, run 'cds space orc run' to update it", reply.GetCurrent(), cg.Version))
+	}
+}

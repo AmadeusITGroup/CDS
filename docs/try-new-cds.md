@@ -76,7 +76,9 @@ export CDS_AGENT_BINARY="$WORKTREE/dist/cds-api-agent-{{os}}-{{arch}}"
 > download an agent, which is not wired for OSS yet.
 
 > **Version match:** the client and the agent must report the SAME version
-> (the health check is exact). If you rebuild one, rebuild both. Committing
+> (the health check is exact). A remote agent with another version is
+> updated automatically by `cds space orc run`; a local agent only warns, and
+> the `status` commands warn too. Build both from the same commit. Committing
 > changes the version string, so build client+agent from the same commit.
 
 ---

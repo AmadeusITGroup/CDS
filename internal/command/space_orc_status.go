@@ -54,6 +54,7 @@ func (s *spcOrcStatus) runE(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 	var callback stubCallback = func(c agentServices, ctx context.Context) error {
+		warnOnVersionMismatch(ctx, c)
 		resp, err := c.cluster.GetCluster(ctx, &cdspb.GetClusterRequest{})
 		if err != nil {
 			return err
