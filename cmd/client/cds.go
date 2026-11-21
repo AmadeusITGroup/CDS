@@ -104,7 +104,7 @@ func setupLogger() {
 	}
 	customCLIHandler := clog.NewCliHandler(
 		os.Stdout,
-		clog.WithLevel(slog.LevelDebug),
+		clog.WithLevel(slog.LevelInfo), // debug goes to the log file; -v switches the logger to Debug
 		clog.WithNoColor(isNoColorSet() || !isColorable()),
 		clog.WithTimeFormat(cg.KLogTimeFormat),
 		clog.WithReplaceAttr(cerr.ReplaceAttrErr),
