@@ -136,6 +136,12 @@ Environment=REGISTRY_AUTH=htpasswd
 Environment=REGISTRY_AUTH_HTPASSWD_REALM=cds
 Environment=REGISTRY_AUTH_HTPASSWD_PATH=/auth/htpasswd
 
+[Service]
+# A requested stop kills the container, so the main process exits 2 (or 137/143).
+# Treat those as success so a clean 'registry stop' leaves the unit inactive, not failed (CDS-007).
+# shortcut: a real crash with exit 2 is also hidden; Restart= is not set, so upgrade if auto-restart is added.
+SuccessExitStatus=2 137 143
+
 [Install]
 WantedBy=default.target
 `,

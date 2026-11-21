@@ -69,6 +69,7 @@ func TestQuadletUnitHasExpectedShape(t *testing.T) {
 	assert.Contains(t, unit, "REGISTRY_AUTH=htpasswd")
 	assert.Contains(t, unit, "REGISTRY_HTTP_TLS_CERTIFICATE=/certs/domain.crt")
 	assert.Contains(t, unit, "Network=kind")
+	assert.Contains(t, unit, "SuccessExitStatus=2 137 143", "clean stop must not leave the unit failed (CDS-007)")
 	assert.Contains(t, unit, "NetworkAlias="+Hostname)
 	assert.Contains(t, unit, m.certsDir()+":/certs:Z")
 	assert.Contains(t, unit, m.authDir()+":/auth:Z")
