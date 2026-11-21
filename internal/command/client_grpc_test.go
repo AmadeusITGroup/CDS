@@ -77,3 +77,15 @@ func TestExecuteOnHintsWhenTheAgentIsUnavailable(t *testing.T) {
 	assert.Contains(t, err.Error(), "is not running")
 	assert.Contains(t, err.Error(), "cds space host add "+cg.KLocalhost)
 }
+
+func TestExecuteOnHintsWhenTheClientCertificateExpired(t *testing.T) {
+	setupTestAgent(t)
+
+	err := stubCallback(func(agentServices, context.Context) error {
+		return status.Error(codes.Unavailable, "tls: expired certificate")
+	}).executeOn(cg.KLocalhost, withoutAutostart())
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "certificate for "+cg.KLocalhost+" expired")
+	assert.NotContains(t, err.Error(), "is not running")
+}

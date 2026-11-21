@@ -3,6 +3,7 @@ package command
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/amadeusitgroup/cds/internal/api/v1/cdspb"
@@ -85,6 +86,10 @@ func (s stubCallback) executeOn(hostname string, options ...func(*callOptions)) 
 	defer cancel()
 	err = s(c, ctx)
 	if status.Code(err) == codes.Unavailable {
+		// a TLS handshake failure is also Unavailable, but the agent does run
+		if strings.Contains(err.Error(), "expired certificate") {
+			return cerr.AppendErrorFmt("Client certificate for %s expired; run a command that starts the agent (e.g. `cds space orc run`) to renew it", err, hostname)
+		}
 		return cerr.AppendErrorFmt("Agent of %s is not running; run a command that starts it, or `cds space host add %s`", err, hostname, hostname)
 	}
 	return err
