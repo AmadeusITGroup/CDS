@@ -9,6 +9,8 @@ import (
 	cg "github.com/amadeusitgroup/cds/internal/global"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 func TestExecuteOnReachesTheRegisteredAgent(t *testing.T) {
@@ -62,4 +64,16 @@ func TestExecuteOnFailsOnInvalidAgentAddress(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "Failed to create agent client")
 	assert.False(t, called)
+}
+
+func TestExecuteOnHintsWhenTheAgentIsUnavailable(t *testing.T) {
+	setupTestAgent(t)
+
+	err := stubCallback(func(agentServices, context.Context) error {
+		return status.Error(codes.Unavailable, "connection refused")
+	}).executeOn(cg.KLocalhost, withoutAutostart())
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "is not running")
+	assert.Contains(t, err.Error(), "cds space host add "+cg.KLocalhost)
 }

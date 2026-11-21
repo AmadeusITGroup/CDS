@@ -12,7 +12,9 @@ import (
 	cg "github.com/amadeusitgroup/cds/internal/global"
 	cdstls "github.com/amadeusitgroup/cds/internal/tls"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/status"
 )
 
 const (
@@ -81,7 +83,11 @@ func (s stubCallback) executeOn(hostname string, options ...func(*callOptions)) 
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), opts.timeout)
 	defer cancel()
-	return s(c, ctx)
+	err = s(c, ctx)
+	if status.Code(err) == codes.Unavailable {
+		return cerr.AppendErrorFmt("Agent of %s is not running; run a command that starts it, or `cds space host add %s`", err, hostname, hostname)
+	}
+	return err
 }
 
 // sStartedAgents tracks the agents ensured by the current command.
