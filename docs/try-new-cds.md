@@ -33,7 +33,9 @@ Also make sure the enterprise `cds` is **not** first on your `PATH` during testi
 ## 1. Prerequisites
 
 - **Your laptop (client):** Go 1.27.3+, `protoc`, `make`, `gh` (for private repos),
-  and an SSH key that can reach the HOST.
+  `cfssl` and `cfssljson` (`cds space host add` runs them to make the TLS CA;
+  without them it fails after copying files to the HOST), and an SSH key that
+  can reach the HOST.
 - **The HOST (Linux):** `podman >= 4.4`, `kind`, a **systemd user session with
   linger enabled** (`loginctl enable-linger $USER`), and cgroup v2 with cpu
   delegation. IPv6 may be disabled — that is handled (CDS creates the kind
