@@ -141,8 +141,29 @@ func TestKindApplyMirrorsWritesHostsToml(t *testing.T) {
 
 	err := k.ApplyMirrors([]Mirror{{Registry: "docker.io", Endpoint: "https://mirror/docker"}})
 	require.NoError(t, err)
-	assert.True(t, r.ranContaining("/etc/containerd/certs.d/docker.io/hosts.toml"))
+	assert.True(t, r.ranContaining("certs.d/docker.io"))
+	assert.True(t, r.ranContaining("hosts.toml"))
 	assert.True(t, r.ranContaining("podman exec cds-kind-control-plane"))
+}
+
+func TestKindApplyMirrorsRejectsHostile(t *testing.T) {
+	bad := []Mirror{
+		{Registry: "docker.io; touch /pwned", Endpoint: "https://m"},
+		{Registry: "docker.io/../x", Endpoint: "https://m"},
+		{Registry: "docker.io", Endpoint: "file:///etc/passwd"},
+		{Registry: "docker.io", Endpoint: "https://"},
+		{Registry: "docker.io", Endpoint: "not a url"},
+	}
+	for _, m := range bad {
+		r := newFakeRunner()
+		k := kindProviderWithRunner(r)
+		require.Error(t, k.ApplyMirrors([]Mirror{m}), "%+v", m)
+		assert.Empty(t, r.ran, "nothing runs for %+v", m)
+	}
+	r := newFakeRunner()
+	r.replies["kind get nodes"] = "n\n"
+	require.NoError(t, kindProviderWithRunner(r).ApplyMirrors(
+		[]Mirror{{Registry: "reg.local:5000", Endpoint: "http://10.0.0.1:5000/v2"}}))
 }
 
 func TestKindApplyMirrorsNoopWhenEmpty(t *testing.T) {

@@ -3,7 +3,10 @@ package orchestration
 import (
 	"fmt"
 	"io"
+	"net/url"
 	"os/exec"
+	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/amadeusitgroup/cds/internal/bo"
@@ -318,6 +321,11 @@ func (k *kindProvider) ApplyMirrors(mirrors []Mirror) error {
 	if len(mirrors) == 0 {
 		return nil
 	}
+	for _, m := range mirrors {
+		if err := validateMirror(m); err != nil {
+			return err
+		}
+	}
 	nodes, err := k.nodes()
 	if err != nil {
 		return err
@@ -373,12 +381,29 @@ func (k *kindProvider) nodes() ([]string, error) {
 // applyMirrorOnNode writes the containerd hosts.toml for one registry on one
 // node. containerd reads /etc/containerd/certs.d/<registry>/hosts.toml.
 func (k *kindProvider) applyMirrorOnNode(node string, m Mirror) error {
-	dir := fmt.Sprintf("/etc/containerd/certs.d/%s", m.Registry)
-	hostsToml := fmt.Sprintf("server = \"https://%s\"\n\n[host.\"%s\"]\n  capabilities = [\"pull\", \"resolve\"]\n  override_path = true\n", m.Registry, m.Endpoint)
+	dir := shellQuote(fmt.Sprintf("/etc/containerd/certs.d/%s", m.Registry))
+	hostsToml := fmt.Sprintf("server = %s\n\n[host.%s]\n  capabilities = [\"pull\", \"resolve\"]\n  override_path = true\n", strconv.Quote("https://"+m.Registry), strconv.Quote(m.Endpoint))
 	script := fmt.Sprintf("set -eu; mkdir -p %s; printf '%%s' %s > %s/hosts.toml", dir, shellQuote(hostsToml), dir)
 	cmd := fmt.Sprintf("podman exec %s sh -c %s", node, shellQuote(script))
 	if out, err := k.runner(cmd); err != nil {
 		return cerr.AppendErrorFmt("failed to write hosts.toml: %s", err, out)
+	}
+	return nil
+}
+
+// kRegistryRe matches host[:port]: DNS labels or an IPv4 address, no path.
+var kRegistryRe = regexp.MustCompile(`^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?(:[0-9]{1,5})?$`)
+
+// validateMirror rejects a mirror whose Registry is not host[:port] or whose
+// Endpoint is not an http(s) URL: both come from devcontainer.json and end up
+// in a root shell script and a TOML file inside the kind node.
+func validateMirror(m Mirror) error {
+	if !kRegistryRe.MatchString(m.Registry) {
+		return cerr.NewError(fmt.Sprintf("invalid mirror registry %q: expected host[:port]", m.Registry))
+	}
+	u, err := url.Parse(m.Endpoint)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == cg.EmptyStr {
+		return cerr.NewError(fmt.Sprintf("invalid mirror endpoint %q: expected an http(s) URL", m.Endpoint))
 	}
 	return nil
 }
