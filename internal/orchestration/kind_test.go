@@ -181,3 +181,11 @@ func TestKindTrustRegistryNoopWhenNoCA(t *testing.T) {
 	require.NoError(t, k.TrustRegistryOnNodes("cds.sec.io", 5000, ""))
 	assert.Empty(t, r.ran)
 }
+
+func TestKindCreateCommandQuotesConfigFile(t *testing.T) {
+	assert.NotContains(t, kindCreateCommand(""), "--config")
+	assert.Equal(t,
+		"KIND_EXPERIMENTAL_PROVIDER=podman kind create cluster --name=cds-kind --config='x; touch pwned'",
+		kindCreateCommand("x; touch pwned"))
+	assert.Contains(t, kindCreateCommand("a'b"), `--config='a'\''b'`)
+}

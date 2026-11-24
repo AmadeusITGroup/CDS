@@ -85,14 +85,20 @@ func (k *kindProvider) Build(configFile string, report ProgressReporter) error {
 	if err := reportf(report, "cluster", fmt.Sprintf("Creating kind cluster %s", ClusterName)); err != nil {
 		return err
 	}
-	cmd := fmt.Sprintf("%s kind create cluster --name=%s", kindProviderEnv, ClusterName)
-	if configFile != cg.EmptyStr {
-		cmd += fmt.Sprintf(" --config=%s", configFile)
-	}
-	if out, err := k.runner(cmd); err != nil {
+	if out, err := k.runner(kindCreateCommand(configFile)); err != nil {
 		return cerr.AppendErrorFmt("failed to create kind cluster %s: %s", err, ClusterName, out)
 	}
 	return reportf(report, "cluster", fmt.Sprintf("Cluster %s created", ClusterName))
+}
+
+// kindCreateCommand builds the `kind create cluster` command. configFile comes
+// from a gRPC request / devcontainer.json (untrusted), so it is shell-quoted.
+func kindCreateCommand(configFile string) string {
+	cmd := fmt.Sprintf("%s kind create cluster --name=%s", kindProviderEnv, ClusterName)
+	if configFile != cg.EmptyStr {
+		cmd += " --config=" + shellQuote(configFile)
+	}
+	return cmd
 }
 
 // clusterExists reports whether the kind cluster is already known to kind.
