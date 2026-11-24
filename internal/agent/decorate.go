@@ -233,6 +233,8 @@ const registryEnvFile = ".config/cds/registry.env"
 // user makes the script skip the env file and rc files with a warning (CDS-055).
 // Ownership is read with ls, not find, which minimal images may lack; an owner
 // it cannot read is warned about as such, not as "not owned" (CDS-057).
+// The "cds: " skip warnings go to stdout: a successful first-deploy step keeps
+// only stdout, and the agent sends those lines to the client (CDS-061).
 func installRegistryEnvScript(reg registryEnv) string {
 	return fmt.Sprintf(`set -eu
 u=%s
@@ -245,7 +247,7 @@ uid=$(id -u "$u")
 owned() {
   o=$(ls -nd "$1" 2>/dev/null) || o=
   set -f; set -- "$1" $o; set +f
-  [ -n "${4-}" ] || { echo "cds: cannot tell who owns $1" >&2; return 1; }
+  [ -n "${4-}" ] || { echo "cds: cannot tell who owns $1"; return 1; }
   [ "$4" = "$uid" ]
 }
 rm -f /etc/profile.d/cds-registry.sh
@@ -254,7 +256,7 @@ rm -f /etc/profile.d/cds-registry.sh
 # dir; write as the user (runuser) if that matters.
 for d in "$home/.config" "$home/.config/cds"; do
   if [ -L "$d" ] || { [ -e "$d" ] && { [ ! -d "$d" ] || ! owned "$d"; }; }; then
-    echo "cds: $d is a link or not a directory owned by $u, $home/%s not written" >&2; exit 0
+    echo "cds: $d is a link or not a directory owned by $u, $home/%s not written"; exit 0
   fi
   if [ ! -d "$d" ]; then mkdir -m 700 "$d"; chown "$u:$g" "$d"; fi
 done
@@ -277,14 +279,14 @@ for rc in .profile .bashrc .bash_profile .zshrc; do
   # shortcut: check-then-append, so a user racing the script can still swap
   # the file; append as the user (runuser) if that matters.
   if [ -L "$f" ]; then
-    echo "cds: $f is a link, not changed; add to it: $line" >&2; continue
+    echo "cds: $f is a link, not changed; add to it: $line"; continue
   fi
   # .profile is created when missing (sh/dash/bash login shells read it);
   # the others are only appended to when the user already has them.
   if [ "$rc" != .profile ] && [ ! -e "$f" ]; then continue; fi
   if [ -e "$f" ]; then
     if [ ! -f "$f" ] || ! owned "$f"; then
-      echo "cds: $f is not a regular file owned by $u, not changed; add to it: $line" >&2; continue
+      echo "cds: $f is not a regular file owned by $u, not changed; add to it: $line"; continue
     fi
     if grep -qF "$line" "$f"; then continue; fi
   fi

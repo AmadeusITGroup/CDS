@@ -224,7 +224,9 @@ func TestInstallRegistryEnvScriptSkipsLinkedConfigDirs(t *testing.T) {
 			cmd := exec.Command("/bin/sh", "-s")
 			cmd.Env = append(os.Environ(), "PATH="+stubs+":"+os.Getenv("PATH"))
 			cmd.Stdin = strings.NewReader(installRegistryEnvScript(newRegistryEnv("cdsabc", "s3cr3t", "dev")))
-			out, err := cmd.CombinedOutput()
+			// the skip warning must be on stdout: a successful first-deploy
+			// step keeps only stdout (CDS-061)
+			out, err := cmd.Output()
 			require.NoError(t, err, string(out))
 
 			entries, err := os.ReadDir(target)
@@ -271,7 +273,9 @@ func TestInstallRegistryEnvScriptSkipsUnsafeRcFiles(t *testing.T) {
 			cmd := exec.Command("/bin/sh", "-s")
 			cmd.Env = append(os.Environ(), "PATH="+stubs+":"+os.Getenv("PATH"))
 			cmd.Stdin = strings.NewReader(installRegistryEnvScript(newRegistryEnv("cdsabc", "s3cr3t", "dev")))
-			out, err := cmd.CombinedOutput()
+			// the skip warning must be on stdout: a successful first-deploy
+			// step keeps only stdout (CDS-061)
+			out, err := cmd.Output()
 			require.NoError(t, err, string(out))
 
 			b, err := os.ReadFile(target)
