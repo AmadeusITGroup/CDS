@@ -185,7 +185,9 @@ func (rec passwordExecuteCallback) execute(cmds []any, sh sessionHandler) ([]str
 				// 	event.KNotifTypeError)
 				return nil, errors
 			}
-			if !cmdEvent.Recoverable() {
+			if isProbe(cmdEvent) {
+				clog.Debug(fmt.Sprintf("probe (%s) answered no: %v", cmdEvent.Cmd(), errExec))
+			} else if !cmdEvent.Recoverable() {
 				clog.Warn("Couldn't recover error:", errExec)
 				// event.NotifyChan <- cmdEvent.Notify(fmt.Sprintf(`No recover found for '%v'`, cmdEvent.Cmd()),
 				// 	event.KNotifTypeWarn)
@@ -234,7 +236,11 @@ func (kec keyExecuteCallback) execute(cmds []any, sh sessionHandler) ([]string, 
 		// event.NotifyChan <- cmdEvent.Notify(fmt.Sprintf(`Executing '%v' - command: '%v'`, cmdEvent.Description(), cmdEvent.Cmd()),
 		// 	event.KNotifTypeInfo)
 		// we don't defer tpExitCallback() since it fail when there are multiple cmds
-		tpExitCallback := tp.Printer(cmdEvent.Description())
+		// a probe shows no spinner: its "no" must not print "Action failed" (CDS-056)
+		tpExitCallback := func() {}
+		if !isProbe(cmdEvent) {
+			tpExitCallback = tp.Printer(cmdEvent.Description())
+		}
 		out, errExec := sh(client, cmdEvent.Cmd())
 		if errExec != nil {
 			tp.Status = termprint.KFail
@@ -245,7 +251,9 @@ func (kec keyExecuteCallback) execute(cmds []any, sh sessionHandler) ([]string, 
 				tpExitCallback()
 				return nil, errors
 			}
-			if !cmdEvent.Recoverable() {
+			if isProbe(cmdEvent) {
+				clog.Debug(fmt.Sprintf("probe (%s) answered no: %v", cmdEvent.Cmd(), errExec))
+			} else if !cmdEvent.Recoverable() {
 				clog.Warn("Couldn't recover error:", errExec)
 				// event.NotifyChan <- cmdEvent.Notify(fmt.Sprintf(`No recover found for '%v'`, cmdEvent.Cmd()),
 				// 	event.KNotifTypeWarn)

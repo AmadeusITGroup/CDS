@@ -45,6 +45,21 @@ func newUnitManager(h hostOps) *unitManager {
 	return &unitManager{h: h}
 }
 
+// prober is an optional hostOps capability: run a command whose non-zero exit
+// is a normal answer (unit inactive, file missing), without warning the user.
+// The remote host has it; local hosts do not need it (CDS-056).
+type prober interface {
+	Probe(name string, args ...string) (string, error)
+}
+
+// probe runs a "yes or no" question on the target, quietly when it can.
+func (m *unitManager) probe(name string, args ...string) (string, error) {
+	if p, ok := m.h.(prober); ok {
+		return p.Probe(name, args...)
+	}
+	return m.h.Execute(name, args...)
+}
+
 // available reports whether a systemd user session is reachable on the target.
 func (m *unitManager) available() bool {
 	_, err := m.h.Execute("systemctl", "--user", "--no-pager")
@@ -53,7 +68,7 @@ func (m *unitManager) available() bool {
 
 // isActive reports whether the given unit is active on the target.
 func (m *unitManager) isActive(unitName string) bool {
-	out, err := m.h.Execute("systemctl", "--user", "is-active", unitName)
+	out, err := m.probe("systemctl", "--user", "is-active", unitName)
 	if err != nil {
 		return false
 	}
@@ -109,7 +124,7 @@ func (m *unitManager) reconcile(unitDir string, units ...Unit) (bool, error) {
 // unitUpToDate reports whether the unit file installed on the target has
 // exactly the desired content, so that it does not need to be rewritten.
 func (m *unitManager) unitUpToDate(unitDir, unitName string, desired []byte) bool {
-	out, err := m.h.Execute("cat", path.Join(unitDir, unitName))
+	out, err := m.probe("cat", path.Join(unitDir, unitName))
 	if err != nil {
 		return false
 	}

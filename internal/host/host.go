@@ -217,6 +217,20 @@ func (h *host) Execute(name string, args ...string) (string, error) {
 	})
 }
 
+// Probe runs a command whose non-zero exit is an expected answer (e.g.
+// `systemctl is-active` on an inactive unit): like Execute, but a failure is
+// logged at debug, not shown to the user as a warning (CDS-056).
+func (h *host) Probe(name string, args ...string) (string, error) {
+	if shexec.IsLocalHost(h.name) {
+		return h.Execute(name, args...)
+	}
+	cmd := fmt.Sprintf("%s %s", name, strings.Join(args, " "))
+	runner := shexec.RunCmd(h)
+	return runner([]shexec.ExecuteEvent{
+		&shexec.ProbeShEvent{DefaultShEvent: shexec.DefaultShEvent{ExeCmd: cmd}},
+	})
+}
+
 func (h *host) Copy(localPath, remotePath string) error {
 	if shexec.IsLocalHost(h.name) {
 		data, err := os.ReadFile(localPath)

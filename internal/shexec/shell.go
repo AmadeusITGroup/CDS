@@ -372,6 +372,24 @@ func (se *DefaultShEvent) Fallback() error {
 	return nil
 }
 
+// ProbeShEvent is a command whose non-zero exit is a normal answer (a probe):
+// it shows no spinner and its failure is logged at debug, not as a warning.
+// The error is still returned to the caller (CDS-056).
+type ProbeShEvent struct {
+	DefaultShEvent
+}
+
+// Probe marks the event as a probe.
+func (se *ProbeShEvent) Probe() bool {
+	return true
+}
+
+// isProbe reports whether a non-zero exit of cmd is an expected answer.
+func isProbe(cmd ExecuteEvent) bool {
+	p, ok := cmd.(interface{ Probe() bool })
+	return ok && p.Probe()
+}
+
 // func (se *DefaultShEvent) Notify(m string, t event.NotifType) event.Notification {
 // 	sn := &event.DefaultNotification{
 // 		NotifName:    "",

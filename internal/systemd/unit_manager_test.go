@@ -1,6 +1,8 @@
 package systemd
 
 import (
+	"errors"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -93,4 +95,40 @@ func TestManagerStop(t *testing.T) {
 	h := newFakeHost()
 	require.NoError(t, newUnitManager(h).stop("cds.socket", "cds.service"))
 	assert.Equal(t, []string{"systemctl --user stop cds.socket cds.service"}, h.executed)
+}
+
+// probingHost is a fakeHost that also offers Probe, like the remote host: the
+// unit manager must send its "is it there / is it up" questions through it.
+type probingHost struct {
+	*fakeHost
+	probed []string
+}
+
+func (p *probingHost) Probe(name string, args ...string) (string, error) {
+	cmd := strings.Join(append([]string{name}, args...), " ")
+	p.probed = append(p.probed, cmd)
+	if p.failures[cmd] {
+		return "", errors.New("exit status 1")
+	}
+	return p.outputs[cmd], nil
+}
+
+// TestManagerProbesExpectedNoAnswersQuietly: `is-active` (exit 3 when
+// inactive) and the unit-file `cat` (exit 1 when missing) are probes whose
+// "no" is a normal answer, so they go through Probe, never Execute, which
+// warns the user on a non-zero exit (CDS-056). Real changes still use Execute.
+func TestManagerProbesExpectedNoAnswersQuietly(t *testing.T) {
+	h := &probingHost{fakeHost: newFakeHost()}
+	const dir = "/home/remote-user/.config/systemd/user"
+	h.failures["systemctl --user is-active cds.service"] = true
+	h.failures["cat "+dir+"/cds.socket"] = true
+
+	m := newUnitManager(h)
+	assert.False(t, m.isActive("cds.service"))
+	changed, err := m.reconcile(dir, Unit{Name: "cds.socket", Content: []byte("[Socket]\n")})
+	require.NoError(t, err)
+	assert.True(t, changed, "a missing unit file is still written")
+
+	assert.Equal(t, []string{"systemctl --user is-active cds.service", "cat " + dir + "/cds.socket"}, h.probed)
+	assert.Equal(t, []string{"mkdir -p " + dir, "systemctl --user daemon-reload"}, h.executed)
 }

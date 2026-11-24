@@ -64,3 +64,10 @@ func TestRunLocalCmdWithStdinFeedsSecretOffCommandLine(t *testing.T) {
 	require.Error(t, err)
 	assert.NotContains(t, err.Error(), secret)
 }
+
+// TestIsProbe: only a ProbeShEvent is a probe, so only its failure is quiet
+// (no spinner, debug log); every other command still warns (CDS-056).
+func TestIsProbe(t *testing.T) {
+	assert.True(t, isProbe(&ProbeShEvent{DefaultShEvent: DefaultShEvent{ExeCmd: "systemctl --user is-active cds.service"}}))
+	assert.False(t, isProbe(&DefaultShEvent{ExeCmd: "systemctl --user daemon-reload"}))
+}
