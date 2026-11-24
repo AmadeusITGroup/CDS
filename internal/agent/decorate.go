@@ -84,7 +84,7 @@ func ensureOrchestration(
 	// Once both the cluster and registry are up, make the cluster trust and pull
 	// from the registry.
 	if oc.Registry.Requested {
-		return connectRegistryToCluster(ctx, cluster, reg, oc.Registry.Port, report)
+		return connectRegistryToCluster(ctx, cluster, reg, report)
 	}
 	return nil
 }
@@ -117,14 +117,11 @@ func deployIngress(ctx context.Context, cluster clusterOps, report deployProgres
 // connectRegistryToCluster installs the registry CA on the cluster nodes and
 // creates the in-cluster pull secret (the documented cdsregistrycred secret +
 // default service account patch), so pods can pull from the local registry.
-// port 0 means the default registry port.
-func connectRegistryToCluster(ctx context.Context, cluster clusterOps, reg registryOps, port int, report deployProgressReporter) error {
+// The registry always listens on registry.DefaultPort (CDS-033).
+func connectRegistryToCluster(ctx context.Context, cluster clusterOps, reg registryOps, report deployProgressReporter) error {
 	user, pass, err := reg.RegistryCredentials()
 	if err != nil {
 		return cerr.AppendError("failed to resolve registry credentials for pull secret", err)
-	}
-	if port == 0 {
-		port = registry.DefaultPort
 	}
 	// install the registry CA on the nodes so containerd trusts the registry
 	// over TLS, otherwise pods fail with "certificate signed by unknown
@@ -133,14 +130,14 @@ func connectRegistryToCluster(ctx context.Context, cluster clusterOps, reg regis
 		if err := report(deployProgress{phase: "cluster", message: "Trusting registry CA on cluster nodes"}); err != nil {
 			return err
 		}
-		if err := cluster.TrustRegistryOnNodes(ctx, registry.Hostname, port, ca); err != nil {
+		if err := cluster.TrustRegistryOnNodes(ctx, registry.Hostname, registry.DefaultPort, ca); err != nil {
 			return cerr.AppendError("failed to trust registry CA on cluster nodes", err)
 		}
 	}
 	if err := report(deployProgress{phase: "cluster", message: "Creating in-cluster registry pull secret"}); err != nil {
 		return err
 	}
-	if err := cluster.CreateRegistrySecret(ctx, registry.Hostname, port, user, pass); err != nil {
+	if err := cluster.CreateRegistrySecret(ctx, registry.Hostname, registry.DefaultPort, user, pass); err != nil {
 		return cerr.AppendError("failed to create in-cluster registry pull secret", err)
 	}
 	return nil
@@ -161,23 +158,20 @@ type registryEnv struct {
 
 func (r registryEnv) set() bool { return r.name != "" && r.user != "" }
 
-// newRegistryEnv is the registry env for a deployment whose registry listens
-// on port (0 means the default port), written for the container user owner
-// (empty means root). It is unset when user is empty.
-func newRegistryEnv(port int, user, password, owner string) registryEnv {
+// newRegistryEnv is the registry env for a deployment, written for the
+// container user owner (empty means root). The registry always listens on
+// registry.DefaultPort (CDS-033). It is unset when user is empty.
+func newRegistryEnv(user, password, owner string) registryEnv {
 	if user == cg.EmptyStr {
 		return registryEnv{}
-	}
-	if port == 0 {
-		port = registry.DefaultPort
 	}
 	if owner == cg.EmptyStr {
 		owner = engine.KRootUsr
 	}
 	return registryEnv{
 		name:     registry.Hostname,
-		port:     port,
-		caPath:   fmt.Sprintf("/etc/containers/certs.d/%s:%d/ca.crt", registry.Hostname, port),
+		port:     registry.DefaultPort,
+		caPath:   fmt.Sprintf("/etc/containers/certs.d/%s:%d/ca.crt", registry.Hostname, registry.DefaultPort),
 		user:     user,
 		password: password,
 		owner:    owner,
@@ -375,7 +369,7 @@ func (s *grpcServer) redecorateContainers(ctx context.Context, report deployProg
 
 		ca, reg := "", registryEnv{}
 		if oc.Registry.Requested {
-			ca, reg = registryCA, newRegistryEnv(oc.Registry.Port, registryUser, registryPassword, d.remoteUser)
+			ca, reg = registryCA, newRegistryEnv(registryUser, registryPassword, d.remoteUser)
 		}
 		s.redecorateOne(ctx, d.name, containerDecorationCommands(kubeconfig, ca, reg), report)
 	}
@@ -432,9 +426,7 @@ func (s *grpcServer) reapplyOrchestration(ctx context.Context, clusterRebuilt bo
 
 	var mirrors []containerconf.Mirror
 	seenMirror := map[containerconf.Mirror]bool{}
-	ingress := false
-	var ports []int
-	seenPort := map[int]bool{}
+	ingress, registryRequested := false, false
 	for _, d := range deployed {
 		for _, m := range d.oc.Mirrors {
 			if !seenMirror[m] {
@@ -443,10 +435,7 @@ func (s *grpcServer) reapplyOrchestration(ctx context.Context, clusterRebuilt bo
 			}
 		}
 		ingress = ingress || d.oc.Ingress
-		if p := d.oc.Registry.Port; d.oc.Registry.Requested && !seenPort[p] {
-			seenPort[p] = true
-			ports = append(ports, p)
-		}
+		registryRequested = registryRequested || d.oc.Registry.Requested
 	}
 
 	warn := func(err error) {
@@ -462,8 +451,8 @@ func (s *grpcServer) reapplyOrchestration(ctx context.Context, clusterRebuilt bo
 			warn(deployIngress(ctx, s.clusterOps(), report))
 		}
 	}
-	for _, port := range ports {
-		warn(connectRegistryToCluster(ctx, s.clusterOps(), s.registryOps(), port, report))
+	if registryRequested {
+		warn(connectRegistryToCluster(ctx, s.clusterOps(), s.registryOps(), report))
 	}
 }
 

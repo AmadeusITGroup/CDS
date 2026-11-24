@@ -37,6 +37,8 @@ type mockClusterOps struct {
 	registrySecretErr     error
 	registryTrusted       bool
 	registryTrustErr      error
+	// registryPorts are the ports passed to the trust and pull-secret calls.
+	registryPorts []int
 }
 
 func (m *mockClusterOps) BuildCluster(_ context.Context, _, _ string, report clusterProgressReporter) error {
@@ -69,10 +71,12 @@ func (m *mockClusterOps) DeployIngress(context.Context) error {
 }
 func (m *mockClusterOps) CreateRegistrySecret(_ context.Context, host string, port int, user, pass string) error {
 	m.registrySecretCreated = true
+	m.registryPorts = append(m.registryPorts, port)
 	return m.registrySecretErr
 }
 func (m *mockClusterOps) TrustRegistryOnNodes(_ context.Context, host string, port int, caPEM string) error {
 	m.registryTrusted = true
+	m.registryPorts = append(m.registryPorts, port)
 	return m.registryTrustErr
 }
 

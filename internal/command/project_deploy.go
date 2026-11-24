@@ -72,6 +72,10 @@ func buildProjectDeployPlan(projectName string) (projectDeployPlan, error) {
 	}
 
 	orchestration := config.OrchestrationConfig()
+	if config.RegistryPortIgnored() {
+		// the registry is one per host on a fixed port (CDS-033)
+		clog.Warn(fmt.Sprintf("%s: orchestration.registry.port is no longer supported and is ignored; the registry always uses its default port", configFile))
+	}
 
 	return projectDeployPlan{
 		projectName:       projectName,

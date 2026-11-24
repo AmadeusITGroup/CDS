@@ -20,7 +20,7 @@ func TestOrchestrationConfigAbsentSection(t *testing.T) {
 	assert.False(t, oc.PersistentVolume)
 	assert.False(t, oc.Registry.Requested)
 	assert.False(t, oc.Registry.Secure)
-	assert.Zero(t, oc.Registry.Port)
+	assert.False(t, config.RegistryPortIgnored())
 }
 
 func TestOrchestrationConfigKindWithSecureRegistry(t *testing.T) {
@@ -32,7 +32,7 @@ func TestOrchestrationConfigKindWithSecureRegistry(t *testing.T) {
 			"pvc": true,
 			"registry": {
 				"secure": true,
-				"port": 5000
+				"port": 6000
 			}
 		}
 	}`))
@@ -46,7 +46,7 @@ func TestOrchestrationConfigKindWithSecureRegistry(t *testing.T) {
 	assert.True(t, oc.PersistentVolume)
 	assert.True(t, oc.Registry.Requested)
 	assert.True(t, oc.Registry.Secure)
-	assert.Equal(t, 5000, oc.Registry.Port, "JSON number decodes to int")
+	assert.True(t, config.RegistryPortIgnored(), "the removed port key is detected so the client can warn (CDS-033)")
 }
 
 func TestOrchestrationConfigEngineWithoutRegistry(t *testing.T) {
@@ -62,10 +62,9 @@ func TestOrchestrationConfigEngineWithoutRegistry(t *testing.T) {
 	assert.Equal(t, "kind", oc.Engine)
 	assert.False(t, oc.Registry.Requested, "no registry sub-section means no registry")
 	assert.False(t, oc.Registry.Secure)
-	assert.Zero(t, oc.Registry.Port)
 }
 
-func TestOrchestrationConfigInsecureRegistryDefaultPort(t *testing.T) {
+func TestOrchestrationConfigInsecureRegistry(t *testing.T) {
 	config, err := ParseBytes(strings.NewReader(`{
 		"image": "alpine:3.19",
 		"orchestration": {"engine": "kind", "registry": {}}
@@ -76,5 +75,5 @@ func TestOrchestrationConfigInsecureRegistryDefaultPort(t *testing.T) {
 
 	assert.True(t, oc.Registry.Requested, "an empty registry object still requests a registry")
 	assert.False(t, oc.Registry.Secure)
-	assert.Zero(t, oc.Registry.Port, "unset port is zero so the agent can pick one")
+	assert.False(t, config.RegistryPortIgnored())
 }

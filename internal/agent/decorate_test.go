@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -123,7 +124,7 @@ func TestEnsureOrchestrationSkipsIngressWhenNotRequested(t *testing.T) {
 }
 
 func TestContainerDecorationIncludesRegistryEnv(t *testing.T) {
-	reg := newRegistryEnv(5000, "cdsabc", "secret", "dev")
+	reg := newRegistryEnv("cdsabc", "secret", "dev")
 	cmds := containerDecorationCommands("KC", "CA", reg)
 	// kubeconfig + trust + registry env
 	require.Len(t, cmds, 3)
@@ -140,7 +141,7 @@ func TestContainerDecorationIncludesRegistryEnv(t *testing.T) {
 }
 
 func TestNewRegistryEnvDefaultsOwnerToRoot(t *testing.T) {
-	assert.Equal(t, "root", newRegistryEnv(0, "cdsabc", "secret", "").owner)
+	assert.Equal(t, "root", newRegistryEnv("cdsabc", "secret", "").owner)
 }
 
 // TestInstallRegistryEnvScriptRealShell runs the script with a real /bin/sh
@@ -159,7 +160,7 @@ func TestInstallRegistryEnvScriptRealShell(t *testing.T) {
 	// an existing .bashrc is appended to; a missing .zshrc is not created
 	require.NoError(t, os.WriteFile(filepath.Join(home, ".bashrc"), []byte("# user rc\n"), 0o644))
 
-	script := installRegistryEnvScript(newRegistryEnv(5000, "cdsabc", "s3cr3t", "dev"))
+	script := installRegistryEnvScript(newRegistryEnv("cdsabc", "s3cr3t", "dev"))
 	run := func() {
 		cmd := exec.Command("/bin/sh", "-s")
 		cmd.Env = append(os.Environ(), "PATH="+stubs+":"+os.Getenv("PATH"))
@@ -209,6 +210,27 @@ func TestEnsureOrchestrationCreatesPullSecret(t *testing.T) {
 	err := ensureOrchestration(context.Background(), cluster, reg, oc, func(deployProgress) error { return nil })
 	require.NoError(t, err)
 	assert.True(t, cluster.registrySecretCreated, "in-cluster pull secret is created when a registry is requested")
+}
+
+// TestRegistryPortSettingIsIgnored: a leftover orchestration.registry.port
+// no longer moves node trust, the pull secret or the container env off the
+// port the registry really listens on (CDS-033).
+func TestRegistryPortSettingIsIgnored(t *testing.T) {
+	config, err := containerconf.ParseBytes(strings.NewReader(`{
+		"image": "alpine:3.19",
+		"orchestration": {"engine": "kind", "registry": {"secure": true, "port": 6000}}
+	}`))
+	require.NoError(t, err)
+	require.True(t, config.RegistryPortIgnored())
+
+	cluster := &mockClusterOps{}
+	reg := &mockRegistryOps{user: "cdsu", pass: "cdsp", ca: "CA"}
+	require.NoError(t, ensureOrchestration(context.Background(), cluster, reg, config.OrchestrationConfig(), func(deployProgress) error { return nil }))
+	assert.Equal(t, []int{registry.DefaultPort, registry.DefaultPort}, cluster.registryPorts, "trust and pull secret use the registry port")
+
+	env := newRegistryEnv("cdsu", "cdsp", "")
+	assert.Equal(t, registry.DefaultPort, env.port)
+	assert.Contains(t, env.caPath, fmt.Sprintf(":%d/ca.crt", registry.DefaultPort))
 }
 
 func TestEnsureOrchestrationNoPullSecretWithoutRegistry(t *testing.T) {

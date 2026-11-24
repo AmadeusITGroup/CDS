@@ -49,9 +49,18 @@ type RegistryConfig struct {
 	// Secure reports whether the requested registry must be secured
 	// (orchestration.registry.secure).
 	Secure bool
-	// Port is the host port the registry publishes, or 0 when unset (the agent
-	// then picks/keeps a port).
-	Port int
+}
+
+// kOrchestrationRegistryIgnoredPort is the former orchestration.registry.port
+// key. The registry always listens on registry.DefaultPort (one registry per
+// host, reached in-network on its container port), so the key is ignored and
+// only detected to warn about it (CDS-033).
+const kOrchestrationRegistryIgnoredPort = "port"
+
+// RegistryPortIgnored reports whether the configuration still sets the removed
+// orchestration.registry.port key, which has no effect (CDS-033).
+func (c *Config) RegistryPortIgnored() bool {
+	return c.IsSet(KOrchestration, KOrchestrationRegistry, kOrchestrationRegistryIgnoredPort)
 }
 
 // OrchestrationConfig collects the orchestration configuration from the
@@ -78,7 +87,6 @@ func (c *Config) registryConfig() RegistryConfig {
 	return RegistryConfig{
 		Requested: c.IsRegistryRequested(),
 		Secure:    c.boolAt(KOrchestration, KOrchestrationRegistry, KOrchestrationRegistrySecure),
-		Port:      c.intAt(KOrchestration, KOrchestrationRegistry, KOrchestrationRegistryPort),
 	}
 }
 
@@ -110,19 +118,4 @@ func (c *Config) mirrors() []Mirror {
 func (c *Config) boolAt(key ...string) bool {
 	v, ok := c.Get(key...).(bool)
 	return ok && v
-}
-
-// intAt returns the int at the given key path, or 0 when unset or not an int.
-// JSON numbers decode as float64 through viper, so that shape is accepted too.
-func (c *Config) intAt(key ...string) int {
-	switch v := c.Get(key...).(type) {
-	case int:
-		return v
-	case int64:
-		return int(v)
-	case float64:
-		return int(v)
-	default:
-		return 0
-	}
 }
