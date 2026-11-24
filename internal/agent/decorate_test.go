@@ -5,6 +5,7 @@ import (
 	"errors"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/amadeusitgroup/cds/internal/containerconf"
 	"github.com/amadeusitgroup/cds/internal/registry"
@@ -155,4 +156,25 @@ func TestEnsureOrchestrationNoPullSecretWithoutRegistry(t *testing.T) {
 	err := ensureOrchestration(context.Background(), cluster, reg, oc, func(deployProgress) error { return nil })
 	require.NoError(t, err)
 	assert.False(t, cluster.registrySecretCreated)
+}
+
+func TestEnsureOrchestrationSerializesReports(t *testing.T) {
+	cluster := &mockClusterOps{buildProgress: []clusterProgress{{message: "a"}, {message: "b"}, {message: "c"}}}
+	reg := &mockRegistryOps{buildProgress: []registryProgress{{message: "x"}, {message: "y"}, {message: "z"}}}
+	oc := containerconf.KindOrchestrationConfig{
+		Requested: true,
+		Registry:  containerconf.RegistryConfig{Requested: true},
+	}
+
+	var inFlight, overlaps int32
+	err := ensureOrchestration(context.Background(), cluster, reg, oc, func(deployProgress) error {
+		if atomic.AddInt32(&inFlight, 1) > 1 {
+			atomic.AddInt32(&overlaps, 1)
+		}
+		time.Sleep(5 * time.Millisecond)
+		atomic.AddInt32(&inFlight, -1)
+		return nil
+	})
+	require.NoError(t, err)
+	assert.Zero(t, overlaps, "report must never run concurrently")
 }

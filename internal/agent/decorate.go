@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"sync"
 
 	"github.com/amadeusitgroup/cds/internal/bo"
 	"github.com/amadeusitgroup/cds/internal/cerr"
@@ -30,6 +31,16 @@ func ensureOrchestration(
 ) error {
 	if !oc.Requested {
 		return nil
+	}
+
+	// the cluster and registry goroutines share one gRPC stream; grpc-go forbids
+	// concurrent SendMsg, so serialize every report call.
+	var mu sync.Mutex
+	rawReport := report
+	report = func(p deployProgress) error {
+		mu.Lock()
+		defer mu.Unlock()
+		return rawReport(p)
 	}
 
 	g, _ := errgroup.WithContext(ctx)
