@@ -54,21 +54,11 @@ func ensureOrchestration(
 		if err != nil {
 			return cerr.AppendError("failed to ensure cluster", err)
 		}
-		if len(oc.Mirrors) > 0 {
-			if err := report(deployProgress{phase: "cluster", message: "Applying registry mirrors"}); err != nil {
-				return err
-			}
-			if err := cluster.ApplyMirrors(ctx, toOrchestrationMirrors(oc.Mirrors)); err != nil {
-				return cerr.AppendError("failed to apply registry mirrors", err)
-			}
+		if err := applyMirrors(ctx, cluster, oc.Mirrors, report); err != nil {
+			return err
 		}
 		if oc.Ingress {
-			if err := report(deployProgress{phase: "cluster", message: "Deploying ingress controller"}); err != nil {
-				return err
-			}
-			if err := cluster.DeployIngress(ctx); err != nil {
-				return cerr.AppendError("failed to deploy ingress", err)
-			}
+			return deployIngress(ctx, cluster, report)
 		}
 		return nil
 	})
@@ -89,35 +79,67 @@ func ensureOrchestration(
 		return err
 	}
 
-	// Once both the cluster and registry are up, create the in-cluster pull
-	// secret so pods can pull from the local registry (the documented
-	// cdsregistrycred secret + default service account patch).
+	// Once both the cluster and registry are up, make the cluster trust and pull
+	// from the registry.
 	if oc.Registry.Requested {
-		user, pass, err := reg.RegistryCredentials()
-		if err != nil {
-			return cerr.AppendError("failed to resolve registry credentials for pull secret", err)
-		}
-		port := oc.Registry.Port
-		if port == 0 {
-			port = registry.DefaultPort
-		}
-		// install the registry CA on the nodes so containerd trusts the registry
-		// over TLS, otherwise pods fail with "certificate signed by unknown
-		// authority" when pulling.
-		if ca, caErr := reg.RegistryCA(); caErr == nil && ca != "" {
-			if err := report(deployProgress{phase: "cluster", message: "Trusting registry CA on cluster nodes"}); err != nil {
-				return err
-			}
-			if err := cluster.TrustRegistryOnNodes(ctx, registry.Hostname, port, ca); err != nil {
-				return cerr.AppendError("failed to trust registry CA on cluster nodes", err)
-			}
-		}
-		if err := report(deployProgress{phase: "cluster", message: "Creating in-cluster registry pull secret"}); err != nil {
+		return connectRegistryToCluster(ctx, cluster, reg, oc.Registry.Port, report)
+	}
+	return nil
+}
+
+// applyMirrors writes the registry mirrors on the cluster nodes.
+func applyMirrors(ctx context.Context, cluster clusterOps, mirrors []containerconf.Mirror, report deployProgressReporter) error {
+	if len(mirrors) == 0 {
+		return nil
+	}
+	if err := report(deployProgress{phase: "cluster", message: "Applying registry mirrors"}); err != nil {
+		return err
+	}
+	if err := cluster.ApplyMirrors(ctx, toOrchestrationMirrors(mirrors)); err != nil {
+		return cerr.AppendError("failed to apply registry mirrors", err)
+	}
+	return nil
+}
+
+// deployIngress installs the ingress controller in the cluster.
+func deployIngress(ctx context.Context, cluster clusterOps, report deployProgressReporter) error {
+	if err := report(deployProgress{phase: "cluster", message: "Deploying ingress controller"}); err != nil {
+		return err
+	}
+	if err := cluster.DeployIngress(ctx); err != nil {
+		return cerr.AppendError("failed to deploy ingress", err)
+	}
+	return nil
+}
+
+// connectRegistryToCluster installs the registry CA on the cluster nodes and
+// creates the in-cluster pull secret (the documented cdsregistrycred secret +
+// default service account patch), so pods can pull from the local registry.
+// port 0 means the default registry port.
+func connectRegistryToCluster(ctx context.Context, cluster clusterOps, reg registryOps, port int, report deployProgressReporter) error {
+	user, pass, err := reg.RegistryCredentials()
+	if err != nil {
+		return cerr.AppendError("failed to resolve registry credentials for pull secret", err)
+	}
+	if port == 0 {
+		port = registry.DefaultPort
+	}
+	// install the registry CA on the nodes so containerd trusts the registry
+	// over TLS, otherwise pods fail with "certificate signed by unknown
+	// authority" when pulling.
+	if ca, caErr := reg.RegistryCA(); caErr == nil && ca != "" {
+		if err := report(deployProgress{phase: "cluster", message: "Trusting registry CA on cluster nodes"}); err != nil {
 			return err
 		}
-		if err := cluster.CreateRegistrySecret(ctx, registry.Hostname, port, user, pass); err != nil {
-			return cerr.AppendError("failed to create in-cluster registry pull secret", err)
+		if err := cluster.TrustRegistryOnNodes(ctx, registry.Hostname, port, ca); err != nil {
+			return cerr.AppendError("failed to trust registry CA on cluster nodes", err)
 		}
+	}
+	if err := report(deployProgress{phase: "cluster", message: "Creating in-cluster registry pull secret"}); err != nil {
+		return err
+	}
+	if err := cluster.CreateRegistrySecret(ctx, registry.Hostname, port, user, pass); err != nil {
+		return cerr.AppendError("failed to create in-cluster registry pull secret", err)
 	}
 	return nil
 }
@@ -259,24 +281,15 @@ func (s *containerServiceServer) ensureAndResolveDecoration(
 // It is best effort and never returns an error that should fail the build: a
 // rebuild succeeds even if re-decoration of some container does not.
 func (s *grpcServer) redecorateContainers(ctx context.Context, report deployProgressReporter) {
-	reqs, err := s.deployments().list()
-	if err != nil {
-		clog.Warn("failed to list deployments for re-decoration", err)
+	deployed, ok := s.orchestratedDeployments()
+	if !ok {
 		return
 	}
 
 	var kubeconfig, registryCA string
-	for _, req := range reqs {
-		config, err := containerconf.ParseBytes(bytes.NewReader(req.GetDevcontainerConfig()))
-		if err != nil {
-			clog.Warn(fmt.Sprintf("skipping re-decoration of %s: invalid config", req.GetContainerName()), err)
-			continue
-		}
-		oc := config.OrchestrationConfig()
-		if !oc.Requested {
-			continue
-		}
-		if !s.containerRunning(req.GetContainerName()) {
+	for _, d := range deployed {
+		oc := d.oc
+		if !s.containerRunning(d.name) {
 			continue
 		}
 
@@ -299,7 +312,91 @@ func (s *grpcServer) redecorateContainers(ctx context.Context, report deployProg
 		if oc.Registry.Requested {
 			ca = registryCA
 		}
-		s.redecorateOne(ctx, req.GetContainerName(), kubeconfig, ca, report)
+		s.redecorateOne(ctx, d.name, kubeconfig, ca, report)
+	}
+}
+
+// orchestratedDeployment is a recorded deployment that requested orchestration.
+type orchestratedDeployment struct {
+	name string
+	oc   containerconf.KindOrchestrationConfig
+}
+
+// orchestratedDeployments lists the recorded deployments that requested
+// orchestration; ok is false when the record cannot be read.
+func (s *grpcServer) orchestratedDeployments() (out []orchestratedDeployment, ok bool) {
+	reqs, err := s.deployments().list()
+	if err != nil {
+		clog.Warn("failed to list deployments for re-decoration", err)
+		return nil, false
+	}
+	for _, req := range reqs {
+		config, err := containerconf.ParseBytes(bytes.NewReader(req.GetDevcontainerConfig()))
+		if err != nil {
+			clog.Warn(fmt.Sprintf("skipping re-decoration of %s: invalid config", req.GetContainerName()), err)
+			continue
+		}
+		if oc := config.OrchestrationConfig(); oc.Requested {
+			out = append(out, orchestratedDeployment{name: req.GetContainerName(), oc: oc})
+		}
+	}
+	return out, true
+}
+
+// reapplyOrchestration re-runs the post-build steps of ensureOrchestration for
+// every orchestration setting found in the recorded deployments (CDS-031): a
+// deleted and rebuilt cluster has lost them, and a rebuilt registry has a new
+// CA and credentials the nodes and pull secret must get.
+//
+// clusterRebuilt re-applies everything (mirrors, ingress, registry trust and
+// pull secret); otherwise only the registry steps, and only on a running
+// cluster. Like re-decoration it is best effort: a failed step is logged and
+// reported, the other steps still run, and the build itself stays a success.
+func (s *grpcServer) reapplyOrchestration(ctx context.Context, clusterRebuilt bool, report deployProgressReporter) {
+	deployed, ok := s.orchestratedDeployments()
+	if !ok || len(deployed) == 0 {
+		return
+	}
+	if !clusterRebuilt {
+		if c, err := s.clusterOps().GetCluster(); err != nil || c.Status != bo.KContainerStatusRunning {
+			return
+		}
+	}
+
+	var mirrors []containerconf.Mirror
+	seenMirror := map[containerconf.Mirror]bool{}
+	ingress := false
+	var ports []int
+	seenPort := map[int]bool{}
+	for _, d := range deployed {
+		for _, m := range d.oc.Mirrors {
+			if !seenMirror[m] {
+				seenMirror[m] = true
+				mirrors = append(mirrors, m)
+			}
+		}
+		ingress = ingress || d.oc.Ingress
+		if p := d.oc.Registry.Port; d.oc.Registry.Requested && !seenPort[p] {
+			seenPort[p] = true
+			ports = append(ports, p)
+		}
+	}
+
+	warn := func(err error) {
+		if err == nil {
+			return
+		}
+		clog.Warn("failed to re-apply orchestration setting", err)
+		_ = report(deployProgress{phase: "cluster", message: fmt.Sprintf("Warning: %v", err)})
+	}
+	if clusterRebuilt {
+		warn(applyMirrors(ctx, s.clusterOps(), mirrors, report))
+		if ingress {
+			warn(deployIngress(ctx, s.clusterOps(), report))
+		}
+	}
+	for _, port := range ports {
+		warn(connectRegistryToCluster(ctx, s.clusterOps(), s.registryOps(), port, report))
 	}
 }
 

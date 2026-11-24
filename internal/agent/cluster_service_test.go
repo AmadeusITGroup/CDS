@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/amadeusitgroup/cds/internal/api/v1/cdspb"
@@ -173,4 +174,72 @@ func TestGetKubeconfigReturnsConfig(t *testing.T) {
 	resp, err := svc.GetKubeconfig(context.Background(), &cdspb.GetKubeconfigRequest{})
 	require.NoError(t, err)
 	assert.Contains(t, resp.GetKubeconfig(), "kind: Config")
+}
+
+// newTestOrchestrationServer wires mock cluster, registry and container ops and
+// records one deployment per config, as a deploy would have.
+func newTestOrchestrationServer(t *testing.T, cluster clusterOps, reg registryOps, configs ...string) *grpcServer {
+	t.Helper()
+	srv, err := newgrpcServer(NewConfig(
+		withStagingDir(t.TempDir()),
+		withStateDir(t.TempDir()),
+		withContainerOps(&mockContainerOps{}),
+		withClusterOps(cluster),
+		withRegistryOps(reg),
+	))
+	require.NoError(t, err)
+	for i, cfg := range configs {
+		require.NoError(t, srv.deployments().save(&cdspb.DeployContainerRequest{
+			ContainerName:      fmt.Sprintf("dev-%d", i),
+			ProjectName:        "p",
+			DevcontainerConfig: []byte(cfg),
+		}))
+	}
+	return srv
+}
+
+const kOrchestratedConfig = `{"image":"ubuntu:24.04","orchestration":{"engine":"kind","ingress":true,
+	"mirrors":[{"registry":"docker.io","endpoint":"https://registry-1.docker.io"}],
+	"registry":{"secure":true}}}`
+
+// TestBuildClusterReappliesRecordedOrchestration covers CDS-031: a rebuilt
+// cluster gets back the mirrors, ingress, registry CA and pull secret the
+// recorded deployments asked for, not only the kubeconfig.
+func TestBuildClusterReappliesRecordedOrchestration(t *testing.T) {
+	cluster := &mockClusterOps{}
+	reg := &mockRegistryOps{ca: "CA", user: "u", pass: "p"}
+	srv := newTestOrchestrationServer(t, cluster, reg, kOrchestratedConfig, `{"image":"ubuntu:24.04"}`)
+
+	require.NoError(t, newClusterServiceServer(srv).BuildCluster(&cdspb.BuildClusterRequest{}, &mockBuildStream{}))
+
+	assert.Equal(t, []orchestration.Mirror{{Registry: "docker.io", Endpoint: "https://registry-1.docker.io"}}, cluster.appliedMirrors)
+	assert.True(t, cluster.ingressDeployed, "ingress is redeployed")
+	assert.True(t, cluster.registryTrusted, "registry CA is trusted on the new nodes")
+	assert.True(t, cluster.registrySecretCreated, "pull secret is recreated")
+}
+
+func TestBuildClusterReappliesNothingWithoutOrchestratedDeployments(t *testing.T) {
+	cluster := &mockClusterOps{}
+	srv := newTestOrchestrationServer(t, cluster, &mockRegistryOps{ca: "CA"}, `{"image":"ubuntu:24.04"}`)
+
+	require.NoError(t, newClusterServiceServer(srv).BuildCluster(&cdspb.BuildClusterRequest{}, &mockBuildStream{}))
+
+	assert.Nil(t, cluster.appliedMirrors)
+	assert.False(t, cluster.ingressDeployed)
+	assert.False(t, cluster.registryTrusted)
+	assert.False(t, cluster.registrySecretCreated)
+}
+
+// a failing re-apply step is reported, not fatal: the cluster itself was built.
+func TestBuildClusterReapplyFailureDoesNotFailBuild(t *testing.T) {
+	cluster := &mockClusterOps{deployIngressErr: errors.New("ingress boom")}
+	srv := newTestOrchestrationServer(t, cluster, &mockRegistryOps{ca: "CA"}, kOrchestratedConfig)
+	stream := &mockBuildStream{}
+
+	require.NoError(t, newClusterServiceServer(srv).BuildCluster(&cdspb.BuildClusterRequest{}, stream))
+
+	resp := stream.events[len(stream.events)-1].GetResponse()
+	require.NotNil(t, resp)
+	assert.Empty(t, resp.GetError())
+	assert.True(t, cluster.registrySecretCreated, "later steps still run")
 }

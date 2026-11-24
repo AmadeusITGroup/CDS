@@ -6,6 +6,8 @@ import (
 	"testing"
 
 	"github.com/amadeusitgroup/cds/internal/api/v1/cdspb"
+	"github.com/amadeusitgroup/cds/internal/bo"
+	"github.com/amadeusitgroup/cds/internal/orchestration"
 	"github.com/amadeusitgroup/cds/internal/registry"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -136,4 +138,29 @@ func TestGetRegistryReturnsProtoWithHost(t *testing.T) {
 	assert.Equal(t, int32(registry.DefaultPort), resp.GetRegistry().GetPort())
 	assert.Equal(t, registry.Hostname, resp.GetRegistry().GetHostname())
 	assert.NotEmpty(t, resp.GetRegistry().GetHost())
+}
+
+// TestBuildRegistryRefreshesClusterTrust covers CDS-031: a rebuilt registry
+// re-installs its CA on the cluster nodes and recreates the pull secret, and
+// leaves mirrors and ingress alone.
+func TestBuildRegistryRefreshesClusterTrust(t *testing.T) {
+	cluster := &mockClusterOps{cluster: orchestration.Cluster{Status: bo.KContainerStatusRunning}}
+	srv := newTestOrchestrationServer(t, cluster, &mockRegistryOps{ca: "CA", user: "u", pass: "p"}, kOrchestratedConfig)
+
+	require.NoError(t, newRegistryServiceServer(srv).BuildRegistry(&cdspb.BuildRegistryRequest{Secure: true}, &mockRegistryBuildStream{}))
+
+	assert.True(t, cluster.registryTrusted)
+	assert.True(t, cluster.registrySecretCreated)
+	assert.Nil(t, cluster.appliedMirrors, "mirrors are a cluster concern")
+	assert.False(t, cluster.ingressDeployed, "ingress is a cluster concern")
+}
+
+func TestBuildRegistrySkipsClusterTrustWithoutRunningCluster(t *testing.T) {
+	cluster := &mockClusterOps{clusterErr: errors.New("no cluster")}
+	srv := newTestOrchestrationServer(t, cluster, &mockRegistryOps{ca: "CA"}, kOrchestratedConfig)
+
+	require.NoError(t, newRegistryServiceServer(srv).BuildRegistry(&cdspb.BuildRegistryRequest{Secure: true}, &mockRegistryBuildStream{}))
+
+	assert.False(t, cluster.registryTrusted)
+	assert.False(t, cluster.registrySecretCreated)
 }

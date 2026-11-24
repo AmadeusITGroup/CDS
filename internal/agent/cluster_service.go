@@ -24,11 +24,14 @@ func (s *clusterServiceServer) BuildCluster(req *cdspb.BuildClusterRequest, stre
 		return sendClusterProgress(stream, p.phase, p.message)
 	})
 	if buildErr == nil {
-		// a rebuilt cluster issues a fresh kubeconfig; re-decorate running
-		// orchestration containers so they do not keep stale cluster access.
-		s.core.redecorateContainers(stream.Context(), func(p deployProgress) error {
+		// a rebuilt cluster has lost the recorded orchestration settings and
+		// issues a fresh kubeconfig: re-apply them (CDS-031), then re-decorate
+		// running orchestration containers so they do not keep stale access.
+		report := func(p deployProgress) error {
 			return sendClusterProgress(stream, p.phase, p.message)
-		})
+		}
+		s.core.reapplyOrchestration(stream.Context(), true, report)
+		s.core.redecorateContainers(stream.Context(), report)
 	}
 	return sendClusterResponse(stream, orchestration.ClusterName, buildErr)
 }
