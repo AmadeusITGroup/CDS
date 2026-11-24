@@ -230,6 +230,8 @@ const registryEnvFile = ".config/cds/registry.env"
 // the user is skipped with a warning, never appended to (CDS-054), and a
 // ~/.config or ~/.config/cds that is a link, not a dir, or not owned by the
 // user makes the script skip the env file and rc files with a warning (CDS-055).
+// Ownership is read with ls, not find, which minimal images may lack; an owner
+// it cannot read is warned about as such, not as "not owned" (CDS-057).
 func installRegistryEnvScript(reg registryEnv) string {
 	return fmt.Sprintf(`set -eu
 u=%s
@@ -238,12 +240,19 @@ home=$(getent passwd "$u" 2>/dev/null | cut -d: -f6) || home=
 [ -n "$home" ] || { echo "container user $u has no home directory" >&2; exit 1; }
 g=$(id -g "$u")
 uid=$(id -u "$u")
+# owned: is $1 owned by the user? ls, not find: minimal images lack find (CDS-057).
+owned() {
+  o=$(ls -nd "$1" 2>/dev/null) || o=
+  set -f; set -- "$1" $o; set +f
+  [ -n "${4-}" ] || { echo "cds: cannot tell who owns $1" >&2; return 1; }
+  [ "$4" = "$uid" ]
+}
 rm -f /etc/profile.d/cds-registry.sh
 # root must not create dirs or write through a user-planted dir link (CDS-055).
 # shortcut: check-then-write, so a user racing the script can still swap the
 # dir; write as the user (runuser) if that matters.
 for d in "$home/.config" "$home/.config/cds"; do
-  if [ -L "$d" ] || { [ -e "$d" ] && { [ ! -d "$d" ] || [ -z "$(find "$d" -prune -user "$uid")" ]; }; }; then
+  if [ -L "$d" ] || { [ -e "$d" ] && { [ ! -d "$d" ] || ! owned "$d"; }; }; then
     echo "cds: $d is a link or not a directory owned by $u, $home/%s not written" >&2; exit 0
   fi
   if [ ! -d "$d" ]; then mkdir -m 700 "$d"; chown "$u:$g" "$d"; fi
@@ -273,7 +282,7 @@ for rc in .profile .bashrc .bash_profile .zshrc; do
   # the others are only appended to when the user already has them.
   if [ "$rc" != .profile ] && [ ! -e "$f" ]; then continue; fi
   if [ -e "$f" ]; then
-    if [ ! -f "$f" ] || [ -z "$(find "$f" -prune -user "$uid")" ]; then
+    if [ ! -f "$f" ] || ! owned "$f"; then
       echo "cds: $f is not a regular file owned by $u, not changed; add to it: $line" >&2; continue
     fi
     if grep -qF "$line" "$f"; then continue; fi

@@ -289,6 +289,40 @@ func TestInstallRegistryEnvScriptSkipsUnsafeRcFiles(t *testing.T) {
 	}
 }
 
+// TestInstallRegistryEnvScriptWithoutFind: an image without find still gets
+// registry.env in an existing ~/.config and the guard line in the user's own
+// rc files; the owner checks must not read "no find" as "not owned" (CDS-057).
+func TestInstallRegistryEnvScriptWithoutFind(t *testing.T) {
+	home := t.TempDir()
+	stubs := t.TempDir()
+	for name, body := range map[string]string{
+		"getent": `echo "dev:x:1000:1000::` + home + `:/bin/sh"`,
+		"id":     fmt.Sprintf("echo %d", os.Getuid()),
+		"chown":  `exit 0`,
+		"find":   `echo "find: not found" >&2; exit 127`, // the image has no find
+	} {
+		require.NoError(t, os.WriteFile(filepath.Join(stubs, name), []byte("#!/bin/sh\n"+body+"\n"), 0o755))
+	}
+	require.NoError(t, os.MkdirAll(filepath.Join(home, ".config"), 0o755))
+	for _, rc := range []string{".bashrc", ".bash_profile"} {
+		require.NoError(t, os.WriteFile(filepath.Join(home, rc), []byte("# user rc\n"), 0o644))
+	}
+
+	cmd := exec.Command("/bin/sh", "-s")
+	cmd.Env = append(os.Environ(), "PATH="+stubs+":"+os.Getenv("PATH"))
+	cmd.Stdin = strings.NewReader(installRegistryEnvScript(newRegistryEnv("cdsabc", "s3cr3t", "dev")))
+	out, err := cmd.CombinedOutput()
+	require.NoError(t, err, string(out))
+
+	assert.FileExists(t, filepath.Join(home, registryEnvFile))
+	for _, rc := range []string{".profile", ".bashrc", ".bash_profile"} {
+		b, err := os.ReadFile(filepath.Join(home, rc))
+		require.NoError(t, err, rc)
+		assert.Equal(t, 1, strings.Count(string(b), "# cds registry env"), rc)
+	}
+	assert.NotContains(t, string(out), "not changed")
+}
+
 func TestContainerDecorationSkipsRegistryEnvWhenUnset(t *testing.T) {
 	cmds := containerDecorationCommands("KC", "CA", registryEnv{})
 	require.Len(t, cmds, 2, "no registry env step when creds are not set")
