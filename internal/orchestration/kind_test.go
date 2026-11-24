@@ -312,6 +312,65 @@ func TestKindDeployIngressAppliesVendoredManifestOnStdin(t *testing.T) {
 		"the node is still prepared after apply")
 }
 
+// CDS-062: DeployIngress returns only once the admission webhook answers, so
+// the next documented step (create an Ingress) does not fail with
+// "failed calling webhook ... connection refused".
+func TestKindDeployIngressWaitsForAdmissionWebhook(t *testing.T) {
+	r := newFakeRunner()
+	k := kindProviderWithRunner(r)
+
+	require.NoError(t, k.DeployIngress())
+
+	last := r.ran[len(r.ran)-1]
+	assert.Contains(t, last, "podman exec cds-kind-control-plane sh -c")
+	assert.Contains(t, last, "create ingress cds-ready-probe")
+	assert.Contains(t, last, "--dry-run=server", "the probe goes through the webhook but creates nothing")
+	assert.Contains(t, last, "seq 1 90", "the wait is bounded")
+}
+
+func TestKindDeployIngressFailsWhenWebhookNeverAnswers(t *testing.T) {
+	r := newFakeRunner()
+	r.replies["create ingress cds-ready-probe"] = "connection refused"
+	r.fail["create ingress cds-ready-probe"] = true
+	k := kindProviderWithRunner(r)
+
+	err := k.DeployIngress()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "ingress controller is not ready")
+}
+
+func TestIngressWaitCommandRunsInRealShell(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("needs /bin/sh")
+	}
+	// fake podman runs `exec <node> <cmd...>` locally; fake kubectl fails
+	// twice (webhook not up), then succeeds
+	dir := t.TempDir()
+	count := filepath.Join(dir, "count")
+	podman := "#!/bin/sh\nshift 2\nexec \"$@\"\n"
+	kubectl := "#!/bin/sh\necho \"$*\" >> " + filepath.Join(dir, "args") + "\nn=$(cat " + count + " 2>/dev/null || echo 0); n=$((n+1)); echo $n > " + count + "\n[ $n -ge 3 ]\n"
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "podman"), []byte(podman), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "kubectl"), []byte(kubectl), 0o755))
+	path := "PATH=" + dir + ":" + os.Getenv("PATH")
+
+	cmd := exec.Command("/bin/sh", "-c", ingressWaitCommand(5, 0))
+	cmd.Env = append(os.Environ(), path)
+	out, err := cmd.CombinedOutput()
+	require.NoError(t, err, string(out))
+	n, err := os.ReadFile(count)
+	require.NoError(t, err)
+	assert.Equal(t, "3\n", string(n), "retried until the probe passed")
+	args, err := os.ReadFile(filepath.Join(dir, "args"))
+	require.NoError(t, err)
+	assert.Contains(t, string(args), "--dry-run=server")
+
+	// never ready: bounded, exits non-zero
+	require.NoError(t, os.WriteFile(count, []byte("-100\n"), 0o644))
+	cmd = exec.Command("/bin/sh", "-c", ingressWaitCommand(3, 0))
+	cmd.Env = append(os.Environ(), path)
+	require.Error(t, cmd.Run())
+}
+
 func TestKindPrepareNodeForIngress(t *testing.T) {
 	r := newFakeRunner()
 	k := kindProviderWithRunner(r)

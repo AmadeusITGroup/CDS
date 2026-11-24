@@ -356,7 +356,8 @@ var ingressManifest []byte
 
 // DeployIngress installs the nginx ingress controller on the cluster by
 // applying the vendored kind manifest via kubectl on the control-plane node,
-// on stdin. It is best-effort idempotent (kubectl apply).
+// on stdin, then waits (bounded) until its admission webhook answers. It is
+// best-effort idempotent (kubectl apply).
 func (k *kindProvider) DeployIngress() error {
 	// The admission Jobs are one-shot and their pod template is immutable, so
 	// applying a newer manifest over a cluster set up by an older one fails
@@ -383,7 +384,35 @@ func (k *kindProvider) DeployIngress() error {
 	if err := k.prepareNodeForIngress(); err != nil {
 		clog.Warn("failed to prepare node for ingress", err)
 	}
+	// The controller pod waits for the admission Jobs (webhook cert + CA
+	// patch) and then for its image, so right after apply creating an Ingress
+	// fails with "failed calling webhook ... connection refused" for ~40 s
+	// (CDS-062). Return only once the webhook answers.
+	if out, err := k.runner(ingressWaitCommand(ingressTries, ingressInterval)); err != nil {
+		return cerr.AppendErrorFmt("ingress controller is not ready (its admission webhook does not answer): %s", err, out)
+	}
 	return nil
+}
+
+// ingressTries and ingressInterval (seconds) bound the ingress wait to 3
+// minutes.
+const (
+	ingressTries    = 90
+	ingressInterval = 2
+)
+
+// ingressWaitCommand polls, in the control-plane node, a server-side dry run of
+// an Ingress create. It goes through the ingress-nginx admission webhook like a
+// real create, so it passes only once the controller serves the webhook and
+// the webhook CA is patched; it creates nothing. The admission Jobs have
+// ttlSecondsAfterFinished 0, so they cannot be waited on.
+func ingressWaitCommand(tries, interval int) string {
+	probe := "kubectl --kubeconfig /etc/kubernetes/admin.conf -n default create ingress cds-ready-probe --class=nginx --rule=cds-ready-probe.invalid/=cds-ready-probe:80 --dry-run=server"
+	return fmt.Sprintf(
+		"podman exec %s sh -c %s",
+		ControlPlaneNode,
+		shellQuote(fmt.Sprintf("for i in $(seq 1 %d); do %s >/dev/null 2>&1 && exit 0; sleep %d; done; exit 1", tries, probe, interval)),
+	)
 }
 
 // prepareNodeForIngress makes a default single-node kind cluster able to run

@@ -68,8 +68,9 @@ type ClusterProvider interface {
 	// given registries are served from their upstream endpoints. It is
 	// idempotent and a no-op when mirrors is empty.
 	ApplyMirrors(mirrors []Mirror) error
-	// DeployIngress installs an nginx ingress controller on the cluster. It is
-	// best-effort idempotent (kubectl apply).
+	// DeployIngress installs an nginx ingress controller on the cluster and
+	// returns once it accepts Ingresses. It is best-effort idempotent
+	// (kubectl apply).
 	DeployIngress() error
 	// CreateRegistrySecret creates the docker-registry pull secret in the
 	// cluster and patches the default service account to use it, so pods can
