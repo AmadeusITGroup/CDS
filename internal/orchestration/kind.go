@@ -2,6 +2,7 @@ package orchestration
 
 import (
 	"context"
+	_ "embed"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -333,19 +334,22 @@ func (k *kindProvider) CreateRegistrySecret(registryHost string, port int, usern
 	return nil
 }
 
+// ingressManifest is the upstream ingress-nginx kind manifest
+// (deploy/static/provider/kind/deploy.yaml at tag controller-v1.15.1, the
+// last release, patched for CVE-2025-1974), vendored so nothing is fetched at
+// runtime (CDS-028). Its images are pinned by digest upstream.
+// shortcut: bumped by hand; ingress-nginx is retired, the move off it is A5.
+//
+//go:embed manifests/ingress-nginx-kind.yaml
+var ingressManifest []byte
+
 // DeployIngress installs the nginx ingress controller on the cluster by
-// applying the kind-provider manifest via kubectl on the control-plane node.
-// It reuses the engine's APPLY_INGRESS command and is best-effort idempotent
-// (kubectl apply).
+// applying the vendored kind manifest via kubectl on the control-plane node,
+// on stdin. It is best-effort idempotent (kubectl apply).
 func (k *kindProvider) DeployIngress() error {
-	ce := engine.NewContainerEngine()
-	engine.SetEngineName(ce, k.engineName)
-	ce.SetAction(engine.K_ACTION_EXE)
-	ce.SetExecuteCmd(engine.K_EXEC_CMD_APPLY_INGRESS)
-	ce.SetContainerName(ControlPlaneNode)
-	ce.SetRemoteUser(engine.KRootUsr)
-	if _, err := engine.ExecuteCommand(ce, shexec.RunLocalCmdWithOutput); err != nil {
-		return cerr.AppendError("failed to apply ingress on cluster", err)
+	apply := fmt.Sprintf("podman exec -i %s kubectl --kubeconfig /etc/kubernetes/admin.conf apply -f -", ControlPlaneNode)
+	if out, err := k.runnerIn(apply, ingressManifest); err != nil {
+		return cerr.AppendErrorFmt("failed to apply ingress on cluster: %s", err, out)
 	}
 	// On a default single-node kind cluster the only node is the control plane,
 	// which carries NoSchedule taints (control-plane and the legacy master). The

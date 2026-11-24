@@ -71,7 +71,6 @@ const (
 	K_EXEC_CMD_CHECK_SERVICE_ACCOUNT_EXISTS
 	K_EXEC_CMD_PATCH_SERVICE_ACCOUNT
 	K_EXEC_CMD_ENV
-	K_EXEC_CMD_APPLY_INGRESS
 	K_EXEC_CMD_CHMOD_DEST_FILE
 	K_EXEC_HELM_ADD_REPO
 	K_EXEC_HELM_INSTALL_CHART
@@ -103,9 +102,6 @@ const (
 	K_NETWORK_REMOVE
 	K_NETWORK_UPDATE
 )
-
-// Official nginx ingress deployment file for kind: https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.10.1/deploy/static/provider/kind/deploy.yaml
-const KIngressDeploymentFile = "https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.10.1/deploy/static/provider/kind/deploy.yaml"
 
 const (
 	K_CP_DEFAULT Copy_t = iota
@@ -198,10 +194,6 @@ var (
 		K_EXEC_CMD_ENV: {
 			cmd:       `/bin/sh -c '%s'`,
 			eventInfo: "Set env variables",
-		},
-		K_EXEC_CMD_APPLY_INGRESS: {
-			cmd:       fmt.Sprintf(`sh -c "unset HTTP_PROXY HTTPS_PROXY http_proxy https_proxy; kubectl apply -f %s"`, KIngressDeploymentFile),
-			eventInfo: "Applying Nginx Ingress",
 		},
 		K_EXEC_CMD_CHMOD_DEST_FILE: {
 			cmd:       `/bin/sh -c 'chmod %o %s'`,

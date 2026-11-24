@@ -485,8 +485,6 @@ func (ce *ContainersEngine) execute() error {
 		rEvent, err = ce.patchServiceAccountHandler()
 	case K_EXEC_CMD_ENV:
 		rEvent, err = ce.envVariablesHandler()
-	case K_EXEC_CMD_APPLY_INGRESS:
-		rEvent, err = ce.applyIngressHandler()
 	case K_EXEC_CMD_CHMOD_DEST_FILE:
 		rEvent, err = ce.chmodHandler()
 	case K_EXEC_CMD_CHECK_ORC_REACHABLE_FROM_DEVCONTAINER:
@@ -887,25 +885,6 @@ func (ce *ContainersEngine) getKindClusterStatusHandler() (*RunEvent, error) {
 
 func (ce *ContainersEngine) attachContainerHandler() (*RunEvent, error) {
 	rEvent := executeMap[K_EXEC_CMD_RSH]
-	cmd := fmt.Sprintf(
-		`%v %v -u %v -it %v %v`,
-		engineName(ce.name),
-		formatActionName(engineAction(K_ACTION_EXE)),
-		ce.getRemoteUser(),
-		ce.getContainerName(),
-		rEvent.cmd,
-	)
-
-	clog.Debug(fmt.Sprintf(kExecutingDebugMsg, cmd))
-
-	rEvent.cmd = cmd
-	rEvent.continueProcess = true
-
-	return &rEvent, nil
-}
-
-func (ce *ContainersEngine) applyIngressHandler() (*RunEvent, error) {
-	rEvent := executeMap[K_EXEC_CMD_APPLY_INGRESS]
 	cmd := fmt.Sprintf(
 		`%v %v -u %v -it %v %v`,
 		engineName(ce.name),

@@ -215,6 +215,26 @@ func TestKindStopFallsBackToPodmanWhenUnitInactive(t *testing.T) {
 		"when the supervision unit is inactive, Stop stops the node directly")
 }
 
+func TestKindDeployIngressAppliesVendoredManifestOnStdin(t *testing.T) {
+	r := newFakeRunner()
+	k := kindProviderWithRunner(r)
+
+	require.NoError(t, k.DeployIngress())
+
+	// the vendored manifest goes on stdin; nothing is downloaded (CDS-028)
+	require.Len(t, r.stdins, 1)
+	assert.Equal(t, string(ingressManifest), r.stdins[0])
+	assert.True(t, r.ranContaining("podman exec -i cds-kind-control-plane kubectl --kubeconfig /etc/kubernetes/admin.conf apply -f -"))
+	for _, c := range r.ran {
+		assert.NotContains(t, c, "http", "no runtime manifest fetch")
+	}
+	// patched for CVE-2025-1974 (fixed in v1.11.5 / v1.12.1), images pinned by digest
+	assert.Contains(t, r.stdins[0], "registry.k8s.io/ingress-nginx/controller:v1.15.1@sha256:")
+	assert.NotContains(t, r.stdins[0], "controller:v1.10.1")
+	assert.True(t, r.ranContaining("patch deployment ingress-nginx-controller"),
+		"the node is still prepared after apply")
+}
+
 func TestKindPrepareNodeForIngress(t *testing.T) {
 	r := newFakeRunner()
 	k := kindProviderWithRunner(r)
