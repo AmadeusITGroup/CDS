@@ -313,12 +313,7 @@ func receiveDeployResponse(stream grpc.ServerStreamingClient[cdspb.DeployContain
 			return nil, cerr.AppendError("Failed to receive deploy progress", err)
 		}
 		if progress := event.GetProgress(); progress != nil {
-			if progress.GetPhase() == "output" {
-				// raw command output streamed from the agent, print as is
-				clog.Debug(progress.GetMessage())
-			} else {
-				clog.Info(progress.GetMessage())
-			}
+			logAgentProgress(progress.GetPhase(), progress.GetMessage())
 		}
 		if eventResponse := event.GetResponse(); eventResponse != nil {
 			response = eventResponse
@@ -328,4 +323,18 @@ func receiveDeployResponse(stream grpc.ServerStreamingClient[cdspb.DeployContain
 		return nil, cerr.NewError("agent deploy finished without a final response")
 	}
 	return response, nil
+}
+
+// logAgentProgress prints an agent progress message: raw command output at
+// debug, a warning (e.g. a skipped registry env write, CDS-061) as a WARN line,
+// anything else at info.
+func logAgentProgress(phase, message string) {
+	switch phase {
+	case "output":
+		clog.Debug(message)
+	case "warning":
+		clog.Warn(message)
+	default:
+		clog.Info(message)
+	}
 }

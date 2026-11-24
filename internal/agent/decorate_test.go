@@ -427,3 +427,45 @@ func TestEnsureOrchestrationSerializesReports(t *testing.T) {
 	require.NoError(t, err)
 	assert.Zero(t, overlaps, "report must never run concurrently")
 }
+
+// TestRedecorateOneReportsSkipWarnings: a decoration script that skips a write
+// prints a "cds: " line and exits 0; that line must reach the client as a
+// warning, not be dropped with the output (CDS-061).
+func TestRedecorateOneReportsSkipWarnings(t *testing.T) {
+	ops := &mockContainerOps{execOutput: "cds: /home/u/.config is a link or not a directory owned by u, /home/u/.config/cds/registry.env not written\nother output\n"}
+	s := newTestServer(t, ops)
+
+	var got []deployProgress
+	s.redecorateOne(context.Background(), "dev-1", []decorationCommand{{info: "Exporting registry environment", script: "true"}},
+		func(p deployProgress) error {
+			got = append(got, p)
+			return nil
+		})
+
+	var warnings []string
+	for _, p := range got {
+		if p.phase == kProgressPhaseWarning {
+			warnings = append(warnings, p.message)
+		}
+	}
+	assert.Equal(t, []string{"dev-1: /home/u/.config is a link or not a directory owned by u, /home/u/.config/cds/registry.env not written"}, warnings)
+}
+
+// TestReportDecorationWarnings: only "cds: " lines are warnings, one each, and
+// a failed report is returned so the deploy stops like for other output.
+func TestReportDecorationWarnings(t *testing.T) {
+	var got []deployProgress
+	err := reportDecorationWarnings(func(p deployProgress) error {
+		got = append(got, p)
+		return nil
+	}, "dev-1", "noise\ncds: a not changed\r\n  cds: b not written\nxcds: c\n")
+	require.NoError(t, err)
+	assert.Equal(t, []deployProgress{
+		{phase: kProgressPhaseWarning, message: "dev-1: a not changed"},
+		{phase: kProgressPhaseWarning, message: "dev-1: b not written"},
+	}, got)
+
+	err = reportDecorationWarnings(func(deployProgress) error { return assert.AnError }, "dev-1", "cds: a\n")
+	assert.ErrorIs(t, err, assert.AnError)
+	assert.NoError(t, reportDecorationWarnings(nil, "dev-1", "cds: a\n"))
+}

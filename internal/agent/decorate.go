@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 
 	"github.com/amadeusitgroup/cds/internal/bo"
@@ -500,11 +501,38 @@ func (s *grpcServer) redecorateOne(ctx context.Context, name string, cmds []deco
 		if report != nil {
 			_ = report(deployProgress{phase: "decorate", message: fmt.Sprintf("%s: %s", name, dc.info)})
 		}
-		_, _, err := s.containerOps().ExecuteScriptInContainer(ctx, name, dc.script, "root")
+		out, _, err := s.containerOps().ExecuteScriptInContainer(ctx, name, dc.script, "root")
 		if err != nil {
 			clog.Warn(fmt.Sprintf("failed to re-decorate container %s (%s)", name, dc.info), err)
 		}
+		_ = reportDecorationWarnings(report, name, out)
 	}
+}
+
+// kDecorationWarningPrefix starts each line a decoration script prints when it
+// skips a write (a linked or unowned ~/.config, rc file, ...); the script still
+// exits 0.
+const kDecorationWarningPrefix = "cds: "
+
+// reportDecorationWarnings logs each skip warning in a decoration script's
+// output and sends it to the client as a warning, so the user knows what was
+// not written and why (CDS-061). A failed report is returned.
+func reportDecorationWarnings(report deployProgressReporter, container, out string) error {
+	for _, line := range strings.Split(out, "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, kDecorationWarningPrefix) {
+			continue
+		}
+		msg := fmt.Sprintf("%s: %s", container, strings.TrimPrefix(line, kDecorationWarningPrefix))
+		clog.Warn(msg)
+		if report == nil {
+			continue
+		}
+		if err := report(deployProgress{phase: kProgressPhaseWarning, message: msg}); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // containerRunning reports whether the named container is currently running.

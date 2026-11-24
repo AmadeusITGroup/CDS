@@ -69,6 +69,10 @@ type deployProgress struct {
 
 type deployProgressReporter func(deployProgress) error
 
+// kProgressPhaseWarning marks a progress message the client shows as a
+// warning (CDS-061).
+const kProgressPhaseWarning = "warning"
+
 type deployContainerResult struct {
 	containerName string
 	output        string
@@ -358,6 +362,9 @@ func (defaultContainerOps) DeployContainer(ctx context.Context, spec deployConta
 		return result, cerr.AppendError("failed to build SSH key install commands", err)
 	}
 	cmds = append(cmds, sshKeyCommands...)
+	// the commands from here on are decoration scripts, whose skip warnings
+	// are sent to the client (CDS-061)
+	firstDecoration := len(cmds)
 
 	// decorate the devcontainer with cluster/registry access when orchestration
 	// is requested (kubeconfig + registry trust installed inside the container).
@@ -377,7 +384,7 @@ func (defaultContainerOps) DeployContainer(ctx context.Context, spec deployConta
 	// so a create failure never removes a pre-existing container (only the one
 	// this run actually created, which has a different id)
 	preexistingID := containerIDByName(spec.containerName)
-	for _, cmd := range cmds {
+	for i, cmd := range cmds {
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			result.output = boundedOutput(output.String())
 			compensateFailedDeploy(created, spec.containerName)
@@ -421,6 +428,13 @@ func (defaultContainerOps) DeployContainer(ctx context.Context, spec deployConta
 			result.output = boundedOutput(output.String())
 			compensateFailedDeploy(created, spec.containerName)
 			return result, reportErr
+		}
+		if i >= firstDecoration {
+			if reportErr := reportDecorationWarnings(report, spec.containerName, stdout); reportErr != nil {
+				result.output = boundedOutput(output.String())
+				compensateFailedDeploy(created, spec.containerName)
+				return result, reportErr
+			}
 		}
 	}
 

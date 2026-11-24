@@ -7,7 +7,6 @@ import (
 
 	"github.com/amadeusitgroup/cds/internal/api/v1/cdspb"
 	"github.com/amadeusitgroup/cds/internal/cerr"
-	"github.com/amadeusitgroup/cds/internal/clog"
 	cg "github.com/amadeusitgroup/cds/internal/global"
 	"github.com/amadeusitgroup/cds/internal/output"
 	"github.com/spf13/cobra"
@@ -75,7 +74,7 @@ func receiveClusterBuildResponse(stream cdspb.ClusterService_BuildClusterClient)
 			return nil, cerr.AppendError("Failed to receive cluster build progress", err)
 		}
 		if progress := event.GetProgress(); progress != nil {
-			clog.Info(progress.GetMessage())
+			logAgentProgress(progress.GetPhase(), progress.GetMessage())
 		}
 		if r := event.GetResponse(); r != nil {
 			response = r
