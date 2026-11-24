@@ -456,13 +456,31 @@ func (k *kindProvider) nodes() ([]string, error) {
 // node. containerd reads /etc/containerd/certs.d/<registry>/hosts.toml.
 func (k *kindProvider) applyMirrorOnNode(node string, m Mirror) error {
 	dir := shellQuote(fmt.Sprintf("/etc/containerd/certs.d/%s", m.Registry))
-	hostsToml := fmt.Sprintf("server = %s\n\n[host.%s]\n  capabilities = [\"pull\", \"resolve\"]\n  override_path = true\n", strconv.Quote("https://"+m.Registry), strconv.Quote(m.Endpoint))
-	script := fmt.Sprintf("set -eu; mkdir -p %s; printf '%%s' %s > %s/hosts.toml", dir, shellQuote(hostsToml), dir)
+	script := fmt.Sprintf("set -eu; mkdir -p %s; printf '%%s' %s > %s/hosts.toml", dir, shellQuote(mirrorHostsToml(m)), dir)
 	cmd := fmt.Sprintf("podman exec %s sh -c %s", node, shellQuote(script))
 	if out, err := k.runner(cmd); err != nil {
 		return cerr.AppendErrorFmt("failed to write hosts.toml: %s", err, out)
 	}
 	return nil
+}
+
+// kDockerHubServer is Docker Hub's registry API host; "docker.io" itself does
+// not serve the registry API (containerd maps it the same way).
+const kDockerHubServer = "https://registry-1.docker.io"
+
+// mirrorHostsToml renders the containerd hosts.toml for one mirror (CDS-030).
+// override_path tells containerd the endpoint already holds the API root, so
+// it stops adding /v2: set it only when the endpoint has a path of its own.
+func mirrorHostsToml(m Mirror) string {
+	server := "https://" + m.Registry
+	if m.Registry == "docker.io" {
+		server = kDockerHubServer
+	}
+	toml := fmt.Sprintf("server = %s\n\n[host.%s]\n  capabilities = [\"pull\", \"resolve\"]\n", strconv.Quote(server), strconv.Quote(m.Endpoint))
+	if u, err := url.Parse(m.Endpoint); err == nil && strings.Trim(u.Path, "/") != cg.EmptyStr {
+		toml += "  override_path = true\n"
+	}
+	return toml
 }
 
 // kRegistryRe matches host[:port]: DNS labels or an IPv4 address, no path.

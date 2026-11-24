@@ -211,6 +211,47 @@ func TestKindApplyMirrorsWritesHostsToml(t *testing.T) {
 	assert.True(t, r.ranContaining("podman exec cds-kind-control-plane"))
 }
 
+// CDS-030: override_path makes containerd skip the /v2 prefix, so it must only
+// be set when the endpoint carries its own API path; docker.io's server is
+// registry-1.docker.io, not docker.io.
+func TestMirrorHostsToml(t *testing.T) {
+	cases := []struct {
+		name string
+		m    Mirror
+		want string
+	}{
+		{
+			name: "docker hub, endpoint without path",
+			m:    Mirror{Registry: "docker.io", Endpoint: "https://registry-1.docker.io"},
+			want: "server = \"https://registry-1.docker.io\"\n\n[host.\"https://registry-1.docker.io\"]\n  capabilities = [\"pull\", \"resolve\"]\n",
+		},
+		{
+			name: "trailing slash is no path",
+			m:    Mirror{Registry: "quay.io", Endpoint: "https://mirror.local/"},
+			want: "server = \"https://quay.io\"\n\n[host.\"https://mirror.local/\"]\n  capabilities = [\"pull\", \"resolve\"]\n",
+		},
+		{
+			name: "endpoint with API path",
+			m:    Mirror{Registry: "reg.local:5000", Endpoint: "http://10.0.0.1:5000/v2/proxy"},
+			want: "server = \"https://reg.local:5000\"\n\n[host.\"http://10.0.0.1:5000/v2/proxy\"]\n  capabilities = [\"pull\", \"resolve\"]\n  override_path = true\n",
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			assert.Equal(t, c.want, mirrorHostsToml(c.m))
+		})
+	}
+}
+
+func TestKindApplyMirrorsNoOverridePathForBareEndpoint(t *testing.T) {
+	r := newFakeRunner()
+	r.replies["kind get nodes"] = "cds-kind-control-plane\n"
+	k := kindProviderWithRunner(r)
+
+	require.NoError(t, k.ApplyMirrors([]Mirror{{Registry: "docker.io", Endpoint: "https://registry-1.docker.io"}}))
+	assert.False(t, r.ranContaining("override_path"), "a bare endpoint keeps containerd's /v2 prefix")
+}
+
 func TestKindApplyMirrorsRejectsHostile(t *testing.T) {
 	bad := []Mirror{
 		{Registry: "docker.io; touch /pwned", Endpoint: "https://m"},

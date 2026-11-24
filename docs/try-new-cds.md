@@ -159,6 +159,10 @@ devcontainer to the `kind` network, installs the cluster kubeconfig and registry
 CA + env into the container, creates the `cdsregistrycred` pull secret, and trusts
 the registry CA on the kind nodes.
 
+A mirror `endpoint` without a path (`https://registry-1.docker.io`) gets the
+usual `/v2` added by containerd. An endpoint with a path is used as the full
+API root, so give it up to and including its `/v2`.
+
 Containers trust only the per-host key `~/.ssh/id_rsa_<HOST>`. A container
 deployed by an older cds trusts the default `~/.ssh/id_rsa` instead, so
 `project ssh/rsh/expose` is refused: redeploy it once with
