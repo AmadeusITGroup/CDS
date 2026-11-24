@@ -308,7 +308,7 @@ export CDS_AGENT_BINARY="$PWD/dist/cds-api-agent-{{os}}-{{arch}}"
 
 ## Known gaps
 
-- Orchestration (KinD), registry, `project drain` and `--src-repo` are not implemented yet (look for `TODO` in `internal/command`).
+- `project run --src-repo` is not implemented yet, and `project start` does not bring up the orchestration cluster or registry (look for `TODO` in `internal/command`).
 - Remote agents require a systemd user session (`loginctl enable-linger`).
 - `shexec` accepts unknown SSH host keys when `known_hosts` is missing.
 - Some engine defaults are environment specific (the `~/.devbox` mount).

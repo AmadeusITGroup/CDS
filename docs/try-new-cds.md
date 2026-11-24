@@ -1,32 +1,30 @@
-# Trying the new (OSS) CDS from scratch
+# Getting started with CDS
 
-This recipe lets you (and champion users) start the new OSS `cds` from a clean
-slate and exercise the full workflow, so you can log what is missing or broken.
+This guide takes you from a clean slate to the full CDS workflow: a remote
+host, a kind cluster, a secure registry and a devcontainer that uses them.
 
-The new `cds` now owns `~/.cds` and `~/.cds-agent` (it replaces the enterprise
-cds on this machine). **Step 0 backs up your existing `~/.cds` first.**
+`cds` keeps its state in `~/.cds` (client) and `~/.cds-agent` (agent).
+**Step 0 backs up any existing state first.**
 
 > Conventions in this doc:
-> - `WORKTREE` = the checkout of this branch, e.g.
->   `/Users/bkarfi/Workspace/cds-revival/CDS-worktrees/feat-orchestration-registry`
+> - `WORKTREE` = your checkout of this repository, e.g. `~/src/cds`
 > - `HOST` = a Linux host reachable over SSH where the agent + containers run
 >   (local Linux or remote). On macOS you always target a remote Linux HOST.
 
 ---
 
-## 0. Back up the current (enterprise) CDS state
+## 0. Back up any existing CDS state
 
 ```sh
-# keep a timestamped backup of the enterprise cds state, then step aside
-mv ~/.cds ~/.cds.enterprise-backup.$(date +%Y%m%d-%H%M%S)
-# (optional) the OSS agent dir, if any earlier run created one
+# keep a timestamped backup of an earlier cds state, then step aside
+[ -d ~/.cds ] && mv ~/.cds ~/.cds.backup.$(date +%Y%m%d-%H%M%S)
 [ -d ~/.cds-agent ] && mv ~/.cds-agent ~/.cds-agent.backup.$(date +%Y%m%d-%H%M%S)
 ```
 
-To restore enterprise cds later: `rm -rf ~/.cds && mv ~/.cds.enterprise-backup.* ~/.cds`.
+To restore it later: `rm -rf ~/.cds && mv ~/.cds.backup.* ~/.cds`.
 
-Also make sure the enterprise `cds` is **not** first on your `PATH` during testing
-(e.g. `which cds` should point at the new binary you install below).
+If another `cds` binary is installed, make sure it is **not** first on your
+`PATH` (`which cds` should point at the binary you install below).
 
 ---
 
@@ -42,8 +40,7 @@ Also make sure the enterprise `cds` is **not** first on your `PATH` during testi
   network IPv4-only).
 - A devcontainer image that ships **sshd** (CDS installs authorized_keys but not
   an ssh server). For the orchestration/registry workflow it should also ship a
-  push tool (`skopeo` or `podman`) and `kubectl`/`helm` — the CDS `skube-*`
-  flavours do.
+  push tool (`skopeo` or `podman`) and `kubectl`/`helm`.
 
 ---
 
@@ -218,14 +215,13 @@ cds space host delete <HOST>            # tears down the agent on the HOST
 
 ---
 
-## What to log as issues
+## Reporting a problem
 
-Note anything that: errors out, needs a manual step the docs/enterprise did not,
-behaves differently from enterprise cds, or is missing a command/flag. Useful
-context to capture per issue: the exact command, the `-t`/project used, the full
-error (the client logs to `~/.cds/cds.log`), and the HOST's podman/kind versions.
+When you open an issue, include the exact command, the `-t`/project used, the
+full error (the client logs to `~/.cds/cds.log`), and the HOST's podman/kind
+versions.
 
-Known not-yet-done (don't re-log these):
+Known limitations:
 - `cds project expose --service kind` is implemented but was not E2E'd; the
   documented in-cluster expose uses `-r cds-kind-control-plane:80`.
 - Devcontainers use the `systemd-run --scope` detachment, not Quadlet (deliberate).
