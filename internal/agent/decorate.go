@@ -225,7 +225,9 @@ const registryEnvFile = ".config/cds/registry.env"
 // earlier versions wrote.
 //
 // The script runs as root: the file is written to a fresh temp file and
-// renamed, so a link planted at the target is replaced, not followed.
+// renamed, so a link planted at the target is replaced, not followed. For the
+// same reason an rc file that is a link, not a regular file, or not owned by
+// the user is skipped with a warning, never appended to (CDS-054).
 func installRegistryEnvScript(reg registryEnv) string {
 	return fmt.Sprintf(`set -eu
 u=%s
@@ -248,12 +250,25 @@ chmod 600 "$tmp"
 chown "$u:$g" "$tmp"
 mv -f "$tmp" "$home/%s"
 line='if [ -r "$HOME/%s" ]; then . "$HOME/%s"; fi # cds registry env'
+uid=$(id -u "$u")
 for rc in .profile .bashrc .bash_profile .zshrc; do
   f="$home/$rc"
+  # root must not write through a user-planted link, nor into a file the user
+  # does not own (a hard link to a root file) (CDS-054).
+  # shortcut: check-then-append, so a user racing the script can still swap
+  # the file; append as the user (runuser) if that matters.
+  if [ -L "$f" ]; then
+    echo "cds: $f is a link, not changed; add to it: $line" >&2; continue
+  fi
   # .profile is created when missing (sh/dash/bash login shells read it);
   # the others are only appended to when the user already has them.
   if [ "$rc" != .profile ] && [ ! -e "$f" ]; then continue; fi
-  if [ -e "$f" ] && grep -qF "$line" "$f"; then continue; fi
+  if [ -e "$f" ]; then
+    if [ ! -f "$f" ] || [ -z "$(find "$f" -prune -user "$uid")" ]; then
+      echo "cds: $f is not a regular file owned by $u, not changed; add to it: $line" >&2; continue
+    fi
+    if grep -qF "$line" "$f"; then continue; fi
+  fi
   new=0; [ -e "$f" ] || new=1
   printf '%%s\n' "$line" >> "$f"
   if [ "$new" = 1 ]; then chown "$u:$g" "$f"; fi

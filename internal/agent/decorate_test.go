@@ -152,7 +152,7 @@ func TestInstallRegistryEnvScriptRealShell(t *testing.T) {
 	stubs := t.TempDir()
 	for name, body := range map[string]string{
 		"getent": `echo "dev:x:1000:1000::` + home + `:/bin/sh"`,
-		"id":     `echo 1000`,
+		"id":     fmt.Sprintf("echo %d", os.Getuid()), // the user owns its rc files
 		"chown":  `exit 0`,
 	} {
 		require.NoError(t, os.WriteFile(filepath.Join(stubs, name), []byte("#!/bin/sh\n"+body+"\n"), 0o755))
@@ -192,6 +192,55 @@ func TestInstallRegistryEnvScriptRealShell(t *testing.T) {
 	out, err := cmd.CombinedOutput()
 	require.NoError(t, err, string(out))
 	assert.Equal(t, "cdsabc:s3cr3t:"+registry.Hostname+":5000\n", string(out))
+}
+
+// TestInstallRegistryEnvScriptSkipsUnsafeRcFiles: the script runs as root, so
+// it never appends through a user-planted rc link or into an rc file the
+// container user does not own (CDS-054).
+func TestInstallRegistryEnvScriptSkipsUnsafeRcFiles(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		uid       int
+		wantRcSet bool
+	}{
+		{"rc files owned by the user", os.Getuid(), true},
+		{"rc files owned by someone else", os.Getuid() + 1, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home := t.TempDir()
+			stubs := t.TempDir()
+			for name, body := range map[string]string{
+				"getent": `echo "dev:x:1000:1000::` + home + `:/bin/sh"`,
+				"id":     fmt.Sprintf("echo %d", tc.uid),
+				"chown":  `exit 0`,
+			} {
+				require.NoError(t, os.WriteFile(filepath.Join(stubs, name), []byte("#!/bin/sh\n"+body+"\n"), 0o755))
+			}
+			// a root-owned file outside the home, linked from the user's .zshrc
+			target := filepath.Join(t.TempDir(), "qa-target")
+			require.NoError(t, os.WriteFile(target, []byte("root-data\n"), 0o644))
+			require.NoError(t, os.Symlink(target, filepath.Join(home, ".zshrc")))
+			require.NoError(t, os.WriteFile(filepath.Join(home, ".bashrc"), []byte("# user rc\n"), 0o644))
+
+			cmd := exec.Command("/bin/sh", "-s")
+			cmd.Env = append(os.Environ(), "PATH="+stubs+":"+os.Getenv("PATH"))
+			cmd.Stdin = strings.NewReader(installRegistryEnvScript(newRegistryEnv("cdsabc", "s3cr3t", "dev")))
+			out, err := cmd.CombinedOutput()
+			require.NoError(t, err, string(out))
+
+			b, err := os.ReadFile(target)
+			require.NoError(t, err)
+			assert.Equal(t, "root-data\n", string(b), "the link target is not written")
+			fi, err := os.Lstat(filepath.Join(home, ".zshrc"))
+			require.NoError(t, err)
+			assert.NotZero(t, fi.Mode()&os.ModeSymlink, "the link is left as is")
+			assert.Contains(t, string(out), ".zshrc")
+
+			b, err = os.ReadFile(filepath.Join(home, ".bashrc"))
+			require.NoError(t, err)
+			assert.Equal(t, tc.wantRcSet, strings.Contains(string(b), "# cds registry env"), ".bashrc")
+		})
+	}
 }
 
 func TestContainerDecorationSkipsRegistryEnvWhenUnset(t *testing.T) {
