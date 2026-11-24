@@ -151,3 +151,34 @@ func TestUpsertAgentForHostInConfig(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "remote.example.com:8087", addr)
 }
+
+func TestUpsertAgentForHostInConfigKeepsSSHKey(t *testing.T) {
+	setupConfigTestFS(t)
+
+	require.NoError(t, UpsertAgentForHostInConfig("remote.example.com", NewAgent(WithTargetAddress("remote.example.com:8087"))))
+	require.NoError(t, SetHostContainerSSHKey("remote.example.com", "/k/id_rsa_remote", "/k/id_rsa_remote.pub"))
+	// re-register (bootstrap / upgrade / cert renewal) without an ssh-key
+	require.NoError(t, UpsertAgentForHostInConfig("remote.example.com", NewAgent(
+		WithTargetAddress("remote.example.com:9090"),
+		WithAgentTLS(NewTlssecret(WithCA("ca.crt"))),
+	)))
+
+	prv, pub, found := HostContainerSSHKey("remote.example.com")
+	require.True(t, found)
+	assert.Equal(t, "/k/id_rsa_remote", prv)
+	assert.Equal(t, "/k/id_rsa_remote.pub", pub)
+	a, err := RegisteredAgent("remote.example.com:9090")
+	require.NoError(t, err)
+	assert.Equal(t, "ca.crt", a.Certs.CA)
+
+	// an explicit ssh-key still replaces the recorded one
+	require.NoError(t, UpsertAgentForHostInConfig("remote.example.com", NewAgent(
+		WithTargetAddress("remote.example.com:9090"),
+		WithAgentSSHKey("/k/new", "/k/new.pub"),
+	)))
+	prv, _, _ = HostContainerSSHKey("remote.example.com")
+	assert.Equal(t, "/k/new", prv)
+	a, err = RegisteredAgent("remote.example.com:9090")
+	require.NoError(t, err)
+	assert.Equal(t, "ca.crt", a.Certs.CA, "unset TLS keeps the recorded one")
+}

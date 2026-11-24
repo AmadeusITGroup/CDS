@@ -91,7 +91,10 @@ func CreateAgentInConfig(a agent) error {
 	})
 }
 
-// UpsertAgentForHostInConfig creates, or replaces, the agent entry registered for hostname.
+// UpsertAgentForHostInConfig creates, or updates, the agent entry registered for
+// hostname. On update, the TLS secret and the container-access ssh-key keep their
+// recorded value when a is left unset, so re-registering an agent (bootstrap,
+// upgrade, certificate renewal) does not drop them.
 func UpsertAgentForHostInConfig(hostname string, a agent) error {
 	normalizedAgent, err := normalizeAgent(a)
 	if err != nil {
@@ -104,6 +107,13 @@ func UpsertAgentForHostInConfig(hostname string, a agent) error {
 			return targetServerHostname(existing.TargetSrv) == normalizedHostname
 		})
 		if index >= 0 {
+			existing := c.Agents[index]
+			if normalizedAgent.Certs == (tlssecret{}) {
+				normalizedAgent.Certs = existing.Certs
+			}
+			if normalizedAgent.SSHKey == (sshKeyRef{}) {
+				normalizedAgent.SSHKey = existing.SSHKey
+			}
 			c.Agents[index] = normalizedAgent
 			return nil
 		}
