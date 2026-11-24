@@ -17,9 +17,9 @@ import (
 )
 
 // ensureOrchestration makes sure the cluster and (when requested) the registry
-// are built before a devcontainer that needs them is deployed. Per the owner
-// decision the cluster and registry are brought up CONCURRENTLY, not
-// sequentially, matching the enterprise behaviour. Progress from both is
+// are built before a devcontainer that needs them is deployed. The cluster
+// and registry are brought up CONCURRENTLY, not sequentially, to keep deploys
+// short. Progress from both is
 // streamed through report with a per-resource phase prefix.
 //
 // It is a no-op when the devcontainer did not request orchestration.

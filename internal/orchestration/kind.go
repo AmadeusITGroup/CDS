@@ -29,8 +29,8 @@ const (
 	kindProviderEnv = "KIND_EXPERIMENTAL_PROVIDER=podman"
 	// kindSupervisionUnit is the plain systemd user unit that supervises the
 	// kind control-plane node. Quadlet cannot adopt a kind-created node, so a
-	// plain unit running `podman start --attach` / `podman stop` is used (see
-	// the phase-0 supervision spike). It is installed but NOT enabled at boot:
+	// plain unit running `podman start --attach` / `podman stop` is used. It
+	// is installed but NOT enabled at boot:
 	// restarting a kind node across a reboot has known IP issues (kind#2272,
 	// kind#3071), so the cluster is started on demand, not by systemd at boot.
 	kindSupervisionUnit = "cds-kind.service"
@@ -335,8 +335,8 @@ func (k *kindProvider) CreateRegistrySecret(registryHost string, port int, usern
 
 // DeployIngress installs the nginx ingress controller on the cluster by
 // applying the kind-provider manifest via kubectl on the control-plane node.
-// It keeps the enterprise implementation (the engine's APPLY_INGRESS command)
-// and is best-effort idempotent (kubectl apply).
+// It reuses the engine's APPLY_INGRESS command and is best-effort idempotent
+// (kubectl apply).
 func (k *kindProvider) DeployIngress() error {
 	ce := engine.NewContainerEngine()
 	engine.SetEngineName(ce, k.engineName)

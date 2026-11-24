@@ -7,7 +7,7 @@
 // and requires basic auth. All material (certificate, key, htpasswd) is
 // generated in Go with random per-host credentials; the private key never
 // leaves the host. The registry runs as a Quadlet container unit so podman
-// supervises it (per the owner decision to use Quadlet on Linux).
+// supervises it.
 package registry
 
 const (

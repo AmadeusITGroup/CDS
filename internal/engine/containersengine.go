@@ -2551,8 +2551,7 @@ func CreateNetworkWithArgs(engineName, networkName string, args ...string) error
 // KindNetworkName is the podman network kind attaches its nodes to. CDS creates
 // it explicitly (IPv4-only) before kind does, because kind creates it
 // IPv6-enabled by default, which fails on hosts where IPv6 is disabled in the
-// kernel (netavark cannot set the ipv6 forwarding sysctl). See the phase-0
-// spike finding on azrnedbx0201.
+// kernel (netavark cannot set the ipv6 forwarding sysctl).
 const KindNetworkName = "kind"
 
 // EnsureKindNetwork makes sure the `kind` podman network exists and is

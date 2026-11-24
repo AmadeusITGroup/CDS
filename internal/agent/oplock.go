@@ -31,7 +31,7 @@ func (l opLock) acquire(ctx context.Context, resource string) (release func(), e
 }
 
 // one lock per resource: the cluster and the registry are built concurrently
-// on deploy (owner decision), so they must not share a lock.
+// on deploy, so they must not share a lock.
 var (
 	sClusterLock  = newOpLock()
 	sRegistryLock = newOpLock()
