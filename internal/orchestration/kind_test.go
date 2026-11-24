@@ -4,6 +4,9 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
@@ -151,34 +154,80 @@ func TestStatusActionTable(t *testing.T) {
 }
 
 // a Build on an existing but stopped cluster starts it instead of only
-// reporting "already exists" (CDS-041); other statuses leave it alone.
+// reporting "already exists" (CDS-041); a started or running one is waited on
+// until its API server is ready (CDS-050); an unreadable one is left alone.
 func TestBringUpExistingClusterStartsAStoppedCluster(t *testing.T) {
 	cases := []struct {
 		status  bo.ContainerStatus
 		started bool
+		waited  bool
 		last    string
 	}{
-		{bo.KContainerStatusExited, true, "Cluster cds-kind started"},
-		{bo.KContainerStatusRunning, false, "Cluster cds-kind already exists"},
-		{bo.KContainerStatusUnknown, false, "Cluster cds-kind already exists"},
+		{bo.KContainerStatusExited, true, true, "Cluster cds-kind started"},
+		{bo.KContainerStatusRunning, false, true, "Cluster cds-kind already exists"},
+		{bo.KContainerStatusUnknown, false, false, "Cluster cds-kind already exists"},
 	}
 	for _, c := range cases {
-		started := false
+		var order []string
 		var lines []string
 		err := bringUpExistingCluster(c.status,
-			func() error { started = true; return nil },
+			func() error { order = append(order, "start"); return nil },
+			func() error { order = append(order, "ready"); return nil },
 			func(_, message string) error { lines = append(lines, message); return nil })
 		require.NoError(t, err)
-		assert.Equal(t, c.started, started, "status %v", c.status)
+		var want []string
+		if c.started {
+			want = append(want, "start")
+		}
+		if c.waited {
+			want = append(want, "ready")
+		}
+		assert.Equal(t, want, order, "status %v", c.status)
 		assert.Equal(t, c.last, lines[len(lines)-1], "status %v", c.status)
 	}
 }
 
 func TestBringUpExistingClusterReportsStartFailure(t *testing.T) {
 	err := bringUpExistingCluster(bo.KContainerStatusExited,
-		func() error { return cmdErr("no systemd user session") }, nil)
+		func() error { return cmdErr("no systemd user session") }, func() error { return nil }, nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "no systemd user session")
+}
+
+// an API server that never gets ready fails the Build instead of letting the
+// re-apply run against it (CDS-050)
+func TestBringUpExistingClusterReportsAPIServerNotReady(t *testing.T) {
+	err := bringUpExistingCluster(bo.KContainerStatusExited,
+		func() error { return nil }, func() error { return cmdErr("no answer from /readyz") }, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "API server is not ready")
+}
+
+// the wait loop polls /readyz through the control-plane node until it answers,
+// run by a real shell against a stub podman that fails twice (CDS-050)
+func TestAPIServerWaitCommandRetriesInARealShell(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("needs /bin/sh")
+	}
+	dir := t.TempDir()
+	stub := "#!/bin/sh\necho \"$@\" >> " + dir + "/calls\nn=$(wc -l < " + dir + "/calls)\n[ \"$n\" -ge 3 ]\n"
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "podman"), []byte(stub), 0o755))
+
+	run := func(tries int) error {
+		cmd := exec.Command("/bin/sh", "-c", apiServerWaitCommand(tries, 0))
+		cmd.Env = append(os.Environ(), "PATH="+dir+":"+os.Getenv("PATH"))
+		return cmd.Run()
+	}
+
+	require.NoError(t, run(5))
+	calls, err := os.ReadFile(filepath.Join(dir, "calls"))
+	require.NoError(t, err)
+	lines := strings.Split(strings.TrimSpace(string(calls)), "\n")
+	assert.Len(t, lines, 3, "stops polling once /readyz answers")
+	assert.Equal(t, "exec cds-kind-control-plane kubectl --kubeconfig /etc/kubernetes/admin.conf get --raw /readyz", lines[0])
+
+	require.NoError(t, os.Remove(filepath.Join(dir, "calls")))
+	assert.Error(t, run(2), "gives up after the bounded tries")
 }
 
 func TestProviderSelectsKind(t *testing.T) {

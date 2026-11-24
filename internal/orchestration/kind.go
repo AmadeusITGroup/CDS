@@ -106,7 +106,7 @@ func (k *kindProvider) Build(ctx context.Context, configFile string, report Prog
 	if exists, err := k.clusterExists(); err != nil {
 		return err
 	} else if exists {
-		return bringUpExistingCluster(k.liveStatus(), k.Start, report)
+		return bringUpExistingCluster(k.liveStatus(), k.Start, k.waitAPIServer, report)
 	}
 
 	if err := reportf(report, "cluster", fmt.Sprintf("Creating kind cluster %s", ClusterName)); err != nil {
@@ -580,18 +580,64 @@ func (k *kindProvider) liveStatus() bo.ContainerStatus {
 
 // bringUpExistingCluster finishes a Build on a cluster kind already knows: a
 // stopped one is started, so `orc run` (and a deploy) never leaves it down
-// (CDS-041). Any other status keeps the cluster as it is.
-func bringUpExistingCluster(status bo.ContainerStatus, start func() error, report ProgressReporter) error {
-	if statusAction(status) != "start" {
-		return reportf(report, "cluster", fmt.Sprintf("Cluster %s already exists", ClusterName))
+// (CDS-041). A started or running one is then waited on until its API server
+// is ready, so the settings re-applied right after (CDS-031) do not hit a
+// server still booting (CDS-050). An unreadable status keeps the cluster as
+// it is.
+func bringUpExistingCluster(status bo.ContainerStatus, start, ready func() error, report ProgressReporter) error {
+	switch statusAction(status) {
+	case "start":
+		if err := reportf(report, "cluster", fmt.Sprintf("Cluster %s exists but is stopped, starting it", ClusterName)); err != nil {
+			return err
+		}
+		if err := start(); err != nil {
+			return cerr.AppendErrorFmt("failed to start stopped cluster %s", err, ClusterName)
+		}
+		if err := waitReady(ready, report); err != nil {
+			return err
+		}
+		return reportf(report, "cluster", fmt.Sprintf("Cluster %s started", ClusterName))
+	case "none":
+		if err := waitReady(ready, report); err != nil {
+			return err
+		}
 	}
-	if err := reportf(report, "cluster", fmt.Sprintf("Cluster %s exists but is stopped, starting it", ClusterName)); err != nil {
+	return reportf(report, "cluster", fmt.Sprintf("Cluster %s already exists", ClusterName))
+}
+
+// waitReady reports the wait, then waits for the cluster API server.
+func waitReady(ready func() error, report ProgressReporter) error {
+	if err := reportf(report, "cluster", "Waiting for the cluster API server"); err != nil {
 		return err
 	}
-	if err := start(); err != nil {
-		return cerr.AppendErrorFmt("failed to start stopped cluster %s", err, ClusterName)
+	if err := ready(); err != nil {
+		return cerr.AppendErrorFmt("cluster %s API server is not ready", err, ClusterName)
 	}
-	return reportf(report, "cluster", fmt.Sprintf("Cluster %s started", ClusterName))
+	return nil
+}
+
+// apiServerTries and apiServerInterval (seconds) bound the API server wait
+// to 2 minutes.
+const (
+	apiServerTries    = 60
+	apiServerInterval = 2
+)
+
+// waitAPIServer polls the API server's /readyz from the host until it answers,
+// bounded. The loop runs on the host, not in the node, because right after a
+// start the node container may not accept `podman exec` yet (CDS-050).
+func (k *kindProvider) waitAPIServer() error {
+	if out, err := k.runner(apiServerWaitCommand(apiServerTries, apiServerInterval)); err != nil {
+		return cerr.AppendErrorFmt("no answer from /readyz: %s", err, out)
+	}
+	return nil
+}
+
+func apiServerWaitCommand(tries, interval int) string {
+	return fmt.Sprintf(
+		"for i in $(seq 1 %d); do podman exec %s kubectl --kubeconfig /etc/kubernetes/admin.conf get --raw /readyz >/dev/null 2>&1 && exit 0; sleep %d; done; exit 1",
+		tries, ControlPlaneNode, interval,
+	)
 }
 
 // statusAction maps a live cluster status to the lifecycle action that would
