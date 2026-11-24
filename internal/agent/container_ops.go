@@ -31,6 +31,9 @@ type containerOps interface {
 	DeleteContainer(name string) error
 	RenameContainer(name, newName string) error
 	ExecuteInContainer(ctx context.Context, containerName, command, user string) (output string, exitCode int, err error)
+	// ExecuteScriptInContainer runs script by feeding it to `sh -s` on stdin, so
+	// secrets inside it never reach a command line.
+	ExecuteScriptInContainer(ctx context.Context, containerName, script, user string) (output string, exitCode int, err error)
 	DeployContainer(ctx context.Context, spec deployContainerSpec, report deployProgressReporter) (deployContainerResult, error)
 }
 
@@ -163,6 +166,22 @@ func (defaultContainerOps) RenameContainer(name, newName string) error {
 // matches that token and kills the workload so it cannot complete its effect
 // after the deadline.
 func (defaultContainerOps) ExecuteInContainer(ctx context.Context, containerName, command, user string) (string, int, error) {
+	return executeInContainer(ctx, containerName, command, user, nil)
+}
+
+func (defaultContainerOps) ExecuteScriptInContainer(ctx context.Context, containerName, script, user string) (string, int, error) {
+	return executeInContainer(ctx, containerName, kScriptOnStdin, user, []byte(script))
+}
+
+// kScriptOnStdin is the in-container command that runs a script read from
+// stdin. A script carrying secrets (kubeconfig, registry password) is fed this
+// way: as an argument of `podman exec ... sh -c`, it would be readable by any
+// local user via ps or /proc and echoed into the error of a failed command.
+const kScriptOnStdin = "sh -s"
+
+// executeInContainer runs command in the container, feeding it input on stdin
+// when input is not nil.
+func executeInContainer(ctx context.Context, containerName, command, user string, input []byte) (string, int, error) {
 	token := execToken()
 	tagged := execWrapper(token, command)
 
@@ -187,7 +206,11 @@ func (defaultContainerOps) ExecuteInContainer(ctx context.Context, containerName
 	stop := watchAndKillInContainer(ctx, containerName, token)
 	defer stop()
 
-	return shexec.RunLocalCmdWithExitCodeContext(ctx, cmds[0])
+	cmd := cmds[0]
+	if input != nil {
+		cmd = &shexec.StdinShEvent{ExecuteEvent: cmd, Input: input}
+	}
+	return shexec.RunLocalCmdWithExitCodeContext(ctx, cmd)
 }
 
 // execWrapper builds the shell snippet run inside the container for an
@@ -658,13 +681,15 @@ func buildDecorationCommands(spec deployContainerSpec) []shexec.ExecuteEvent {
 		ce.SetExecuteCmd(engine.K_EXEC_CUSTOM_CMD)
 		ce.SetContainerName(spec.containerName)
 		ce.SetRemoteUser(engine.KRootUsr)
-		ce.SetCustomCommand(dc.script)
+		ce.SetCustomCommand(kScriptOnStdin)
 		cmds, err := ce.BuildCommands()
 		if err != nil {
 			clog.Warn("failed to build container decoration command", err)
 			continue
 		}
-		events = append(events, cmds...)
+		for _, cmd := range cmds {
+			events = append(events, &shexec.StdinShEvent{ExecuteEvent: cmd, Input: []byte(dc.script)})
+		}
 	}
 	return events
 }

@@ -80,6 +80,11 @@ func (m *mockContainerOps) ExecuteInContainer(_ context.Context, containerName, 
 	return m.execOutput, m.execCode, m.execErr
 }
 
+func (m *mockContainerOps) ExecuteScriptInContainer(_ context.Context, containerName, script, user string) (string, int, error) {
+	m.lastExecCmd = script
+	return m.execOutput, m.execCode, m.execErr
+}
+
 func (m *mockContainerOps) DeployContainer(_ context.Context, spec deployContainerSpec, report deployProgressReporter) (deployContainerResult, error) {
 	m.lastDeploy = spec
 	for _, progress := range m.progress {

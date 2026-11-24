@@ -1,6 +1,8 @@
 package orchestration
 
 import (
+	"encoding/base64"
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -14,6 +16,7 @@ import (
 // (prefix match), defaulting to empty output / no error.
 type fakeRunner struct {
 	ran     []string
+	stdins  []string
 	replies map[string]string
 	fail    map[string]bool
 }
@@ -35,6 +38,12 @@ func (f *fakeRunner) run(command string) (string, error) {
 	return "", nil
 }
 
+// runIn records the command and its stdin, then replies like run.
+func (f *fakeRunner) runIn(command string, stdin []byte) (string, error) {
+	f.stdins = append(f.stdins, string(stdin))
+	return f.run(command)
+}
+
 type cmdErr string
 
 func (e cmdErr) Error() string { return string(e) }
@@ -53,7 +62,7 @@ func (f *fakeRunner) ranContaining(sub string) bool {
 // whose supervision unit path is pre-resolved (so tests never touch podman on
 // disk). units is left nil: tests here exercise only runner-driven methods.
 func kindProviderWithRunner(r *fakeRunner) *kindProvider {
-	return &kindProvider{runner: r.run, podmanPath: "/usr/bin/podman"}
+	return &kindProvider{runner: r.run, runnerIn: r.runIn, podmanPath: "/usr/bin/podman"}
 }
 
 func TestKindClusterExistsDetectsCluster(t *testing.T) {
@@ -173,18 +182,42 @@ func TestKindApplyMirrorsNoopWhenEmpty(t *testing.T) {
 	assert.Empty(t, r.ran, "no commands run when there are no mirrors")
 }
 
-func TestKindCreateRegistrySecretRunsInsideNode(t *testing.T) {
+func TestKindCreateRegistrySecretKeepsPasswordOffCommandLine(t *testing.T) {
 	r := newFakeRunner()
 	k := kindProviderWithRunner(r)
+	const password = "s3cr3t-Pw"
 
-	require.NoError(t, k.CreateRegistrySecret("cds.sec.io", 5000, "cdsu", "cdsp"))
+	require.NoError(t, k.CreateRegistrySecret("cds.sec.io", 5000, "cdsu", password))
 
-	// the create|apply pipe must run inside the node via a single `podman exec
-	// sh -c`, not across two host-side execs (which would drop stdin).
-	assert.True(t, r.ranContaining("podman exec cds-kind-control-plane sh -c"),
-		"secret create|apply runs inside the node")
-	assert.True(t, r.ranContaining("create secret docker-registry cdsregistrycred"))
+	// the password must not appear in any command line (ps, /proc, error text)
+	for _, c := range r.ran {
+		assert.NotContains(t, c, password, "password leaked into command: %s", c)
+	}
+	assert.True(t, r.ranContaining("podman exec -i cds-kind-control-plane kubectl --kubeconfig /etc/kubernetes/admin.conf apply -f -"))
 	assert.True(t, r.ranContaining("patch serviceaccount default"))
+
+	// it goes on stdin, as a dockerconfigjson Secret
+	require.Len(t, r.stdins, 1)
+	var secret struct {
+		Kind     string            `json:"kind"`
+		Type     string            `json:"type"`
+		Metadata map[string]string `json:"metadata"`
+		Data     map[string]string `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(r.stdins[0]), &secret))
+	assert.Equal(t, "Secret", secret.Kind)
+	assert.Equal(t, "kubernetes.io/dockerconfigjson", secret.Type)
+	assert.Equal(t, "cdsregistrycred", secret.Metadata["name"])
+	raw, err := base64.StdEncoding.DecodeString(secret.Data[".dockerconfigjson"])
+	require.NoError(t, err)
+	var cfg struct {
+		Auths map[string]map[string]string `json:"auths"`
+	}
+	require.NoError(t, json.Unmarshal(raw, &cfg))
+	entry := cfg.Auths["cds.sec.io:5000"]
+	assert.Equal(t, "cdsu", entry["username"])
+	assert.Equal(t, password, entry["password"])
+	assert.Equal(t, base64.StdEncoding.EncodeToString([]byte("cdsu:"+password)), entry["auth"])
 }
 
 func TestKindTrustRegistryOnNodesWritesCA(t *testing.T) {

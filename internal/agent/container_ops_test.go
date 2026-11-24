@@ -15,6 +15,7 @@ import (
 	"github.com/amadeusitgroup/cds/internal/bo"
 	"github.com/amadeusitgroup/cds/internal/containerconf"
 	cg "github.com/amadeusitgroup/cds/internal/global"
+	"github.com/amadeusitgroup/cds/internal/shexec"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -564,4 +565,57 @@ esac`)
 
 	require.Error(t, err)
 	assert.NotContains(t, readLog(t, logPath), "rm -f dev-collision", "a pre-existing container must not be removed on a creation failure")
+}
+
+// fakePodmanRunsShell is a podman stub that logs its arguments, then runs the
+// in-container command (`exec -u <user> -i <name> <cmd...>`) with the real
+// local shell, so stdin really flows through the same shell layers.
+func fakePodmanRunsShell(t *testing.T) string {
+	t.Helper()
+	return fakePodman(t, `shift 5; exec "$@"`)
+}
+
+func TestExecuteScriptInContainerFeedsScriptOnStdin(t *testing.T) {
+	logPath := fakePodmanRunsShell(t)
+	const secret = "pw-SECRET-123"
+
+	output, code, err := defaultContainerOps{}.ExecuteScriptInContainer(context.Background(), "dev-1", "x="+secret+"\necho \"got $x\"", "root")
+
+	require.NoError(t, err)
+	assert.Equal(t, 0, code)
+	assert.Equal(t, "got "+secret+"\n", output, "the script ran from stdin in a real shell")
+	assert.NotContains(t, readLog(t, logPath), secret, "the script must not be on the podman command line")
+}
+
+func TestBuildDecorationCommandsKeepSecretsOffCommandLine(t *testing.T) {
+	const kubeSecret, regSecret = "KUBE-SECRET-TOKEN", "REG-SECRET-PW"
+	spec := deploySpecForTest(t, "dev-1", `{"image":"ubuntu:24.04"}`)
+	spec.orchestration = containerconf.KindOrchestrationConfig{Requested: true}
+	spec.orchestration.Registry.Requested = true
+	spec.kubeconfig = "users:\n- user:\n    token: " + kubeSecret
+	spec.registryUser = "cdsu"
+	spec.registryPassword = regSecret
+
+	events := buildDecorationCommands(spec)
+
+	require.Len(t, events, 2, "kubeconfig + registry env")
+	var inputs string
+	for _, e := range events {
+		assert.NotContains(t, e.Cmd(), kubeSecret)
+		assert.NotContains(t, e.Cmd(), regSecret)
+		in, ok := e.(*shexec.StdinShEvent)
+		require.True(t, ok, "decoration script is fed on stdin")
+		inputs += string(in.Input)
+	}
+	assert.Contains(t, inputs, kubeSecret)
+	assert.Contains(t, inputs, "CDS_REGISTRY_PWD="+regSecret)
+
+	// the built command really runs the stdin script through a real shell
+	logPath := fakePodmanRunsShell(t)
+	out, err := shexec.RunLocalCmdWithOutput([]shexec.ExecuteEvent{
+		&shexec.StdinShEvent{ExecuteEvent: events[0].(*shexec.StdinShEvent).ExecuteEvent, Input: []byte("echo ok-" + regSecret)},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "ok-"+regSecret+"\n", out)
+	assert.NotContains(t, readLog(t, logPath), regSecret)
 }

@@ -56,6 +56,7 @@ func RunLocalCmdWithOutputContext(ctx context.Context, cmd []ExecuteEvent) (stri
 	stderr := newCappedBuffer(defaultCapBytes)
 
 	exeCmd := localShellCmdContext(ctx, cmd[0].Cmd())
+	setStdin(exeCmd, cmd[0])
 	exeCmd.Stdout = stdout
 	exeCmd.Stderr = stderr
 
@@ -88,6 +89,7 @@ func RunLocalCmdWithExitCode(cmd ExecuteEvent) (string, int, error) {
 func RunLocalCmdWithExitCodeContext(ctx context.Context, cmd ExecuteEvent) (string, int, error) {
 	output := newCappedBuffer(defaultCapBytes)
 	exeCmd := localShellCmdContext(ctx, cmd.Cmd())
+	setStdin(exeCmd, cmd)
 	exeCmd.Stdout = output
 	exeCmd.Stderr = output
 
@@ -102,6 +104,13 @@ func RunLocalCmdWithExitCodeContext(ctx context.Context, cmd ExecuteEvent) (stri
 		return output.String(), exitErr.ExitCode(), nil
 	default:
 		return output.String(), -1, cerr.AppendErrorFmt("Failed to execute command locally (%v)", err, cmd.Cmd())
+	}
+}
+
+// setStdin feeds the input of a StdinShEvent to the command.
+func setStdin(exeCmd *exec.Cmd, cmd ExecuteEvent) {
+	if in, ok := cmd.(*StdinShEvent); ok {
+		exeCmd.Stdin = bytes.NewReader(in.Input)
 	}
 }
 
@@ -372,6 +381,15 @@ func (se *DefaultShEvent) Fallback() error {
 // 	}
 // 	return sn
 // }
+
+// StdinShEvent is a shell command fed Input on its stdin. Use it to hand a
+// secret to a command instead of putting it in the command line, where any
+// local user can read it via ps or /proc, and where a failed command echoes it
+// into the returned error.
+type StdinShEvent struct {
+	ExecuteEvent
+	Input []byte
+}
 
 var _ ExecuteEvent = (*CopyFileEvent)(nil)
 

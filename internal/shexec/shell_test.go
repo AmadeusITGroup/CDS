@@ -1,6 +1,7 @@
 package shexec
 
 import (
+	"runtime"
 	"strings"
 	"testing"
 
@@ -39,4 +40,27 @@ func TestRunLocalCmdWithExitCode(t *testing.T) {
 			assert.Equal(t, tc.wantCode, code)
 		})
 	}
+}
+
+func TestRunLocalCmdWithStdinFeedsSecretOffCommandLine(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses a POSIX shell")
+	}
+	const secret = "pw-on-stdin"
+	in := func(cmd string) ExecuteEvent {
+		return &StdinShEvent{ExecuteEvent: &DefaultShEvent{ExeCmd: cmd}, Input: []byte(secret)}
+	}
+	out, err := RunLocalCmdWithOutput([]ExecuteEvent{in("cat")})
+	require.NoError(t, err)
+	assert.Equal(t, secret, out)
+
+	out, code, err := RunLocalCmdWithExitCode(in("cat; exit 3"))
+	require.NoError(t, err)
+	assert.Equal(t, secret, out)
+	assert.Equal(t, 3, code)
+
+	// a failing command's error names the command, not the stdin content
+	_, err = RunLocalCmdWithOutput([]ExecuteEvent{in("cat >/dev/null; exit 2")})
+	require.Error(t, err)
+	assert.NotContains(t, err.Error(), secret)
 }

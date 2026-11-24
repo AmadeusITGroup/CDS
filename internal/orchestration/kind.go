@@ -1,6 +1,8 @@
 package orchestration
 
 import (
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/url"
@@ -41,6 +43,9 @@ type kindProvider struct {
 	// runner executes a local shell command and returns its output. Injected
 	// for tests; defaults to the real local shell.
 	runner func(command string) (string, error)
+	// runnerIn is runner with stdin, used to hand secrets to a command without
+	// putting them on its command line. Injected for tests.
+	runnerIn func(command string, stdin []byte) (string, error)
 	// units supervises the kind node through a systemd user unit. Injected for
 	// tests; defaults to the agent's local host.
 	units *systemd.UnitManager
@@ -56,12 +61,19 @@ func NewKindProvider() *kindProvider {
 	return &kindProvider{
 		engineName: cg.EmptyStr, // default engine (podman) in the engine layer
 		runner:     runLocal,
+		runnerIn:   runLocalWithInput,
 		units:      systemd.NewUnitManager(systemd.LocalHost()),
 	}
 }
 
 func runLocal(command string) (string, error) {
 	return shexec.RunLocalCmdWithOutput([]shexec.ExecuteEvent{&shexec.DefaultShEvent{ExeCmd: command}})
+}
+
+func runLocalWithInput(command string, stdin []byte) (string, error) {
+	return shexec.RunLocalCmdWithOutput([]shexec.ExecuteEvent{
+		&shexec.StdinShEvent{ExecuteEvent: &shexec.DefaultShEvent{ExeCmd: command}, Input: stdin},
+	})
 }
 
 func (k *kindProvider) Name() string { return kindEngineName }
@@ -213,6 +225,32 @@ func (k *kindProvider) Kubeconfig() (string, error) {
 	return out, nil
 }
 
+// registrySecretManifest builds the kubernetes.io/dockerconfigjson Secret that
+// `kubectl create secret docker-registry` would generate, as JSON (valid YAML
+// for `kubectl apply -f -`).
+func registrySecretManifest(server, username, password string) ([]byte, error) {
+	auth := base64.StdEncoding.EncodeToString([]byte(username + ":" + password))
+	dockerConfig, err := json.Marshal(map[string]any{
+		"auths": map[string]any{
+			server: map[string]string{"username": username, "password": password, "auth": auth},
+		},
+	})
+	if err != nil {
+		return nil, cerr.AppendError("failed to encode registry pull secret", err)
+	}
+	manifest, err := json.Marshal(map[string]any{
+		"apiVersion": "v1",
+		"kind":       "Secret",
+		"type":       "kubernetes.io/dockerconfigjson",
+		"metadata":   map[string]string{"name": kRegistryPullSecret, "namespace": "default"},
+		"data":       map[string]string{".dockerconfigjson": base64.StdEncoding.EncodeToString(dockerConfig)},
+	})
+	if err != nil {
+		return nil, cerr.AppendError("failed to encode registry pull secret", err)
+	}
+	return manifest, nil
+}
+
 // kRegistryPullSecret is the Kubernetes docker-registry secret CDS creates so
 // pods can pull from the local secure registry; the default service account is
 // patched to use it.
@@ -226,15 +264,16 @@ func (k *kindProvider) CreateRegistrySecret(registryHost string, port int, usern
 	server := fmt.Sprintf("%s:%d", registryHost, port)
 	kc := "kubectl --kubeconfig /etc/kubernetes/admin.conf"
 
-	// Run the create|apply pipe INSIDE the node via a single `podman exec sh -c`
-	// so stdout->stdin is piped within the container; piping across two separate
-	// `podman exec` invocations on the host drops stdin (apply gets nothing).
-	inner := fmt.Sprintf(
-		"%s create secret docker-registry %s --docker-server=%s --docker-username=%s --docker-password=%s --dry-run=client -o yaml | %s apply -f -",
-		kc, kRegistryPullSecret, server, shellQuote(username), shellQuote(password), kc,
-	)
-	createSecret := fmt.Sprintf("podman exec %s sh -c %s", ControlPlaneNode, shellQuote(inner))
-	if out, err := k.runner(createSecret); err != nil {
+	// The manifest carries the password, so it goes on stdin of
+	// `podman exec -i ... apply -f -`, never on a command line: an argument is
+	// readable by any local user via ps or /proc, and a failed command is echoed
+	// into the error returned to the client.
+	manifest, err := registrySecretManifest(server, username, password)
+	if err != nil {
+		return err
+	}
+	apply := fmt.Sprintf("podman exec -i %s %s apply -f -", ControlPlaneNode, kc)
+	if out, err := k.runnerIn(apply, manifest); err != nil {
 		return cerr.AppendErrorFmt("failed to create registry pull secret: %s", err, out)
 	}
 

@@ -302,13 +302,13 @@ func (s *grpcServer) redecorateContainers(ctx context.Context, report deployProg
 }
 
 // redecorateOne runs the decoration install scripts inside a single container
-// via ExecuteInContainer as root.
+// as root, each fed on stdin (they carry the kubeconfig and registry secrets).
 func (s *grpcServer) redecorateOne(ctx context.Context, name, kubeconfig, ca string, report deployProgressReporter) {
 	for _, dc := range containerDecorationCommands("", name, kubeconfig, ca) {
 		if report != nil {
 			_ = report(deployProgress{phase: "decorate", message: fmt.Sprintf("%s: %s", name, dc.info)})
 		}
-		_, _, err := s.containerOps().ExecuteInContainer(ctx, name, dc.script, "root")
+		_, _, err := s.containerOps().ExecuteScriptInContainer(ctx, name, dc.script, "root")
 		if err != nil {
 			clog.Warn(fmt.Sprintf("failed to re-decorate container %s (%s)", name, dc.info), err)
 		}
