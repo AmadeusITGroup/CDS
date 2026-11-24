@@ -178,7 +178,7 @@ echo "$CDS_REGISTRY_PWD" | podman login -u "$CDS_REGISTRY_USR" --password-stdin 
   --cert-dir "$(dirname $CDS_REGISTRY_PATH_TO_CA)" $CDS_REGISTRY_NAME:$CDS_REGISTRY_PORT
 podman push $CDS_REGISTRY_NAME:$CDS_REGISTRY_PORT/myapp:latest
 
-# deploy a chart that references cds.sec.io:<port>/myapp with:
+# deploy a chart that references registry.cds.internal:<port>/myapp with:
 #   imagePullSecrets: [{ name: cdsregistrycred }]
 #   ingress.hosts[].host: cds-kind-control-plane
 helm install mylab ./mychart

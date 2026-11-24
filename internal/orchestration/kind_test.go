@@ -315,7 +315,7 @@ func TestKindCreateRegistrySecretKeepsPasswordOffCommandLine(t *testing.T) {
 	k := kindProviderWithRunner(r)
 	const password = "s3cr3t-Pw"
 
-	require.NoError(t, k.CreateRegistrySecret("cds.sec.io", 5000, "cdsu", password))
+	require.NoError(t, k.CreateRegistrySecret("registry.cds.internal", 5000, "cdsu", password))
 
 	// the password must not appear in any command line (ps, /proc, error text)
 	for _, c := range r.ran {
@@ -342,7 +342,7 @@ func TestKindCreateRegistrySecretKeepsPasswordOffCommandLine(t *testing.T) {
 		Auths map[string]map[string]string `json:"auths"`
 	}
 	require.NoError(t, json.Unmarshal(raw, &cfg))
-	entry := cfg.Auths["cds.sec.io:5000"]
+	entry := cfg.Auths["registry.cds.internal:5000"]
 	assert.Equal(t, "cdsu", entry["username"])
 	assert.Equal(t, password, entry["password"])
 	assert.Equal(t, base64.StdEncoding.EncodeToString([]byte("cdsu:"+password)), entry["auth"])
@@ -353,14 +353,14 @@ func TestKindTrustRegistryOnNodesWritesCA(t *testing.T) {
 	r.replies["kind get nodes"] = "cds-kind-control-plane\n"
 	k := kindProviderWithRunner(r)
 
-	require.NoError(t, k.TrustRegistryOnNodes("cds.sec.io", 5000, "-----BEGIN CERTIFICATE-----\nx\n-----END CERTIFICATE-----"))
-	assert.True(t, r.ranContaining("/etc/containerd/certs.d/cds.sec.io:5000/ca.crt"))
+	require.NoError(t, k.TrustRegistryOnNodes("registry.cds.internal", 5000, "-----BEGIN CERTIFICATE-----\nx\n-----END CERTIFICATE-----"))
+	assert.True(t, r.ranContaining("/etc/containerd/certs.d/registry.cds.internal:5000/ca.crt"))
 }
 
 func TestKindTrustRegistryNoopWhenNoCA(t *testing.T) {
 	r := newFakeRunner()
 	k := kindProviderWithRunner(r)
-	require.NoError(t, k.TrustRegistryOnNodes("cds.sec.io", 5000, ""))
+	require.NoError(t, k.TrustRegistryOnNodes("registry.cds.internal", 5000, ""))
 	assert.Empty(t, r.ran)
 }
 

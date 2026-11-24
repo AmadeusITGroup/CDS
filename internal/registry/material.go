@@ -69,10 +69,17 @@ func ensureMaterial(root string) (material, error) {
 			return material{}, err
 		}
 		m.username, m.password = user, pass
+		// a certificate issued for an older registry name (cds.sec.io before
+		// CDS-016) is reissued for Hostname; the credentials are kept.
+		if !m.certCovers(Hostname) {
+			if err := m.generateCertificate(Hostname); err != nil {
+				return material{}, err
+			}
+		}
 		return m, nil
 	}
 
-	if err := m.generateCertificate(); err != nil {
+	if err := m.generateCertificate(Hostname); err != nil {
 		return material{}, err
 	}
 	if err := m.generateCredentials(); err != nil {
@@ -81,9 +88,27 @@ func ensureMaterial(root string) (material, error) {
 	return m, nil
 }
 
+// certCovers reports whether the stored certificate is issued for hostname.
+// An unreadable certificate does not cover it, so it gets reissued.
+func (m material) certCovers(hostname string) bool {
+	certPEM, err := os.ReadFile(m.certFile())
+	if err != nil {
+		return false
+	}
+	block, _ := pem.Decode(certPEM)
+	if block == nil {
+		return false
+	}
+	cert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		return false
+	}
+	return cert.VerifyHostname(hostname) == nil
+}
+
 // generateCertificate writes a self-signed ECDSA certificate and key for
-// Hostname into the certs directory.
-func (m *material) generateCertificate() error {
+// hostname into the certs directory.
+func (m *material) generateCertificate(hostname string) error {
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		return cerr.AppendError("failed to generate registry key", err)
@@ -94,8 +119,8 @@ func (m *material) generateCertificate() error {
 	}
 	template := x509.Certificate{
 		SerialNumber:          serial,
-		Subject:               pkix.Name{CommonName: Hostname},
-		DNSNames:              []string{Hostname},
+		Subject:               pkix.Name{CommonName: hostname},
+		DNSNames:              []string{hostname},
 		NotBefore:             time.Now().Add(-time.Hour),
 		NotAfter:              time.Now().Add(certValidity),
 		KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign,

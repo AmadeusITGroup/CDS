@@ -69,3 +69,25 @@ func TestEnsureMaterialPersistsPlaintextCredentials(t *testing.T) {
 	assert.Equal(t, first.username, second.username)
 	assert.Equal(t, first.password, second.password, "password survives reuse via the persisted creds file")
 }
+
+func TestEnsureMaterialReissuesCertForOldHostname(t *testing.T) {
+	// a host provisioned before the rename (CDS-016) holds a certificate for
+	// the old name; the next build must reissue it for Hostname and keep the
+	// credentials clients already use.
+	root := t.TempDir()
+	first, err := ensureMaterial(root)
+	require.NoError(t, err)
+	require.NoError(t, first.generateCertificate("cds.sec.io"))
+
+	second, err := ensureMaterial(root)
+	require.NoError(t, err)
+	certPEM, err := os.ReadFile(second.certFile())
+	require.NoError(t, err)
+	block, _ := pem.Decode(certPEM)
+	require.NotNil(t, block)
+	cert, err := x509.ParseCertificate(block.Bytes)
+	require.NoError(t, err)
+	assert.Equal(t, []string{Hostname}, cert.DNSNames)
+	assert.Equal(t, first.username, second.username)
+	assert.Equal(t, first.password, second.password)
+}

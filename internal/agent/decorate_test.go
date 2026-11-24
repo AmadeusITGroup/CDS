@@ -119,12 +119,12 @@ func TestEnsureOrchestrationSkipsIngressWhenNotRequested(t *testing.T) {
 }
 
 func TestContainerDecorationIncludesRegistryEnv(t *testing.T) {
-	reg := registryEnv{name: "cds.sec.io", port: 5000, caPath: "/etc/containers/certs.d/cds.sec.io:5000/ca.crt", user: "cdsabc", password: "secret"}
+	reg := registryEnv{name: "registry.cds.internal", port: 5000, caPath: "/etc/containers/certs.d/registry.cds.internal:5000/ca.crt", user: "cdsabc", password: "secret"}
 	cmds := containerDecorationCommands("KC", "CA", reg)
 	// kubeconfig + trust + registry env
 	require.Len(t, cmds, 3)
 	last := cmds[2].script
-	assert.Contains(t, last, "CDS_REGISTRY_NAME=cds.sec.io")
+	assert.Contains(t, last, "CDS_REGISTRY_NAME=registry.cds.internal")
 	assert.Contains(t, last, "CDS_REGISTRY_PORT=5000")
 	assert.Contains(t, last, "CDS_REGISTRY_USR=cdsabc")
 	assert.Contains(t, last, "CDS_REGISTRY_PWD=secret")

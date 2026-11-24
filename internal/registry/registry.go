@@ -14,8 +14,9 @@ const (
 	// Name is the fixed registry container name CDS manages on a host.
 	Name = "cds-sec-registry"
 	// Hostname is the TLS server name the registry certificate is issued for
-	// and the name containers use to reach it.
-	Hostname = "cds.sec.io"
+	// and the name containers use to reach it. It is under the reserved
+	// .internal TLD so public DNS can never answer for it (CDS-016).
+	Hostname = "registry.cds.internal"
 	// DefaultPort is the host port the registry publishes.
 	DefaultPort = 5000
 	// Image is the registry server image, pinned by version and digest

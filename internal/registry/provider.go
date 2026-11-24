@@ -91,7 +91,8 @@ func (p *podmanProvider) Build(secure bool, report ProgressReporter) error {
 		return cerr.AppendErrorFmt("failed to create Quadlet dir %s", err, p.quadletDir)
 	}
 	content := p.quadletUnit(m)
-	if _, err := p.units.Reconcile(p.quadletDir, systemd.Unit{Name: quadletUnitFile, Content: content}); err != nil {
+	changed, err := p.units.Reconcile(p.quadletDir, systemd.Unit{Name: quadletUnitFile, Content: content})
+	if err != nil {
 		return cerr.AppendError("failed to install registry Quadlet unit", err)
 	}
 
@@ -106,8 +107,14 @@ func (p *podmanProvider) Build(secure bool, report ProgressReporter) error {
 		return err
 	}
 	// Quadlet-generated services are transient from systemd's view; a daemon
-	// reload makes the generated unit visible, then start it.
-	if err := p.units.Start(quadletService); err != nil {
+	// reload makes the generated unit visible, then start it. A changed unit
+	// (e.g. the new NetworkAlias and reissued certificate after the CDS-016
+	// rename) is restarted, since a plain start keeps the old container running.
+	start := p.units.Start
+	if changed {
+		start = p.units.Restart
+	}
+	if err := start(quadletService); err != nil {
 		return cerr.AppendError("failed to start registry", err)
 	}
 	return reportf(report, "registry", fmt.Sprintf("Registry %s started", Name))

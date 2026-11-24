@@ -172,7 +172,7 @@ var (
 			eventInfo: "Setting the global git configuration file in the container",
 		},
 		K_EXEC_CMD_SECURE_REGISTRY: {
-			cmd:       `/bin/sh -c 'kubectl get secret/cdsregistrycred || kubectl create secret docker-registry cdsregistrycred --docker-server=cds.sec.io --docker-username=user --docker-password=password;sleep 10;kubectl patch serviceaccount default -p \\'{"imagePullSecrets": [{"name": "cdsregistrycred"}]}\\''`,
+			cmd:       `/bin/sh -c 'kubectl get secret/cdsregistrycred || kubectl create secret docker-registry cdsregistrycred --docker-server=registry.cds.internal --docker-username=user --docker-password=password;sleep 10;kubectl patch serviceaccount default -p \\'{"imagePullSecrets": [{"name": "cdsregistrycred"}]}\\''`,
 			eventInfo: "Create cdsregistrycred secret in K8s cluster",
 		},
 		K_EXEC_CMD_CHECK_PATH_EXISTS: {
@@ -184,7 +184,7 @@ var (
 			eventInfo: "Check if secret (cdsregistrycred) exists",
 		},
 		K_EXEC_CMD_CREATE_SECRET: {
-			cmd:       `/bin/sh -c 'kubectl create secret docker-registry cdsregistrycred --docker-server=cds.sec.io --docker-username=user --docker-password=password'`,
+			cmd:       `/bin/sh -c 'kubectl create secret docker-registry cdsregistrycred --docker-server=registry.cds.internal --docker-username=user --docker-password=password'`,
 			eventInfo: "Create secret (cdsregistrycred)",
 		},
 		K_EXEC_CMD_CHECK_SERVICE_ACCOUNT_EXISTS: {
