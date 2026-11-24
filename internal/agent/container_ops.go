@@ -702,16 +702,10 @@ func buildSSHKeyInstallCommands(spec deployContainerSpec) ([]shexec.ExecuteEvent
 		return nil, nil
 	}
 
-	opts := []engine.ContainerEngineOption{
+	ce := engine.NewContainerEngine(
 		engine.WithContainerConfig(spec.config),
 		engine.WithResourceProvider(spec.resourceProvider),
-	}
-	if spec.orchestration.Requested {
-		// attach the devcontainer to the kind cluster network so it can reach the
-		// in-cluster API server and the registry.
-		opts = append(opts, engine.WithNetwork(engine.KindNetworkName))
-	}
-	ce := engine.NewContainerEngine(opts...)
+	)
 	ce.SetAction(engine.K_ACTION_EXE)
 	ce.SetExecuteCmd(engine.K_EXEC_CMD_SSH)
 	ce.SetContainerName(spec.containerName)
