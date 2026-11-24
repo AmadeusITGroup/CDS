@@ -16,22 +16,19 @@ import (
 // unless forced.
 //
 // It lists CDS containers and inspects each one's networks; a container on the
-// kind network is a dependent. Errors listing or inspecting are treated as "no
-// known dependents" by the caller via the returned error, so the guard never
-// blocks on a transient inspection failure (callers log and proceed, or the
-// user forces).
-func clusterDependents(list func() ([]string, error)) ([]string, error) {
+// kind network is a dependent. A listing or inspection error is returned: the
+// delete cannot be undone, so the guard refuses it when usage is unknown and
+// the force flag stays the escape hatch.
+func clusterDependents(list func() ([]string, error), networksOf func(string) ([]string, error)) ([]string, error) {
 	names, err := list()
 	if err != nil {
 		return nil, cerr.AppendError("failed to list containers to check cluster usage", err)
 	}
 	var dependents []string
 	for _, name := range names {
-		networks, err := engine.GetContainerNetworks(cg.EmptyStr, name)
+		networks, err := networksOf(name)
 		if err != nil {
-			// a container we cannot inspect is skipped rather than treated as a
-			// blocker; the force flag remains the escape hatch.
-			continue
+			return nil, cerr.AppendError(fmt.Sprintf("failed to inspect container %s to check cluster usage", name), err)
 		}
 		for _, n := range networks {
 			if n == engine.KindNetworkName {
@@ -69,16 +66,30 @@ func errInUse(resource string, dependents []string) error {
 // deletes (they are deployed together, so container dependence on the cluster
 // network also guards the registry).
 func guardClusterDelete(resource string, force bool) error {
+	return guardDelete(resource, force, func() ([]string, error) {
+		return clusterDependents(cdsContainerNames, containerNetworks)
+	})
+}
+
+// guardDelete is guardClusterDelete with the dependents lookup injected. When
+// usage cannot be determined the delete is refused, never let through.
+func guardDelete(resource string, force bool, dependentsOf func() ([]string, error)) error {
 	if force {
 		return nil
 	}
-	dependents, err := clusterDependents(cdsContainerNames)
+	dependents, err := dependentsOf()
 	if err != nil {
-		// cannot determine usage; do not hard-block, but surface the reason.
-		return nil
+		return cerr.AppendError(fmt.Sprintf(
+			"cannot tell whether the %s is in use, so it is not deleted; retry with --force to tear it down anyway",
+			resource), err)
 	}
 	if len(dependents) > 0 {
 		return errInUse(resource, dependents)
 	}
 	return nil
+}
+
+// containerNetworks returns the networks a host container is attached to.
+func containerNetworks(name string) ([]string, error) {
+	return engine.GetContainerNetworks(cg.EmptyStr, name)
 }
