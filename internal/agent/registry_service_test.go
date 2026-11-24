@@ -123,6 +123,19 @@ func TestRegistryStartMapsErrorToInternal(t *testing.T) {
 	assert.Equal(t, codes.Internal, status.Code(err))
 }
 
+func TestDeleteRegistryMapsInUseToFailedPrecondition(t *testing.T) {
+	inUse := guardDelete("registry", false, func() ([]string, error) { return []string{"dev-a"}, nil })
+	svc := newTestRegistryService(t, &mockRegistryOps{deleteErr: inUse})
+	_, err := svc.DeleteRegistry(context.Background(), &cdspb.DeleteRegistryRequest{})
+	assert.Equal(t, codes.FailedPrecondition, status.Code(err))
+
+	// usage unknown is not a refusal of the request: it stays Internal
+	unknown := guardDelete("registry", false, func() ([]string, error) { return nil, errors.New("list boom") })
+	svc = newTestRegistryService(t, &mockRegistryOps{deleteErr: unknown})
+	_, err = svc.DeleteRegistry(context.Background(), &cdspb.DeleteRegistryRequest{})
+	assert.Equal(t, codes.Internal, status.Code(err))
+}
+
 func TestGetRegistryReturnsProtoWithHost(t *testing.T) {
 	ops := &mockRegistryOps{reg: registry.Registry{
 		Name:     registry.Name,

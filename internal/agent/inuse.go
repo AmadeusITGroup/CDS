@@ -1,11 +1,14 @@
 package agent
 
 import (
+	"errors"
 	"fmt"
 
 	"github.com/amadeusitgroup/cds/internal/cerr"
 	"github.com/amadeusitgroup/cds/internal/engine"
 	cg "github.com/amadeusitgroup/cds/internal/global"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 // clusterDependents returns the names of CDS-managed containers attached to the
@@ -53,12 +56,26 @@ func cdsContainerNames() ([]string, error) {
 	return names, nil
 }
 
-// errClusterInUse is returned when a cluster/registry delete is refused because
+// inUseError marks a delete refused because containers still depend on the
+// resource: a refusal of the request, not an agent fault (CDS-032).
+type inUseError struct{ error }
+
+// errInUse is returned when a cluster/registry delete is refused because
 // containers still depend on it and force was not set.
 func errInUse(resource string, dependents []string) error {
-	return cerr.NewError(fmt.Sprintf(
+	return inUseError{cerr.NewError(fmt.Sprintf(
 		"%s is in use by %d container(s): %v; retry with --force to tear it down anyway",
-		resource, len(dependents), dependents))
+		resource, len(dependents), dependents))}
+}
+
+// deleteStatus maps a delete failure to its gRPC status: FailedPrecondition
+// when it was refused as in use, so clients can tell it from an outage.
+func deleteStatus(what string, err error) error {
+	code := codes.Internal
+	if errors.As(err, new(inUseError)) {
+		code = codes.FailedPrecondition
+	}
+	return status.Errorf(code, "%s: %v", what, err)
 }
 
 // guardClusterDelete refuses the delete when dependents exist and force is

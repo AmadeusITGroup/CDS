@@ -152,6 +152,20 @@ func TestStartClusterMapsErrorToInternal(t *testing.T) {
 	assert.Equal(t, codes.Internal, status.Code(err))
 }
 
+// a delete refused because containers use the cluster is the caller's
+// precondition, not an agent fault (CDS-032); other failures stay Internal.
+func TestDeleteClusterMapsInUseToFailedPrecondition(t *testing.T) {
+	inUse := guardDelete("cluster", false, func() ([]string, error) { return []string{"dev-a"}, nil })
+	svc := newTestClusterService(t, &mockClusterOps{deleteErr: inUse})
+	_, err := svc.DeleteCluster(context.Background(), &cdspb.DeleteClusterRequest{})
+	assert.Equal(t, codes.FailedPrecondition, status.Code(err))
+	assert.Contains(t, status.Convert(err).Message(), "in use by 1 container(s)")
+
+	svc = newTestClusterService(t, &mockClusterOps{deleteErr: errors.New("kind boom")})
+	_, err = svc.DeleteCluster(context.Background(), &cdspb.DeleteClusterRequest{})
+	assert.Equal(t, codes.Internal, status.Code(err))
+}
+
 func TestGetClusterReturnsProtoWithHost(t *testing.T) {
 	ops := &mockClusterOps{cluster: orchestration.Cluster{
 		Name:   orchestration.ClusterName,

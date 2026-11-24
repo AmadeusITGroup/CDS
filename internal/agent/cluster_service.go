@@ -55,7 +55,7 @@ func (s *clusterServiceServer) StopCluster(ctx context.Context, req *cdspb.StopC
 // DeleteCluster removes the cluster.
 func (s *clusterServiceServer) DeleteCluster(ctx context.Context, req *cdspb.DeleteClusterRequest) (*cdspb.DeleteClusterResponse, error) {
 	if err := s.core.clusterOps().DeleteCluster(ctx, req.GetForce()); err != nil {
-		return nil, status.Errorf(codes.Internal, "delete cluster: %v", err)
+		return nil, deleteStatus("delete cluster", err)
 	}
 	return &cdspb.DeleteClusterResponse{Output: fmt.Sprintf("Cluster %s deleted", orchestration.ClusterName)}, nil
 }

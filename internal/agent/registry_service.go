@@ -48,7 +48,7 @@ func (s *registryServiceServer) StopRegistry(ctx context.Context, req *cdspb.Sto
 
 func (s *registryServiceServer) DeleteRegistry(ctx context.Context, req *cdspb.DeleteRegistryRequest) (*cdspb.DeleteRegistryResponse, error) {
 	if err := s.core.registryOps().DeleteRegistry(ctx, req.GetForce()); err != nil {
-		return nil, status.Errorf(codes.Internal, "delete registry: %v", err)
+		return nil, deleteStatus("delete registry", err)
 	}
 	return &cdspb.DeleteRegistryResponse{Output: fmt.Sprintf("Registry %s deleted", registry.Name)}, nil
 }
