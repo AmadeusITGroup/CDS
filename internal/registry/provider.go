@@ -206,7 +206,9 @@ func (p *podmanProvider) Stop() error {
 		}
 		return nil
 	}
-	if out, err := p.runner(fmt.Sprintf("podman stop %s", Name)); err != nil {
+	// the Quadlet container runs with --rm, so after a clean stop it is gone:
+	// a missing container is already stopped (CDS-060), as in Delete.
+	if out, err := p.runner(fmt.Sprintf("podman stop %s", Name)); err != nil && !isNoSuchContainer(out) {
 		return cerr.AppendErrorFmt("failed to stop registry %s: %s", err, Name, out)
 	}
 	return nil

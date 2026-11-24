@@ -94,6 +94,21 @@ func TestStopFallsBackToPodmanWhenUnitInactive(t *testing.T) {
 	assert.True(t, r.ranContaining("podman stop "+Name))
 }
 
+// TestStopIsIdempotent: the Quadlet container is removed on stop, so a second
+// stop finds no container; that is "already stopped", not a failure. Any
+// other podman failure is still returned (CDS-060).
+func TestStopIsIdempotent(t *testing.T) {
+	p, _ := testProvider(t)
+	p.units = systemd.NewUnitManager(fakeHostOps{})
+	p.runner = func(string) (string, error) {
+		return `Error: no container with name or ID "cds-sec-registry" found: no such container`, errors.New("exit status 125")
+	}
+	require.NoError(t, p.Stop())
+
+	p.runner = func(string) (string, error) { return "Error: permission denied", errors.New("exit status 125") }
+	require.Error(t, p.Stop())
+}
+
 func TestDeleteRemovesContainer(t *testing.T) {
 	p, r := testProvider(t)
 	p.units = systemd.NewUnitManager(fakeHostOps{})
