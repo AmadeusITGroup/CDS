@@ -18,8 +18,10 @@ const (
 	Hostname = "cds.sec.io"
 	// DefaultPort is the host port the registry publishes.
 	DefaultPort = 5000
-	// Image is the registry server image.
-	Image = "docker.io/library/registry:2"
+	// Image is the registry server image, pinned by version and digest
+	// (CDS-039) so every build pulls the same bytes. The digest is the
+	// multi-arch index of registry:2.8.3, the image registry:2 points to.
+	Image = "docker.io/library/registry:2.8.3@sha256:a3d8aaa63ed8681a604f1dea0aa03f100d5895b6a58ace528858a7b332415373"
 )
 
 // ProgressReporter receives human-readable progress during a long-running

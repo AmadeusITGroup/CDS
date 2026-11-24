@@ -66,6 +66,8 @@ func TestQuadletUnitHasExpectedShape(t *testing.T) {
 	assert.Contains(t, unit, "[Container]")
 	assert.Contains(t, unit, "ContainerName="+Name)
 	assert.Contains(t, unit, "Image="+Image)
+	// pinned version and digest, not a moving tag (CDS-039)
+	assert.Regexp(t, `(?m)^Image=docker\.io/library/registry:2\.\d+\.\d+@sha256:[0-9a-f]{64}$`, unit)
 	// loopback only: kind nodes and devcontainers reach it on the kind network (CDS-027)
 	assert.Contains(t, unit, "PublishPort=127.0.0.1:5000:5000")
 	assert.Contains(t, unit, "REGISTRY_AUTH=htpasswd")
