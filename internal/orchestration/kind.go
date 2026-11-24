@@ -91,7 +91,8 @@ func (k *kindProvider) Name() string { return kindEngineName }
 // IPv4-only `kind` podman network exists (kind would otherwise create an
 // IPv6-enabled one that fails on IPv6-disabled hosts), then runs
 // `kind create cluster`. kind create is idempotent-ish: it errors if the
-// cluster already exists, so Build treats an existing cluster as success.
+// cluster already exists, so Build treats an existing cluster as success and
+// starts it when it is stopped (CDS-041).
 // Cancelling ctx kills `kind create cluster` (CDS-029).
 func (k *kindProvider) Build(ctx context.Context, configFile string, report ProgressReporter) error {
 	if err := reportf(report, "network", "Ensuring IPv4-only kind network"); err != nil {
@@ -104,7 +105,7 @@ func (k *kindProvider) Build(ctx context.Context, configFile string, report Prog
 	if exists, err := k.clusterExists(); err != nil {
 		return err
 	} else if exists {
-		return reportf(report, "cluster", fmt.Sprintf("Cluster %s already exists", ClusterName))
+		return bringUpExistingCluster(k.liveStatus(), k.Start, report)
 	}
 
 	if err := reportf(report, "cluster", fmt.Sprintf("Creating kind cluster %s", ClusterName)); err != nil {
@@ -551,9 +552,36 @@ func reportf(report ProgressReporter, phase, message string) error {
 	return report(phase, message)
 }
 
+// liveStatus is the control-plane node status, Unknown when it cannot be read
+// (then Build keeps the existing cluster as it is).
+func (k *kindProvider) liveStatus() bo.ContainerStatus {
+	cluster, err := k.Status()
+	if err != nil {
+		clog.Warn(fmt.Sprintf("failed to read status of cluster %s", ClusterName), err)
+		return bo.KContainerStatusUnknown
+	}
+	return cluster.Status
+}
+
+// bringUpExistingCluster finishes a Build on a cluster kind already knows: a
+// stopped one is started, so `orc run` (and a deploy) never leaves it down
+// (CDS-041). Any other status keeps the cluster as it is.
+func bringUpExistingCluster(status bo.ContainerStatus, start func() error, report ProgressReporter) error {
+	if statusAction(status) != "start" {
+		return reportf(report, "cluster", fmt.Sprintf("Cluster %s already exists", ClusterName))
+	}
+	if err := reportf(report, "cluster", fmt.Sprintf("Cluster %s exists but is stopped, starting it", ClusterName)); err != nil {
+		return err
+	}
+	if err := start(); err != nil {
+		return cerr.AppendErrorFmt("failed to start stopped cluster %s", err, ClusterName)
+	}
+	return reportf(report, "cluster", fmt.Sprintf("Cluster %s started", ClusterName))
+}
+
 // statusAction maps a live cluster status to the lifecycle action that would
-// bring it to a running, supervised state. It is the status->action table the
-// agent uses to decide what to do on a run/start request.
+// bring it to a running, supervised state. Build uses it on an existing
+// cluster to start a stopped one.
 func statusAction(status bo.ContainerStatus) string {
 	switch status {
 	case bo.KContainerStatusRunning:

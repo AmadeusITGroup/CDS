@@ -150,6 +150,37 @@ func TestStatusActionTable(t *testing.T) {
 	assert.Equal(t, "build", statusAction(bo.KContainerStatusUnknown))
 }
 
+// a Build on an existing but stopped cluster starts it instead of only
+// reporting "already exists" (CDS-041); other statuses leave it alone.
+func TestBringUpExistingClusterStartsAStoppedCluster(t *testing.T) {
+	cases := []struct {
+		status  bo.ContainerStatus
+		started bool
+		last    string
+	}{
+		{bo.KContainerStatusExited, true, "Cluster cds-kind started"},
+		{bo.KContainerStatusRunning, false, "Cluster cds-kind already exists"},
+		{bo.KContainerStatusUnknown, false, "Cluster cds-kind already exists"},
+	}
+	for _, c := range cases {
+		started := false
+		var lines []string
+		err := bringUpExistingCluster(c.status,
+			func() error { started = true; return nil },
+			func(_, message string) error { lines = append(lines, message); return nil })
+		require.NoError(t, err)
+		assert.Equal(t, c.started, started, "status %v", c.status)
+		assert.Equal(t, c.last, lines[len(lines)-1], "status %v", c.status)
+	}
+}
+
+func TestBringUpExistingClusterReportsStartFailure(t *testing.T) {
+	err := bringUpExistingCluster(bo.KContainerStatusExited,
+		func() error { return cmdErr("no systemd user session") }, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "no systemd user session")
+}
+
 func TestProviderSelectsKind(t *testing.T) {
 	p, err := Provider("")
 	require.NoError(t, err)
