@@ -4,11 +4,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/amadeusitgroup/cds/internal/bo"
 	"github.com/amadeusitgroup/cds/internal/cenv"
 	"github.com/amadeusitgroup/cds/internal/cerr"
-	"github.com/amadeusitgroup/cds/internal/clog"
 	"github.com/amadeusitgroup/cds/internal/engine"
 	cg "github.com/amadeusitgroup/cds/internal/global"
 	"github.com/amadeusitgroup/cds/internal/shexec"
@@ -210,22 +210,37 @@ func (p *podmanProvider) Stop() error {
 // pushed images under data/ and the TLS material survive: a later Build reuses
 // them (material generation is idempotent). Deleting the registry thus removes
 // the service, not the stored images. force is accepted for interface parity.
+//
+// Every step is attempted, and any failure is returned (CDS-026), so delete
+// never reports success while the unit or container is still there. What is
+// already gone is not a failure: Stop only runs on an active unit, Remove
+// tolerates a unit that is not loaded, and a missing container is ignored.
 func (p *podmanProvider) Delete(force bool) error {
+	var errs []error
 	// stop the service before its unit file goes away: a running unit that
 	// loses its file ends up failed (CDS-011).
 	if p.units.IsActive(quadletService) {
 		if err := p.units.Stop(quadletService); err != nil {
-			clog.Warn("failed to stop registry service before delete", err)
+			errs = append(errs, cerr.AppendError("failed to stop registry service", err))
 		}
 	}
 	if err := p.units.Remove(p.quadletDir, quadletUnitFile); err != nil {
-		clog.Warn("failed to remove registry Quadlet unit", err)
+		errs = append(errs, cerr.AppendError("failed to remove registry Quadlet unit", err))
 	}
 	// the Quadlet-managed container may still exist; remove it directly.
-	if out, err := p.runner(fmt.Sprintf("podman rm -f %s", Name)); err != nil {
-		clog.Debug(fmt.Sprintf("registry container removal returned: %s (%v)", out, err))
+	if out, err := p.runner(fmt.Sprintf("podman rm -f %s", Name)); err != nil && !isNoSuchContainer(out) {
+		errs = append(errs, cerr.AppendErrorFmt("failed to remove registry container %s: %s", err, Name, out))
+	}
+	if len(errs) > 0 {
+		return cerr.AppendMultipleErrors("failed to delete registry", errs)
 	}
 	return nil
+}
+
+// isNoSuchContainer tells a podman "container already gone" reply apart from a
+// real removal failure.
+func isNoSuchContainer(out string) bool {
+	return strings.Contains(strings.ToLower(out), "no such container")
 }
 
 func (p *podmanProvider) Status() (Registry, error) {
