@@ -1,6 +1,7 @@
 package command
 
 import (
+	"fmt"
 	"path/filepath"
 
 	"github.com/amadeusitgroup/cds/internal/cenv"
@@ -35,6 +36,18 @@ func ensureProjectContainerKeyPair(projectName string) (pathToPrv, pathToPub str
 	if prv, pub, ok := config.HostContainerSSHKey(hostName); ok {
 		if prv, pub, stillThere := existingKeyPair(prv, pub); stillThere {
 			return prv, pub, nil
+		}
+	}
+
+	// Never overwrite a key we do not track (e.g. created by enterprise cds):
+	// reuse a complete pair, refuse a half-present one.
+	conventional := shexec.KeyPairPaths(hostName)
+	if prv, pub, ok := existingKeyPair(conventional.PathToPrv, conventional.PathToPub); ok {
+		return persistContainerKeyRef(hostName, prv, pub)
+	}
+	for _, path := range []string{conventional.PathToPrv, conventional.PathToPub} {
+		if _, statErr := cos.Fs.Stat(path); statErr == nil {
+			return cg.EmptyStr, cg.EmptyStr, cerr.NewError(fmt.Sprintf("Refusing to overwrite existing %s: the key pair is incomplete; move or complete it", path))
 		}
 	}
 
