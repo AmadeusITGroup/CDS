@@ -671,7 +671,7 @@ func decorationEvents(spec deployContainerSpec, build func(*engine.ContainersEng
 	var events []shexec.ExecuteEvent
 	reg := registryEnv{}
 	if spec.orchestration.Registry.Requested {
-		reg = newRegistryEnv(spec.orchestration.Registry.Port, spec.registryUser, spec.registryPassword)
+		reg = newRegistryEnv(spec.orchestration.Registry.Port, spec.registryUser, spec.registryPassword, engine.ResolveRemoteUserFromConfig(spec.config))
 	}
 	for _, dc := range containerDecorationCommands(spec.kubeconfig, spec.registryCA, reg) {
 		ce := engine.NewContainerEngine(engine.WithContainerConfig(spec.config))

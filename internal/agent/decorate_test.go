@@ -3,6 +3,10 @@ package agent
 import (
 	"context"
 	"errors"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -119,7 +123,7 @@ func TestEnsureOrchestrationSkipsIngressWhenNotRequested(t *testing.T) {
 }
 
 func TestContainerDecorationIncludesRegistryEnv(t *testing.T) {
-	reg := registryEnv{name: "registry.cds.internal", port: 5000, caPath: "/etc/containers/certs.d/registry.cds.internal:5000/ca.crt", user: "cdsabc", password: "secret"}
+	reg := newRegistryEnv(5000, "cdsabc", "secret", "dev")
 	cmds := containerDecorationCommands("KC", "CA", reg)
 	// kubeconfig + trust + registry env
 	require.Len(t, cmds, 3)
@@ -128,7 +132,65 @@ func TestContainerDecorationIncludesRegistryEnv(t *testing.T) {
 	assert.Contains(t, last, "CDS_REGISTRY_PORT=5000")
 	assert.Contains(t, last, "CDS_REGISTRY_USR=cdsabc")
 	assert.Contains(t, last, "CDS_REGISTRY_PWD=secret")
-	assert.Contains(t, last, "/etc/profile.d/cds-registry.sh")
+	assert.Contains(t, last, "u='dev'")
+	assert.Contains(t, last, registryEnvFile)
+	// the old world-readable profile script is removed, never written (CDS-024)
+	assert.Contains(t, last, "rm -f /etc/profile.d/cds-registry.sh")
+	assert.NotContains(t, last, "chmod 644")
+}
+
+func TestNewRegistryEnvDefaultsOwnerToRoot(t *testing.T) {
+	assert.Equal(t, "root", newRegistryEnv(0, "cdsabc", "secret", "").owner)
+}
+
+// TestInstallRegistryEnvScriptRealShell runs the script with a real /bin/sh
+// against a temp home: getent/id/chown are stubbed (the test is not root), the
+// rest (mktemp, mv, grep, rc sourcing) is real.
+func TestInstallRegistryEnvScriptRealShell(t *testing.T) {
+	home := t.TempDir()
+	stubs := t.TempDir()
+	for name, body := range map[string]string{
+		"getent": `echo "dev:x:1000:1000::` + home + `:/bin/sh"`,
+		"id":     `echo 1000`,
+		"chown":  `exit 0`,
+	} {
+		require.NoError(t, os.WriteFile(filepath.Join(stubs, name), []byte("#!/bin/sh\n"+body+"\n"), 0o755))
+	}
+	// an existing .bashrc is appended to; a missing .zshrc is not created
+	require.NoError(t, os.WriteFile(filepath.Join(home, ".bashrc"), []byte("# user rc\n"), 0o644))
+
+	script := installRegistryEnvScript(newRegistryEnv(5000, "cdsabc", "s3cr3t", "dev"))
+	run := func() {
+		cmd := exec.Command("/bin/sh", "-s")
+		cmd.Env = append(os.Environ(), "PATH="+stubs+":"+os.Getenv("PATH"))
+		cmd.Stdin = strings.NewReader(script)
+		out, err := cmd.CombinedOutput()
+		require.NoError(t, err, string(out))
+	}
+	run()
+	run() // re-decoration is idempotent
+
+	envFile := filepath.Join(home, registryEnvFile)
+	info, err := os.Stat(envFile)
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o600), info.Mode().Perm())
+	matches, _ := filepath.Glob(filepath.Join(home, ".config/cds/.registry.env.*"))
+	assert.Empty(t, matches, "no temp file left behind")
+
+	for _, rc := range []string{".profile", ".bashrc"} {
+		b, err := os.ReadFile(filepath.Join(home, rc))
+		require.NoError(t, err)
+		assert.Equal(t, 1, strings.Count(string(b), "# cds registry env"), rc)
+	}
+	_, err = os.Stat(filepath.Join(home, ".zshrc"))
+	assert.True(t, os.IsNotExist(err))
+
+	// a login shell of the user gets the documented CDS_REGISTRY_* env
+	cmd := exec.Command("/bin/sh", "-c", `. "$HOME/.profile"; echo "$CDS_REGISTRY_USR:$CDS_REGISTRY_PWD:$CDS_REGISTRY_NAME:$CDS_REGISTRY_PORT"`)
+	cmd.Env = []string{"HOME=" + home, "PATH=/usr/bin:/bin"}
+	out, err := cmd.CombinedOutput()
+	require.NoError(t, err, string(out))
+	assert.Equal(t, "cdsabc:s3cr3t:"+registry.Hostname+":5000\n", string(out))
 }
 
 func TestContainerDecorationSkipsRegistryEnvWhenUnset(t *testing.T) {

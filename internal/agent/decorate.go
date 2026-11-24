@@ -10,6 +10,7 @@ import (
 	"github.com/amadeusitgroup/cds/internal/cerr"
 	"github.com/amadeusitgroup/cds/internal/clog"
 	"github.com/amadeusitgroup/cds/internal/containerconf"
+	"github.com/amadeusitgroup/cds/internal/engine"
 	cg "github.com/amadeusitgroup/cds/internal/global"
 	"github.com/amadeusitgroup/cds/internal/orchestration"
 	"github.com/amadeusitgroup/cds/internal/registry"
@@ -153,18 +154,25 @@ type registryEnv struct {
 	caPath   string
 	user     string
 	password string
+	// owner is the container user (remoteUser) the env file is written for;
+	// only that user can read it (CDS-024).
+	owner string
 }
 
 func (r registryEnv) set() bool { return r.name != "" && r.user != "" }
 
 // newRegistryEnv is the registry env for a deployment whose registry listens
-// on port (0 means the default port). It is unset when user is empty.
-func newRegistryEnv(port int, user, password string) registryEnv {
+// on port (0 means the default port), written for the container user owner
+// (empty means root). It is unset when user is empty.
+func newRegistryEnv(port int, user, password, owner string) registryEnv {
 	if user == cg.EmptyStr {
 		return registryEnv{}
 	}
 	if port == 0 {
 		port = registry.DefaultPort
+	}
+	if owner == cg.EmptyStr {
+		owner = engine.KRootUsr
 	}
 	return registryEnv{
 		name:     registry.Hostname,
@@ -172,6 +180,7 @@ func newRegistryEnv(port int, user, password string) registryEnv {
 		caPath:   fmt.Sprintf("/etc/containers/certs.d/%s:%d/ca.crt", registry.Hostname, port),
 		user:     user,
 		password: password,
+		owner:    owner,
 	}
 }
 
@@ -179,7 +188,7 @@ func newRegistryEnv(port int, user, password string) registryEnv {
 // devcontainer so it can use the cluster and registry: the cluster kubeconfig
 // is installed at the container's default kubeconfig path, the registry CA in
 // the container's per-registry trust directory, and the CDS_REGISTRY_* env in a
-// profile script. The commands run as root inside the container.
+// 0600 file in the container user's home. The commands run as root inside the container.
 //
 // kubeconfig is the cluster kubeconfig and caCert the registry CA PEM; each
 // step is skipped when its material is empty (or reg is unset).
@@ -206,21 +215,55 @@ func containerDecorationCommands(kubeconfig, caCert string, reg registryEnv) []d
 	return cmds
 }
 
-// installRegistryEnvScript writes the CDS_REGISTRY_* variables to a profile
-// script in the container so interactive shells can docker login and push to
-// the local registry.
+// registryEnvFile is the env file, relative to the container user's home, that
+// holds the CDS_REGISTRY_* variables.
+const registryEnvFile = ".config/cds/registry.env"
+
+// installRegistryEnvScript writes the CDS_REGISTRY_* variables to a 0600 env
+// file owned by the container user, in that user's home, and sources it from
+// the user's shell rc files, so the user's shells can podman login and push to
+// the local registry while other container users cannot read the password
+// (CDS-024). It also removes the world-readable /etc/profile.d script that
+// earlier versions wrote.
+//
+// The script runs as root: the file is written to a fresh temp file and
+// renamed, so a link planted at the target is replaced, not followed.
 func installRegistryEnvScript(reg registryEnv) string {
 	return fmt.Sprintf(`set -eu
-mkdir -p /etc/profile.d
-cat > /etc/profile.d/cds-registry.sh <<'CDS_EOF'
+u=%s
+home=$(getent passwd "$u" 2>/dev/null | cut -d: -f6) || home=
+[ -n "$home" ] || home=$(awk -F: -v u="$u" '$1 == u { print $6 }' /etc/passwd)
+[ -n "$home" ] || { echo "container user $u has no home directory" >&2; exit 1; }
+g=$(id -g "$u")
+for d in "$home/.config" "$home/.config/cds"; do
+  if [ ! -d "$d" ]; then mkdir -m 700 "$d"; chown "$u:$g" "$d"; fi
+done
+tmp=$(mktemp "$home/.config/cds/.registry.env.XXXXXX")
+cat > "$tmp" <<'CDS_EOF'
 export CDS_REGISTRY_NAME=%s
 export CDS_REGISTRY_PORT=%d
 export CDS_REGISTRY_PATH_TO_CA=%s
 export CDS_REGISTRY_USR=%s
 export CDS_REGISTRY_PWD=%s
 CDS_EOF
-chmod 644 /etc/profile.d/cds-registry.sh`,
-		reg.name, reg.port, reg.caPath, reg.user, reg.password)
+chmod 600 "$tmp"
+chown "$u:$g" "$tmp"
+mv -f "$tmp" "$home/%s"
+line='if [ -r "$HOME/%s" ]; then . "$HOME/%s"; fi # cds registry env'
+for rc in .profile .bashrc .bash_profile .zshrc; do
+  f="$home/$rc"
+  # .profile is created when missing (sh/dash/bash login shells read it);
+  # the others are only appended to when the user already has them.
+  if [ "$rc" != .profile ] && [ ! -e "$f" ]; then continue; fi
+  if [ -e "$f" ] && grep -qF "$line" "$f"; then continue; fi
+  new=0; [ -e "$f" ] || new=1
+  printf '%%s\n' "$line" >> "$f"
+  if [ "$new" = 1 ]; then chown "$u:$g" "$f"; fi
+done
+rm -f /etc/profile.d/cds-registry.sh`,
+		cg.ShellSingleQuote(reg.owner),
+		reg.name, reg.port, reg.caPath, reg.user, reg.password,
+		registryEnvFile, registryEnvFile, registryEnvFile)
 }
 
 // decorationCommand is a shell snippet run as root inside the container with a
@@ -332,7 +375,7 @@ func (s *grpcServer) redecorateContainers(ctx context.Context, report deployProg
 
 		ca, reg := "", registryEnv{}
 		if oc.Registry.Requested {
-			ca, reg = registryCA, newRegistryEnv(oc.Registry.Port, registryUser, registryPassword)
+			ca, reg = registryCA, newRegistryEnv(oc.Registry.Port, registryUser, registryPassword, d.remoteUser)
 		}
 		s.redecorateOne(ctx, d.name, containerDecorationCommands(kubeconfig, ca, reg), report)
 	}
@@ -342,6 +385,8 @@ func (s *grpcServer) redecorateContainers(ctx context.Context, report deployProg
 type orchestratedDeployment struct {
 	name string
 	oc   containerconf.KindOrchestrationConfig
+	// remoteUser is the container user the registry env is written for.
+	remoteUser string
 }
 
 // orchestratedDeployments lists the recorded deployments that requested
@@ -359,7 +404,7 @@ func (s *grpcServer) orchestratedDeployments() (out []orchestratedDeployment, ok
 			continue
 		}
 		if oc := config.OrchestrationConfig(); oc.Requested {
-			out = append(out, orchestratedDeployment{name: req.GetContainerName(), oc: oc})
+			out = append(out, orchestratedDeployment{name: req.GetContainerName(), oc: oc, remoteUser: engine.ResolveRemoteUserFromConfig(config)})
 		}
 	}
 	return out, true
