@@ -30,9 +30,9 @@ var _ baseCmd = (*spcOrcKubeconfig)(nil)
 func (s *spcOrcKubeconfig) command() *cobra.Command {
 	if s.cmd == nil {
 		s.cmd = &cobra.Command{
-			Use:           "kubeconfig",
-			Aliases:       []string{"expose"},
-			Short:         "Fetch the cluster kubeconfig from the target host",
+			Use:     "kubeconfig",
+			Aliases: []string{"expose"},
+			Short:   "Fetch the cluster kubeconfig from the target host",
 			Long: `Fetch the kind cluster kubeconfig from the agent on the target host.
 
 By default the kubeconfig is printed. With --write it is written to the local
