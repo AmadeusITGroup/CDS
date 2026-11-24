@@ -194,6 +194,52 @@ func TestInstallRegistryEnvScriptRealShell(t *testing.T) {
 	assert.Equal(t, "cdsabc:s3cr3t:"+registry.Hostname+":5000\n", string(out))
 }
 
+// TestInstallRegistryEnvScriptSkipsLinkedConfigDirs: the script runs as root,
+// so it never creates dirs or writes registry.env through a user-planted
+// ~/.config or ~/.config/cds link (CDS-055).
+func TestInstallRegistryEnvScriptSkipsLinkedConfigDirs(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		link string // path under home made a link to the target dir
+	}{
+		{"linked .config", ".config"},
+		{"linked .config/cds", ".config/cds"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home := t.TempDir()
+			stubs := t.TempDir()
+			for name, body := range map[string]string{
+				"getent": `echo "dev:x:1000:1000::` + home + `:/bin/sh"`,
+				"id":     fmt.Sprintf("echo %d", os.Getuid()),
+				"chown":  `exit 0`,
+			} {
+				require.NoError(t, os.WriteFile(filepath.Join(stubs, name), []byte("#!/bin/sh\n"+body+"\n"), 0o755))
+			}
+			// a root dir outside the home, linked from the user's config path
+			target := t.TempDir()
+			require.NoError(t, os.WriteFile(filepath.Join(target, "keep"), []byte("root-data\n"), 0o644))
+			require.NoError(t, os.MkdirAll(filepath.Dir(filepath.Join(home, tc.link)), 0o700))
+			require.NoError(t, os.Symlink(target, filepath.Join(home, tc.link)))
+
+			cmd := exec.Command("/bin/sh", "-s")
+			cmd.Env = append(os.Environ(), "PATH="+stubs+":"+os.Getenv("PATH"))
+			cmd.Stdin = strings.NewReader(installRegistryEnvScript(newRegistryEnv("cdsabc", "s3cr3t", "dev")))
+			out, err := cmd.CombinedOutput()
+			require.NoError(t, err, string(out))
+
+			entries, err := os.ReadDir(target)
+			require.NoError(t, err)
+			require.Len(t, entries, 1, "nothing is created in the link target")
+			assert.Equal(t, "keep", entries[0].Name())
+			fi, err := os.Lstat(filepath.Join(home, tc.link))
+			require.NoError(t, err)
+			assert.NotZero(t, fi.Mode()&os.ModeSymlink, "the link is left as is")
+			assert.Contains(t, string(out), tc.link)
+			assert.NoFileExists(t, filepath.Join(home, ".profile"), "no rc line for an env file that was not written")
+		})
+	}
+}
+
 // TestInstallRegistryEnvScriptSkipsUnsafeRcFiles: the script runs as root, so
 // it never appends through a user-planted rc link or into an rc file the
 // container user does not own (CDS-054).

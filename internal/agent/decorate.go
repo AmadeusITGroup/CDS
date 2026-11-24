@@ -227,7 +227,9 @@ const registryEnvFile = ".config/cds/registry.env"
 // The script runs as root: the file is written to a fresh temp file and
 // renamed, so a link planted at the target is replaced, not followed. For the
 // same reason an rc file that is a link, not a regular file, or not owned by
-// the user is skipped with a warning, never appended to (CDS-054).
+// the user is skipped with a warning, never appended to (CDS-054), and a
+// ~/.config or ~/.config/cds that is a link, not a dir, or not owned by the
+// user makes the script skip the env file and rc files with a warning (CDS-055).
 func installRegistryEnvScript(reg registryEnv) string {
 	return fmt.Sprintf(`set -eu
 u=%s
@@ -235,7 +237,15 @@ home=$(getent passwd "$u" 2>/dev/null | cut -d: -f6) || home=
 [ -n "$home" ] || home=$(awk -F: -v u="$u" '$1 == u { print $6 }' /etc/passwd)
 [ -n "$home" ] || { echo "container user $u has no home directory" >&2; exit 1; }
 g=$(id -g "$u")
+uid=$(id -u "$u")
+rm -f /etc/profile.d/cds-registry.sh
+# root must not create dirs or write through a user-planted dir link (CDS-055).
+# shortcut: check-then-write, so a user racing the script can still swap the
+# dir; write as the user (runuser) if that matters.
 for d in "$home/.config" "$home/.config/cds"; do
+  if [ -L "$d" ] || { [ -e "$d" ] && { [ ! -d "$d" ] || [ -z "$(find "$d" -prune -user "$uid")" ]; }; }; then
+    echo "cds: $d is a link or not a directory owned by $u, $home/%s not written" >&2; exit 0
+  fi
   if [ ! -d "$d" ]; then mkdir -m 700 "$d"; chown "$u:$g" "$d"; fi
 done
 tmp=$(mktemp "$home/.config/cds/.registry.env.XXXXXX")
@@ -250,7 +260,6 @@ chmod 600 "$tmp"
 chown "$u:$g" "$tmp"
 mv -f "$tmp" "$home/%s"
 line='if [ -r "$HOME/%s" ]; then . "$HOME/%s"; fi # cds registry env'
-uid=$(id -u "$u")
 for rc in .profile .bashrc .bash_profile .zshrc; do
   f="$home/$rc"
   # root must not write through a user-planted link, nor into a file the user
@@ -272,9 +281,9 @@ for rc in .profile .bashrc .bash_profile .zshrc; do
   new=0; [ -e "$f" ] || new=1
   printf '%%s\n' "$line" >> "$f"
   if [ "$new" = 1 ]; then chown "$u:$g" "$f"; fi
-done
-rm -f /etc/profile.d/cds-registry.sh`,
+done`,
 		cg.ShellSingleQuote(reg.owner),
+		registryEnvFile,
 		reg.name, reg.port, reg.caPath, reg.user, reg.password,
 		registryEnvFile, registryEnvFile, registryEnvFile)
 }
