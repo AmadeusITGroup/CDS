@@ -16,7 +16,6 @@ import (
 	"github.com/amadeusitgroup/cds/internal/clog"
 	"github.com/amadeusitgroup/cds/internal/containerconf"
 	"github.com/amadeusitgroup/cds/internal/engine"
-	"github.com/amadeusitgroup/cds/internal/registry"
 	cg "github.com/amadeusitgroup/cds/internal/global"
 	"github.com/amadeusitgroup/cds/internal/shexec"
 )
@@ -671,20 +670,10 @@ func buildDecorationCommands(spec deployContainerSpec) ([]shexec.ExecuteEvent, e
 func decorationEvents(spec deployContainerSpec, build func(*engine.ContainersEngine) ([]shexec.ExecuteEvent, error)) ([]shexec.ExecuteEvent, error) {
 	var events []shexec.ExecuteEvent
 	reg := registryEnv{}
-	if spec.orchestration.Registry.Requested && spec.registryUser != cg.EmptyStr {
-		port := spec.orchestration.Registry.Port
-		if port == 0 {
-			port = registry.DefaultPort
-		}
-		reg = registryEnv{
-			name:     registry.Hostname,
-			port:     port,
-			caPath:   fmt.Sprintf("/etc/containers/certs.d/%s:%d/ca.crt", registry.Hostname, port),
-			user:     spec.registryUser,
-			password: spec.registryPassword,
-		}
+	if spec.orchestration.Registry.Requested {
+		reg = newRegistryEnv(spec.orchestration.Registry.Port, spec.registryUser, spec.registryPassword)
 	}
-	for _, dc := range containerDecorationCommandsFull(spec.kubeconfig, spec.registryCA, reg) {
+	for _, dc := range containerDecorationCommands(spec.kubeconfig, spec.registryCA, reg) {
 		ce := engine.NewContainerEngine(engine.WithContainerConfig(spec.config))
 		ce.SetAction(engine.K_ACTION_EXE)
 		ce.SetExecuteCmd(engine.K_EXEC_CUSTOM_CMD)

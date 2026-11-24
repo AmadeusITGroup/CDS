@@ -10,6 +10,7 @@ import (
 	"github.com/amadeusitgroup/cds/internal/cerr"
 	"github.com/amadeusitgroup/cds/internal/clog"
 	"github.com/amadeusitgroup/cds/internal/containerconf"
+	cg "github.com/amadeusitgroup/cds/internal/global"
 	"github.com/amadeusitgroup/cds/internal/orchestration"
 	"github.com/amadeusitgroup/cds/internal/registry"
 	"golang.org/x/sync/errgroup"
@@ -144,18 +145,6 @@ func connectRegistryToCluster(ctx context.Context, cluster clusterOps, reg regis
 	return nil
 }
 
-// containerDecorationCommands builds the exec commands that decorate a running
-// devcontainer so it can use the cluster and registry: the cluster kubeconfig
-// is installed at the container's default kubeconfig path, and the registry CA
-// is installed in the container's per-registry trust directory. The commands
-// run as root inside the container.
-//
-// kubeconfig is the cluster kubeconfig (may be empty to skip), caCert is the
-// registry CA PEM (may be empty to skip).
-func containerDecorationCommands(engineName, containerName, kubeconfig, caCert string) []decorationCommand {
-	return containerDecorationCommandsFull(kubeconfig, caCert, registryEnv{})
-}
-
 // registryEnv carries the registry connection details injected into the
 // devcontainer so a user can log in and push to the local registry.
 type registryEnv struct {
@@ -168,9 +157,33 @@ type registryEnv struct {
 
 func (r registryEnv) set() bool { return r.name != "" && r.user != "" }
 
-// containerDecorationCommandsFull builds the decoration steps including the
-// optional registry environment export.
-func containerDecorationCommandsFull(kubeconfig, caCert string, reg registryEnv) []decorationCommand {
+// newRegistryEnv is the registry env for a deployment whose registry listens
+// on port (0 means the default port). It is unset when user is empty.
+func newRegistryEnv(port int, user, password string) registryEnv {
+	if user == cg.EmptyStr {
+		return registryEnv{}
+	}
+	if port == 0 {
+		port = registry.DefaultPort
+	}
+	return registryEnv{
+		name:     registry.Hostname,
+		port:     port,
+		caPath:   fmt.Sprintf("/etc/containers/certs.d/%s:%d/ca.crt", registry.Hostname, port),
+		user:     user,
+		password: password,
+	}
+}
+
+// containerDecorationCommands builds the exec commands that decorate a running
+// devcontainer so it can use the cluster and registry: the cluster kubeconfig
+// is installed at the container's default kubeconfig path, the registry CA in
+// the container's per-registry trust directory, and the CDS_REGISTRY_* env in a
+// profile script. The commands run as root inside the container.
+//
+// kubeconfig is the cluster kubeconfig and caCert the registry CA PEM; each
+// step is skipped when its material is empty (or reg is unset).
+func containerDecorationCommands(kubeconfig, caCert string, reg registryEnv) []decorationCommand {
 	var cmds []decorationCommand
 	if kubeconfig != "" {
 		cmds = append(cmds, decorationCommand{
@@ -286,7 +299,7 @@ func (s *grpcServer) redecorateContainers(ctx context.Context, report deployProg
 		return
 	}
 
-	var kubeconfig, registryCA string
+	var kubeconfig, registryCA, registryUser, registryPassword string
 	for _, d := range deployed {
 		oc := d.oc
 		if !s.containerRunning(d.name) {
@@ -308,11 +321,20 @@ func (s *grpcServer) redecorateContainers(ctx context.Context, report deployProg
 			}
 		}
 
-		ca := ""
-		if oc.Registry.Requested {
-			ca = registryCA
+		// a rebuilt registry has new credentials: refresh CDS_REGISTRY_* too (CDS-042)
+		if registryUser == "" && oc.Registry.Requested {
+			if user, pass, err := s.registryOps().RegistryCredentials(); err == nil {
+				registryUser, registryPassword = user, pass
+			} else {
+				clog.Warn("failed to resolve registry credentials for re-decoration", err)
+			}
 		}
-		s.redecorateOne(ctx, d.name, kubeconfig, ca, report)
+
+		ca, reg := "", registryEnv{}
+		if oc.Registry.Requested {
+			ca, reg = registryCA, newRegistryEnv(oc.Registry.Port, registryUser, registryPassword)
+		}
+		s.redecorateOne(ctx, d.name, containerDecorationCommands(kubeconfig, ca, reg), report)
 	}
 }
 
@@ -402,8 +424,8 @@ func (s *grpcServer) reapplyOrchestration(ctx context.Context, clusterRebuilt bo
 
 // redecorateOne runs the decoration install scripts inside a single container
 // as root, each fed on stdin (they carry the kubeconfig and registry secrets).
-func (s *grpcServer) redecorateOne(ctx context.Context, name, kubeconfig, ca string, report deployProgressReporter) {
-	for _, dc := range containerDecorationCommands("", name, kubeconfig, ca) {
+func (s *grpcServer) redecorateOne(ctx context.Context, name string, cmds []decorationCommand, report deployProgressReporter) {
+	for _, dc := range cmds {
 		if report != nil {
 			_ = report(deployProgress{phase: "decorate", message: fmt.Sprintf("%s: %s", name, dc.info)})
 		}

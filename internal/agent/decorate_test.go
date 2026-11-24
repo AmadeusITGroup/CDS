@@ -65,7 +65,7 @@ func TestEnsureOrchestrationPropagatesClusterError(t *testing.T) {
 }
 
 func TestContainerDecorationCommandsShape(t *testing.T) {
-	cmds := containerDecorationCommands("", "dev-1", "KUBECONFIG_CONTENT", "CA_PEM")
+	cmds := containerDecorationCommands("KUBECONFIG_CONTENT", "CA_PEM", registryEnv{})
 	require.Len(t, cmds, 2)
 	assert.Contains(t, cmds[0].script, "/root/.kube/config")
 	assert.Contains(t, cmds[0].script, "KUBECONFIG_CONTENT")
@@ -74,9 +74,9 @@ func TestContainerDecorationCommandsShape(t *testing.T) {
 }
 
 func TestContainerDecorationCommandsSkipEmpty(t *testing.T) {
-	assert.Empty(t, containerDecorationCommands("", "dev-1", "", ""))
+	assert.Empty(t, containerDecorationCommands("", "", registryEnv{}))
 
-	onlyKube := containerDecorationCommands("", "dev-1", "KC", "")
+	onlyKube := containerDecorationCommands("KC", "", registryEnv{})
 	require.Len(t, onlyKube, 1)
 	assert.Contains(t, onlyKube[0].script, "/root/.kube/config")
 }
@@ -120,7 +120,7 @@ func TestEnsureOrchestrationSkipsIngressWhenNotRequested(t *testing.T) {
 
 func TestContainerDecorationIncludesRegistryEnv(t *testing.T) {
 	reg := registryEnv{name: "cds.sec.io", port: 5000, caPath: "/etc/containers/certs.d/cds.sec.io:5000/ca.crt", user: "cdsabc", password: "secret"}
-	cmds := containerDecorationCommandsFull("KC", "CA", reg)
+	cmds := containerDecorationCommands("KC", "CA", reg)
 	// kubeconfig + trust + registry env
 	require.Len(t, cmds, 3)
 	last := cmds[2].script
@@ -132,7 +132,7 @@ func TestContainerDecorationIncludesRegistryEnv(t *testing.T) {
 }
 
 func TestContainerDecorationSkipsRegistryEnvWhenUnset(t *testing.T) {
-	cmds := containerDecorationCommandsFull("KC", "CA", registryEnv{})
+	cmds := containerDecorationCommands("KC", "CA", registryEnv{})
 	require.Len(t, cmds, 2, "no registry env step when creds are not set")
 }
 

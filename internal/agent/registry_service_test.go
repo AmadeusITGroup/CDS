@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/amadeusitgroup/cds/internal/api/v1/cdspb"
@@ -176,4 +177,30 @@ func TestBuildRegistrySkipsClusterTrustWithoutRunningCluster(t *testing.T) {
 
 	assert.False(t, cluster.registryTrusted)
 	assert.False(t, cluster.registrySecretCreated)
+}
+
+// a rebuilt registry has new credentials: re-decoration must refresh the
+// CDS_REGISTRY_* env in running containers, not only the CA (CDS-042).
+func TestBuildRegistryRedecorationRefreshesRegistryEnv(t *testing.T) {
+	containers := &mockContainerOps{containers: bo.Containers{{Name: "dev-0", Status: bo.KContainerStatusRunning}}}
+	srv, err := newgrpcServer(NewConfig(
+		withStagingDir(t.TempDir()),
+		withStateDir(t.TempDir()),
+		withContainerOps(containers),
+		withClusterOps(&mockClusterOps{kubeconfig: "KC"}),
+		withRegistryOps(&mockRegistryOps{ca: "CA", user: "newuser", pass: "newpass"}),
+	))
+	require.NoError(t, err)
+	require.NoError(t, srv.deployments().save(&cdspb.DeployContainerRequest{
+		ContainerName:      "dev-0",
+		ProjectName:        "p",
+		DevcontainerConfig: []byte(kOrchestratedConfig),
+	}))
+
+	require.NoError(t, newRegistryServiceServer(srv).BuildRegistry(&cdspb.BuildRegistryRequest{}, &mockRegistryBuildStream{}))
+
+	// the registry env step is the last decoration step
+	assert.Contains(t, containers.lastExecCmd, "CDS_REGISTRY_USR=newuser")
+	assert.Contains(t, containers.lastExecCmd, "CDS_REGISTRY_PWD=newpass")
+	assert.Contains(t, containers.lastExecCmd, fmt.Sprintf("CDS_REGISTRY_PORT=%d", registry.DefaultPort))
 }
