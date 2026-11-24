@@ -5,8 +5,6 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
-	"os"
-	"os/exec"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -18,6 +16,7 @@ import (
 	"github.com/amadeusitgroup/cds/internal/engine"
 	cg "github.com/amadeusitgroup/cds/internal/global"
 	"github.com/amadeusitgroup/cds/internal/shexec"
+	"github.com/amadeusitgroup/cds/internal/systemd"
 )
 
 // containerOps abstracts the container engine so that the gRPC layer can be
@@ -581,32 +580,12 @@ func scopeWrap(cmd shexec.ExecuteEvent) shexec.ExecuteEvent {
 }
 
 // transientScopeCommand wraps command so it runs in its own transient systemd
-// user scope (a sibling of cds.service), detaching any long-lived container
-// helpers it spawns from the agent's service cgroup. It returns the command
-// unchanged (changed=false) when the agent is not under systemd or systemd-run
-// is unavailable. This must wrap every operation that (re)spawns a container's
-// helpers — both `podman run` (deploy) and `podman start` — otherwise a
-// stop/start would place fresh helpers back in cds.service and an agent restart
-// would kill them again.
+// user scope (systemd.TransientScope). This must wrap every operation that
+// (re)spawns a container's helpers — both `podman run` (deploy) and `podman
+// start` — otherwise a stop/start would place fresh helpers back in
+// cds.service and an agent restart would kill them again.
 func transientScopeCommand(command string) (string, bool) {
-	if !runningUnderSystemd() || !systemdRunAvailable() {
-		return command, false
-	}
-	// --scope runs the command in a transient scope unit; --collect reclaims it
-	// once it exits. The scope is a sibling of cds.service, so a restart of the
-	// service no longer tears down the container helpers placed in this scope.
-	return fmt.Sprintf("systemd-run --user --scope --collect --quiet -- bash -c %s", cg.ShellSingleQuote(command)), true
-}
-
-// runningUnderSystemd reports whether this process runs inside a systemd unit.
-// systemd exports INVOCATION_ID to the processes of the units it starts.
-func runningUnderSystemd() bool {
-	return os.Getenv("INVOCATION_ID") != cg.EmptyStr
-}
-
-func systemdRunAvailable() bool {
-	_, err := exec.LookPath("systemd-run")
-	return err == nil
+	return systemd.TransientScope(command)
 }
 
 // compensateFailedDeploy removes a container created earlier in a deployment

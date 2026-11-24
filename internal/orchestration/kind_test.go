@@ -96,6 +96,28 @@ func TestKindCreateClusterCancelledRemovesPartialCluster(t *testing.T) {
 		"a killed create must not leave nodes the next Build takes for a cluster")
 }
 
+// TestKindCreateClusterRunsInDelegatedScope: under systemd, kind create runs in
+// its own transient scope with Delegate=yes, so the node's conmon does not land
+// in cds.service and an agent stop does not hang 90 s on it (CDS-058).
+func TestKindCreateClusterRunsInDelegatedScope(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("needs a POSIX systemd-run stub")
+	}
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "systemd-run"), []byte("#!/bin/sh\nexit 0\n"), 0755))
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("INVOCATION_ID", "test")
+	r := newFakeRunner()
+	k := kindProviderWithRunner(r)
+
+	require.NoError(t, k.createCluster(context.Background(), ""))
+
+	require.Len(t, r.ran, 1)
+	assert.Equal(t,
+		"systemd-run --user --scope --collect --quiet -p Delegate=yes -- bash -c 'KIND_EXPERIMENTAL_PROVIDER=podman kind create cluster --name=cds-kind'",
+		r.ran[0])
+}
+
 func TestKindCreateClusterFailureKeepsClusterForDiagnosis(t *testing.T) {
 	r := newFakeRunner()
 	r.replies["kind create cluster"] = "boom"

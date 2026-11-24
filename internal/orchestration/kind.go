@@ -119,8 +119,11 @@ func (k *kindProvider) Build(ctx context.Context, configFile string, report Prog
 }
 
 // createCluster runs `kind create cluster`, killed when ctx is cancelled.
+// Under systemd it runs in its own delegated transient scope, so the node's
+// conmon does not land in cds.service: there a later agent stop waited 90 s on
+// it, then SIGKILLed it (CDS-058).
 func (k *kindProvider) createCluster(ctx context.Context, configFile string) error {
-	out, err := k.runnerCtx(ctx, kindCreateCommand(configFile))
+	out, err := k.runnerCtx(ctx, kindCreateScopedCommand(configFile))
 	if err == nil {
 		return nil
 	}
@@ -151,6 +154,14 @@ func kindCreateCommand(configFile string) string {
 	if configFile != cg.EmptyStr {
 		cmd += " --config=" + shellQuote(configFile)
 	}
+	return cmd
+}
+
+// kindCreateScopedCommand is kindCreateCommand in a transient systemd scope
+// with Delegate=yes (the kind node needs its own cgroup tree), as designed in
+// orchestration-port.md; unchanged when the agent is not under systemd.
+func kindCreateScopedCommand(configFile string) string {
+	cmd, _ := systemd.TransientScope(kindCreateCommand(configFile), "Delegate=yes")
 	return cmd
 }
 
