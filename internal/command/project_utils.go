@@ -120,6 +120,16 @@ func getTipRun(projectName string) string {
 	return fmt.Sprintf(`  (use "cds project run %s -t %s" to create and start a container)`, extras, hostname)
 }
 
+// getTipRedeploy returns a tip on how to redeploy a project whose container
+// does not trust the project SSH key, e.g. one deployed before the per-host key.
+func getTipRedeploy(projectName string) string {
+	extras := ""
+	if !db.IsCurrentProject(projectName) {
+		extras = " " + projectName
+	}
+	return fmt.Sprintf(`  (it may have been deployed with an older key: use "cds project rebuild%s" to redeploy it with the per-host key)`, extras)
+}
+
 // getTipContainerSSH returns a tip on how to connect to a container.
 func getTipContainerSSH(containerName string) string {
 	return fmt.Sprintf(`  (use "ssh %s" to connect to the container)`, containerName)

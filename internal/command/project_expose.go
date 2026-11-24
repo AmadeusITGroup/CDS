@@ -88,7 +88,7 @@ func (pexpose *projectExpose) execute(cmd *cobra.Command, args []string) error {
 	}
 
 	clog.Info(fmt.Sprintf("Forwarding %s to %s through container %s.", pexpose.service.local, remote, containerName))
-	return shexec.ForwardPort(target, pexpose.service.local, remote, pexpose.timeout)
+	return withRedeployTip(projectName, shexec.ForwardPort(target, pexpose.service.local, remote, pexpose.timeout))
 }
 
 // validateHostPort checks addr is a HOST:PORT.

@@ -159,6 +159,11 @@ devcontainer to the `kind` network, installs the cluster kubeconfig and registry
 CA + env into the container, creates the `cdsregistrycred` pull secret, and trusts
 the registry CA on the kind nodes.
 
+Containers trust only the per-host key `~/.ssh/id_rsa_<HOST>`. A container
+deployed by an older cds trusts the default `~/.ssh/id_rsa` instead, so
+`project ssh/rsh/expose` is refused: redeploy it once with
+`cds project rebuild mylab`. There is no fallback to the default key.
+
 Inside the devcontainer (`cds project ssh mylab` or `cds project rsh mylab`):
 
 ```sh
