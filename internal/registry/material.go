@@ -123,10 +123,12 @@ func (m *material) generateCertificate(hostname string) error {
 		DNSNames:              []string{hostname},
 		NotBefore:             time.Now().Add(-time.Hour),
 		NotAfter:              time.Now().Add(certValidity),
-		KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign,
+		KeyUsage:              x509.KeyUsageDigitalSignature,
 		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 		BasicConstraintsValid: true,
-		IsCA:                  true,
+		// a plain self-signed server certificate: clients trust it directly
+		// as the anchor under certs.d, so it needs no CA power (CDS-038)
+		IsCA: false,
 	}
 	der, err := x509.CreateCertificate(rand.Reader, &template, &template, &key.PublicKey, key)
 	if err != nil {

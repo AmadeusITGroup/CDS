@@ -27,6 +27,17 @@ func TestEnsureMaterialGeneratesCertAndCredentials(t *testing.T) {
 	assert.Equal(t, Hostname, cert.Subject.CommonName)
 	assert.Contains(t, cert.DNSNames, Hostname)
 
+	// a plain self-signed server certificate, not a CA (CDS-038)
+	assert.False(t, cert.IsCA, "registry certificate is not a CA")
+	assert.Zero(t, cert.KeyUsage&x509.KeyUsageCertSign, "registry certificate cannot sign certificates")
+	assert.Contains(t, cert.ExtKeyUsage, x509.ExtKeyUsageServerAuth)
+
+	// a client that trusts only this certificate verifies the server
+	pool := x509.NewCertPool()
+	pool.AddCert(cert)
+	_, err = cert.Verify(x509.VerifyOptions{DNSName: Hostname, Roots: pool})
+	assert.NoError(t, err, "the leaf is accepted as its own trust anchor")
+
 	// htpasswd holds a bcrypt hash of the generated password for the user
 	assert.NotEmpty(t, m.username)
 	assert.NotEmpty(t, m.password)
