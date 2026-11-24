@@ -1,6 +1,9 @@
 package command
 
 import (
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -62,4 +65,28 @@ func TestKubeconfigServerHostPort(t *testing.T) {
 func TestKubeconfigServerHostPortNoClusters(t *testing.T) {
 	_, err := kubeconfigServerHostPort("apiVersion: v1\n")
 	require.Error(t, err)
+}
+
+func TestWriteKubeconfigKeepsOtherContexts(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config")
+	prod := "apiVersion: v1\nkind: Config\ncurrent-context: prod\nclusters:\n- name: prod\n  cluster: {server: 'https://prod:6443'}\nusers:\n- name: prod-u\ncontexts:\n- name: prod\n  context: {cluster: prod, user: prod-u}\n"
+	if err := os.WriteFile(path, []byte(prod), 0600); err != nil {
+		t.Fatal(err)
+	}
+	kind := "apiVersion: v1\nkind: Config\ncurrent-context: kind-cds-kind\nclusters:\n- name: kind-cds-kind\n  cluster: {server: 'https://127.0.0.1:1'}\nusers:\n- name: kind-cds-kind\ncontexts:\n- name: kind-cds-kind\n  context: {cluster: kind-cds-kind, user: kind-cds-kind}\n"
+	for i := 0; i < 2; i++ { // twice: must stay idempotent
+		if err := writeKubeconfig(path, []byte(kind)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	b, _ := os.ReadFile(path)
+	got := string(b)
+	for _, want := range []string{"name: prod", "name: prod-u", "name: kind-cds-kind", "current-context: prod"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q in:\n%s", want, got)
+		}
+	}
+	if strings.Count(got, "name: kind-cds-kind") != 3 {
+		t.Errorf("kind entries duplicated:\n%s", got)
+	}
 }

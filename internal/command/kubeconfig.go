@@ -88,13 +88,81 @@ func localKubeconfigPath() string {
 	return filepath.Join(cenv.GetUserHomeDir(), ".kube", "config")
 }
 
-// writeKubeconfig writes kubeconfig to path, creating parent dirs. It replaces
-// the file; a full merge with an existing kubeconfig is intentionally not done
-// here to avoid corrupting an unrelated config — the command warns when it
-// overwrites.
+// mergeKubeconfig merges the clusters, users and contexts of add into existing
+// (entries keyed by name; add wins on a name clash) and returns the YAML. Every
+// other entry of existing, and its current-context, is kept; current-context
+// is taken from add only when existing has none.
+func mergeKubeconfig(existing, add []byte) ([]byte, error) {
+	var base, extra map[string]interface{}
+	if err := yaml.Unmarshal(existing, &base); err != nil {
+		return nil, cerr.AppendError("failed to parse existing kubeconfig", err)
+	}
+	if err := yaml.Unmarshal(add, &extra); err != nil {
+		return nil, cerr.AppendError("failed to parse kubeconfig", err)
+	}
+	if base == nil {
+		return add, nil
+	}
+	for _, key := range []string{"clusters", "users", "contexts"} {
+		list, _ := base[key].([]interface{})
+		add, _ := extra[key].([]interface{})
+		for _, a := range add {
+			name := kubeEntryName(a)
+			replaced := false
+			for i, b := range list {
+				if name != cg.EmptyStr && kubeEntryName(b) == name {
+					list[i], replaced = a, true
+					break
+				}
+			}
+			if !replaced {
+				list = append(list, a)
+			}
+		}
+		if len(list) > 0 {
+			base[key] = list
+		}
+	}
+	if cur, _ := base["current-context"].(string); cur == cg.EmptyStr {
+		if v, ok := extra["current-context"]; ok {
+			base["current-context"] = v
+		}
+	}
+	for _, k := range []string{"apiVersion", "kind"} {
+		if _, ok := base[k]; !ok {
+			if v, ok := extra[k]; ok {
+				base[k] = v
+			}
+		}
+	}
+	out, err := yaml.Marshal(base)
+	if err != nil {
+		return nil, cerr.AppendError("failed to serialize kubeconfig", err)
+	}
+	return out, nil
+}
+
+func kubeEntryName(e interface{}) string {
+	m, _ := e.(map[string]interface{})
+	n, _ := m["name"].(string)
+	return n
+}
+
+// writeKubeconfig merges kubeconfig into the file at path (creating it and its
+// parent dirs when missing), so the user's other clusters, users and contexts
+// are preserved.
 func writeKubeconfig(path string, data []byte) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		return cerr.AppendErrorFmt("failed to create %s", err, filepath.Dir(path))
+	}
+	if existing, err := os.ReadFile(path); err == nil && len(strings.TrimSpace(string(existing))) > 0 {
+		merged, mErr := mergeKubeconfig(existing, data)
+		if mErr != nil {
+			return mErr
+		}
+		data = merged
+	} else if err != nil && !os.IsNotExist(err) {
+		return cerr.AppendErrorFmt("failed to read kubeconfig %s", err, path)
 	}
 	if err := os.WriteFile(path, data, 0600); err != nil {
 		return cerr.AppendErrorFmt("failed to write kubeconfig %s", err, path)
