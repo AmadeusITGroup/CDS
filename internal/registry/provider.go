@@ -118,13 +118,16 @@ func (p *podmanProvider) Build(secure bool, report ProgressReporter) error {
 // the container on each start).
 func (p *podmanProvider) quadletUnit(m material) []byte {
 	// Quadlet .container is an INI-like file read by podman's systemd generator.
+	// The host port is bound to loopback only (CDS-027): kind nodes and
+	// devcontainers reach the registry on the kind network through its alias, so
+	// nothing needs it on the host's external interfaces.
 	return []byte(fmt.Sprintf(`[Unit]
 Description=CDS secure registry (User)
 
 [Container]
 ContainerName=%s
 Image=%s
-PublishPort=%d:5000
+PublishPort=127.0.0.1:%d:5000
 Network=%s
 NetworkAlias=%s
 Volume=%s:/certs:Z
