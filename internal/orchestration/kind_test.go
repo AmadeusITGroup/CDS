@@ -1,10 +1,13 @@
 package orchestration
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
+	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/amadeusitgroup/cds/internal/bo"
 	"github.com/amadeusitgroup/cds/internal/systemd"
@@ -62,7 +65,60 @@ func (f *fakeRunner) ranContaining(sub string) bool {
 // whose supervision unit path is pre-resolved (so tests never touch podman on
 // disk). units is left nil: tests here exercise only runner-driven methods.
 func kindProviderWithRunner(r *fakeRunner) *kindProvider {
-	return &kindProvider{runner: r.run, runnerIn: r.runIn, podmanPath: "/usr/bin/podman"}
+	return &kindProvider{runner: r.run, runnerIn: r.runIn, runnerCtx: r.runCtx, podmanPath: "/usr/bin/podman"}
+}
+
+// runCtx records the command, then fails with ctx.Err when ctx is already
+// done (what the real runner returns once it has killed the command).
+func (f *fakeRunner) runCtx(ctx context.Context, command string) (string, error) {
+	if err := ctx.Err(); err != nil {
+		f.ran = append(f.ran, command)
+		return "", err
+	}
+	return f.run(command)
+}
+
+func TestKindCreateClusterCancelledRemovesPartialCluster(t *testing.T) {
+	r := newFakeRunner()
+	k := kindProviderWithRunner(r)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	err := k.createCluster(ctx, "")
+
+	require.Error(t, err)
+	require.Len(t, r.ran, 2)
+	assert.Contains(t, r.ran[0], "kind create cluster --name=cds-kind")
+	assert.Contains(t, r.ran[1], "kind delete cluster --name=cds-kind",
+		"a killed create must not leave nodes the next Build takes for a cluster")
+}
+
+func TestKindCreateClusterFailureKeepsClusterForDiagnosis(t *testing.T) {
+	r := newFakeRunner()
+	r.replies["kind create cluster"] = "boom"
+	r.fail["kind create cluster"] = true
+	k := kindProviderWithRunner(r)
+
+	err := k.createCluster(context.Background(), "")
+
+	require.Error(t, err)
+	assert.False(t, r.ranContaining("kind delete cluster"), "only a cancelled create is cleaned up")
+}
+
+// TestRunLocalContextKillsCommand runs a real shell: a cancelled ctx must
+// stop a long command promptly instead of letting it run to the end.
+func TestRunLocalContextKillsCommand(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("needs a POSIX shell")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+
+	_, err := runLocalContext(ctx, "sleep 30")
+
+	require.Error(t, err)
+	assert.Less(t, time.Since(start), 10*time.Second)
 }
 
 func TestKindClusterExistsDetectsCluster(t *testing.T) {

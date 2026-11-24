@@ -10,6 +10,8 @@
 package orchestration
 
 import (
+	"context"
+
 	"github.com/amadeusitgroup/cds/internal/bo"
 )
 
@@ -46,8 +48,9 @@ type ClusterProvider interface {
 	Name() string
 	// Build creates the cluster if it is not already present, streaming
 	// progress. configFile is an optional provider-specific config path (empty
-	// for the default). Build is idempotent.
-	Build(configFile string, report ProgressReporter) error
+	// for the default). Build is idempotent. Cancelling ctx aborts the cluster
+	// creation (kind create can run for minutes).
+	Build(ctx context.Context, configFile string, report ProgressReporter) error
 	// Start starts an existing, stopped cluster.
 	Start() error
 	// Stop stops a running cluster without deleting it.

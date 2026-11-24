@@ -20,7 +20,7 @@ func (s *clusterServiceServer) BuildCluster(req *cdspb.BuildClusterRequest, stre
 		return err
 	}
 
-	buildErr := s.core.clusterOps().BuildCluster(req.GetEngine(), req.GetConfigFile(), func(p clusterProgress) error {
+	buildErr := s.core.clusterOps().BuildCluster(stream.Context(), req.GetEngine(), req.GetConfigFile(), func(p clusterProgress) error {
 		return sendClusterProgress(stream, p.phase, p.message)
 	})
 	if buildErr == nil {
@@ -35,7 +35,7 @@ func (s *clusterServiceServer) BuildCluster(req *cdspb.BuildClusterRequest, stre
 
 // StartCluster starts the existing cluster.
 func (s *clusterServiceServer) StartCluster(ctx context.Context, req *cdspb.StartClusterRequest) (*cdspb.StartClusterResponse, error) {
-	if err := s.core.clusterOps().StartCluster(); err != nil {
+	if err := s.core.clusterOps().StartCluster(ctx); err != nil {
 		return nil, status.Errorf(codes.Internal, "start cluster: %v", err)
 	}
 	return &cdspb.StartClusterResponse{Output: fmt.Sprintf("Cluster %s started", orchestration.ClusterName)}, nil
@@ -43,7 +43,7 @@ func (s *clusterServiceServer) StartCluster(ctx context.Context, req *cdspb.Star
 
 // StopCluster stops the running cluster.
 func (s *clusterServiceServer) StopCluster(ctx context.Context, req *cdspb.StopClusterRequest) (*cdspb.StopClusterResponse, error) {
-	if err := s.core.clusterOps().StopCluster(); err != nil {
+	if err := s.core.clusterOps().StopCluster(ctx); err != nil {
 		return nil, status.Errorf(codes.Internal, "stop cluster: %v", err)
 	}
 	return &cdspb.StopClusterResponse{Output: fmt.Sprintf("Cluster %s stopped", orchestration.ClusterName)}, nil
@@ -51,7 +51,7 @@ func (s *clusterServiceServer) StopCluster(ctx context.Context, req *cdspb.StopC
 
 // DeleteCluster removes the cluster.
 func (s *clusterServiceServer) DeleteCluster(ctx context.Context, req *cdspb.DeleteClusterRequest) (*cdspb.DeleteClusterResponse, error) {
-	if err := s.core.clusterOps().DeleteCluster(req.GetForce()); err != nil {
+	if err := s.core.clusterOps().DeleteCluster(ctx, req.GetForce()); err != nil {
 		return nil, status.Errorf(codes.Internal, "delete cluster: %v", err)
 	}
 	return &cdspb.DeleteClusterResponse{Output: fmt.Sprintf("Cluster %s deleted", orchestration.ClusterName)}, nil

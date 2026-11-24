@@ -1,6 +1,7 @@
 package orchestration
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -46,6 +47,9 @@ type kindProvider struct {
 	// runnerIn is runner with stdin, used to hand secrets to a command without
 	// putting them on its command line. Injected for tests.
 	runnerIn func(command string, stdin []byte) (string, error)
+	// runnerCtx is runner bound to a context, used for the long-running
+	// cluster creation so a cancelled request kills it.
+	runnerCtx func(ctx context.Context, command string) (string, error)
 	// units supervises the kind node through a systemd user unit. Injected for
 	// tests; defaults to the agent's local host.
 	units *systemd.UnitManager
@@ -62,12 +66,17 @@ func NewKindProvider() *kindProvider {
 		engineName: cg.EmptyStr, // default engine (podman) in the engine layer
 		runner:     runLocal,
 		runnerIn:   runLocalWithInput,
+		runnerCtx:  runLocalContext,
 		units:      systemd.NewUnitManager(systemd.LocalHost()),
 	}
 }
 
 func runLocal(command string) (string, error) {
 	return shexec.RunLocalCmdWithOutput([]shexec.ExecuteEvent{&shexec.DefaultShEvent{ExeCmd: command}})
+}
+
+func runLocalContext(ctx context.Context, command string) (string, error) {
+	return shexec.RunLocalCmdWithOutputContext(ctx, []shexec.ExecuteEvent{&shexec.DefaultShEvent{ExeCmd: command}})
 }
 
 func runLocalWithInput(command string, stdin []byte) (string, error) {
@@ -83,7 +92,8 @@ func (k *kindProvider) Name() string { return kindEngineName }
 // IPv6-enabled one that fails on IPv6-disabled hosts), then runs
 // `kind create cluster`. kind create is idempotent-ish: it errors if the
 // cluster already exists, so Build treats an existing cluster as success.
-func (k *kindProvider) Build(configFile string, report ProgressReporter) error {
+// Cancelling ctx kills `kind create cluster` (CDS-029).
+func (k *kindProvider) Build(ctx context.Context, configFile string, report ProgressReporter) error {
 	if err := reportf(report, "network", "Ensuring IPv4-only kind network"); err != nil {
 		return err
 	}
@@ -100,10 +110,36 @@ func (k *kindProvider) Build(configFile string, report ProgressReporter) error {
 	if err := reportf(report, "cluster", fmt.Sprintf("Creating kind cluster %s", ClusterName)); err != nil {
 		return err
 	}
-	if out, err := k.runner(kindCreateCommand(configFile)); err != nil {
-		return cerr.AppendErrorFmt("failed to create kind cluster %s: %s", err, ClusterName, out)
+	if err := k.createCluster(ctx, configFile); err != nil {
+		return err
 	}
 	return reportf(report, "cluster", fmt.Sprintf("Cluster %s created", ClusterName))
+}
+
+// createCluster runs `kind create cluster`, killed when ctx is cancelled.
+func (k *kindProvider) createCluster(ctx context.Context, configFile string) error {
+	out, err := k.runnerCtx(ctx, kindCreateCommand(configFile))
+	if err == nil {
+		return nil
+	}
+	if ctx.Err() != nil {
+		// a killed kind create leaves its node containers behind, and the
+		// next Build would take them for a ready cluster: remove them.
+		k.deletePartialCluster()
+	}
+	return cerr.AppendErrorFmt("failed to create kind cluster %s: %s", err, ClusterName, out)
+}
+
+// deletePartialCluster removes what a cancelled `kind create cluster` left
+// behind. Best-effort: the create error is what the caller reports.
+func (k *kindProvider) deletePartialCluster() {
+	if out, err := k.runner(kindDeleteCommand()); err != nil {
+		clog.Warn(fmt.Sprintf("failed to remove partial kind cluster %s: %s", ClusterName, out), err)
+	}
+}
+
+func kindDeleteCommand() string {
+	return fmt.Sprintf("%s kind delete cluster --name=%s", kindProviderEnv, ClusterName)
 }
 
 // kindCreateCommand builds the `kind create cluster` command. configFile comes
@@ -196,8 +232,7 @@ func (k *kindProvider) Delete(force bool) error {
 			clog.Warn("failed to remove kind supervision unit", err)
 		}
 	}
-	cmd := fmt.Sprintf("%s kind delete cluster --name=%s", kindProviderEnv, ClusterName)
-	if out, err := k.runner(cmd); err != nil {
+	if out, err := k.runner(kindDeleteCommand()); err != nil {
 		return cerr.AppendErrorFmt("failed to delete kind cluster %s: %s", err, ClusterName, out)
 	}
 	return nil

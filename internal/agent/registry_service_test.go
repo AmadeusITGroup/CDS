@@ -31,7 +31,7 @@ type mockRegistryOps struct {
 	credErr       error
 }
 
-func (m *mockRegistryOps) BuildRegistry(secure bool, report registryProgressReporter) error {
+func (m *mockRegistryOps) BuildRegistry(_ context.Context, secure bool, report registryProgressReporter) error {
 	m.secure = secure
 	for _, p := range m.buildProgress {
 		if err := report(p); err != nil {
@@ -40,9 +40,9 @@ func (m *mockRegistryOps) BuildRegistry(secure bool, report registryProgressRepo
 	}
 	return m.buildErr
 }
-func (m *mockRegistryOps) StartRegistry() error { return m.startErr }
-func (m *mockRegistryOps) StopRegistry() error  { return m.stopErr }
-func (m *mockRegistryOps) DeleteRegistry(force bool) error {
+func (m *mockRegistryOps) StartRegistry(context.Context) error { return m.startErr }
+func (m *mockRegistryOps) StopRegistry(context.Context) error  { return m.stopErr }
+func (m *mockRegistryOps) DeleteRegistry(_ context.Context, force bool) error {
 	m.deleteForce = force
 	return m.deleteErr
 }

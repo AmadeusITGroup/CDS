@@ -43,10 +43,12 @@ func ensureOrchestration(
 		return rawReport(p)
 	}
 
+	// the ops get the request ctx, not the group ctx: a failed registry build
+	// must not kill a kind create that is half way through.
 	g, _ := errgroup.WithContext(ctx)
 
 	g.Go(func() error {
-		err := cluster.BuildCluster(oc.Engine, oc.ConfigFile, func(p clusterProgress) error {
+		err := cluster.BuildCluster(ctx, oc.Engine, oc.ConfigFile, func(p clusterProgress) error {
 			return report(deployProgress{phase: "cluster", message: p.message})
 		})
 		if err != nil {
@@ -56,7 +58,7 @@ func ensureOrchestration(
 			if err := report(deployProgress{phase: "cluster", message: "Applying registry mirrors"}); err != nil {
 				return err
 			}
-			if err := cluster.ApplyMirrors(toOrchestrationMirrors(oc.Mirrors)); err != nil {
+			if err := cluster.ApplyMirrors(ctx, toOrchestrationMirrors(oc.Mirrors)); err != nil {
 				return cerr.AppendError("failed to apply registry mirrors", err)
 			}
 		}
@@ -64,7 +66,7 @@ func ensureOrchestration(
 			if err := report(deployProgress{phase: "cluster", message: "Deploying ingress controller"}); err != nil {
 				return err
 			}
-			if err := cluster.DeployIngress(); err != nil {
+			if err := cluster.DeployIngress(ctx); err != nil {
 				return cerr.AppendError("failed to deploy ingress", err)
 			}
 		}
@@ -73,7 +75,7 @@ func ensureOrchestration(
 
 	if oc.Registry.Requested {
 		g.Go(func() error {
-			err := reg.BuildRegistry(oc.Registry.Secure, func(p registryProgress) error {
+			err := reg.BuildRegistry(ctx, oc.Registry.Secure, func(p registryProgress) error {
 				return report(deployProgress{phase: "registry", message: p.message})
 			})
 			if err != nil {
@@ -106,14 +108,14 @@ func ensureOrchestration(
 			if err := report(deployProgress{phase: "cluster", message: "Trusting registry CA on cluster nodes"}); err != nil {
 				return err
 			}
-			if err := cluster.TrustRegistryOnNodes(registry.Hostname, port, ca); err != nil {
+			if err := cluster.TrustRegistryOnNodes(ctx, registry.Hostname, port, ca); err != nil {
 				return cerr.AppendError("failed to trust registry CA on cluster nodes", err)
 			}
 		}
 		if err := report(deployProgress{phase: "cluster", message: "Creating in-cluster registry pull secret"}); err != nil {
 			return err
 		}
-		if err := cluster.CreateRegistrySecret(registry.Hostname, port, user, pass); err != nil {
+		if err := cluster.CreateRegistrySecret(ctx, registry.Hostname, port, user, pass); err != nil {
 			return cerr.AppendError("failed to create in-cluster registry pull secret", err)
 		}
 	}

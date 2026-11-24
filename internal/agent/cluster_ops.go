@@ -1,6 +1,8 @@
 package agent
 
 import (
+	"context"
+
 	"github.com/amadeusitgroup/cds/internal/orchestration"
 )
 
@@ -16,17 +18,20 @@ type clusterProgressReporter func(clusterProgress) error
 
 // clusterOps abstracts the orchestration engine so the gRPC layer can be tested
 // without running kind/podman. It mirrors containerOps.
+//
+// The operations that change the cluster take the request context and are
+// serialized on one lock (CDS-029); the read-only ones are not.
 type clusterOps interface {
-	BuildCluster(engineName, configFile string, report clusterProgressReporter) error
-	StartCluster() error
-	StopCluster() error
-	DeleteCluster(force bool) error
+	BuildCluster(ctx context.Context, engineName, configFile string, report clusterProgressReporter) error
+	StartCluster(ctx context.Context) error
+	StopCluster(ctx context.Context) error
+	DeleteCluster(ctx context.Context, force bool) error
 	GetCluster() (orchestration.Cluster, error)
 	GetKubeconfig() (string, error)
-	ApplyMirrors(mirrors []orchestration.Mirror) error
-	DeployIngress() error
-	CreateRegistrySecret(registryHost string, port int, username, password string) error
-	TrustRegistryOnNodes(registryHost string, port int, caPEM string) error
+	ApplyMirrors(ctx context.Context, mirrors []orchestration.Mirror) error
+	DeployIngress(ctx context.Context) error
+	CreateRegistrySecret(ctx context.Context, registryHost string, port int, username, password string) error
+	TrustRegistryOnNodes(ctx context.Context, registryHost string, port int, caPEM string) error
 }
 
 // defaultClusterOps drives the orchestration package on the agent host.
@@ -34,44 +39,44 @@ type defaultClusterOps struct{}
 
 var _ clusterOps = defaultClusterOps{}
 
-func (defaultClusterOps) BuildCluster(engineName, configFile string, report clusterProgressReporter) error {
-	provider, err := orchestration.Provider(engineName)
-	if err != nil {
-		return err
-	}
-	return provider.Build(configFile, func(phase, message string) error {
-		if report == nil {
-			return nil
+// withCluster runs op on the provider for engineName while holding the cluster
+// lock.
+func withCluster(ctx context.Context, engineName string, op func(orchestration.ClusterProvider) error) error {
+	return locked(ctx, sClusterLock, "cluster", func() error {
+		provider, err := orchestration.Provider(engineName)
+		if err != nil {
+			return err
 		}
-		return report(clusterProgress{phase: phase, message: message})
+		return op(provider)
 	})
 }
 
-func (defaultClusterOps) StartCluster() error {
-	provider, err := orchestration.Provider("")
-	if err != nil {
-		return err
-	}
-	return provider.Start()
+func (defaultClusterOps) BuildCluster(ctx context.Context, engineName, configFile string, report clusterProgressReporter) error {
+	return withCluster(ctx, engineName, func(provider orchestration.ClusterProvider) error {
+		return provider.Build(ctx, configFile, func(phase, message string) error {
+			if report == nil {
+				return nil
+			}
+			return report(clusterProgress{phase: phase, message: message})
+		})
+	})
 }
 
-func (defaultClusterOps) StopCluster() error {
-	provider, err := orchestration.Provider("")
-	if err != nil {
-		return err
-	}
-	return provider.Stop()
+func (defaultClusterOps) StartCluster(ctx context.Context) error {
+	return withCluster(ctx, "", orchestration.ClusterProvider.Start)
 }
 
-func (defaultClusterOps) DeleteCluster(force bool) error {
-	if err := guardClusterDelete("cluster", force); err != nil {
-		return err
-	}
-	provider, err := orchestration.Provider("")
-	if err != nil {
-		return err
-	}
-	return provider.Delete(force)
+func (defaultClusterOps) StopCluster(ctx context.Context) error {
+	return withCluster(ctx, "", orchestration.ClusterProvider.Stop)
+}
+
+func (defaultClusterOps) DeleteCluster(ctx context.Context, force bool) error {
+	return withCluster(ctx, "", func(provider orchestration.ClusterProvider) error {
+		if err := guardClusterDelete("cluster", force); err != nil {
+			return err
+		}
+		return provider.Delete(force)
+	})
 }
 
 func (defaultClusterOps) GetCluster() (orchestration.Cluster, error) {
@@ -90,34 +95,24 @@ func (defaultClusterOps) GetKubeconfig() (string, error) {
 	return provider.Kubeconfig()
 }
 
-func (defaultClusterOps) ApplyMirrors(mirrors []orchestration.Mirror) error {
-	provider, err := orchestration.Provider("")
-	if err != nil {
-		return err
-	}
-	return provider.ApplyMirrors(mirrors)
+func (defaultClusterOps) ApplyMirrors(ctx context.Context, mirrors []orchestration.Mirror) error {
+	return withCluster(ctx, "", func(provider orchestration.ClusterProvider) error {
+		return provider.ApplyMirrors(mirrors)
+	})
 }
 
-func (defaultClusterOps) DeployIngress() error {
-	provider, err := orchestration.Provider("")
-	if err != nil {
-		return err
-	}
-	return provider.DeployIngress()
+func (defaultClusterOps) DeployIngress(ctx context.Context) error {
+	return withCluster(ctx, "", orchestration.ClusterProvider.DeployIngress)
 }
 
-func (defaultClusterOps) CreateRegistrySecret(registryHost string, port int, username, password string) error {
-	provider, err := orchestration.Provider("")
-	if err != nil {
-		return err
-	}
-	return provider.CreateRegistrySecret(registryHost, port, username, password)
+func (defaultClusterOps) CreateRegistrySecret(ctx context.Context, registryHost string, port int, username, password string) error {
+	return withCluster(ctx, "", func(provider orchestration.ClusterProvider) error {
+		return provider.CreateRegistrySecret(registryHost, port, username, password)
+	})
 }
 
-func (defaultClusterOps) TrustRegistryOnNodes(registryHost string, port int, caPEM string) error {
-	provider, err := orchestration.Provider("")
-	if err != nil {
-		return err
-	}
-	return provider.TrustRegistryOnNodes(registryHost, port, caPEM)
+func (defaultClusterOps) TrustRegistryOnNodes(ctx context.Context, registryHost string, port int, caPEM string) error {
+	return withCluster(ctx, "", func(provider orchestration.ClusterProvider) error {
+		return provider.TrustRegistryOnNodes(registryHost, port, caPEM)
+	})
 }

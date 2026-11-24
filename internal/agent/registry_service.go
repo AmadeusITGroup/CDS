@@ -16,7 +16,7 @@ func (s *registryServiceServer) BuildRegistry(req *cdspb.BuildRegistryRequest, s
 	if err := sendRegistryProgress(stream, "init", "Starting registry build"); err != nil {
 		return err
 	}
-	buildErr := s.core.registryOps().BuildRegistry(req.GetSecure(), func(p registryProgress) error {
+	buildErr := s.core.registryOps().BuildRegistry(stream.Context(), req.GetSecure(), func(p registryProgress) error {
 		return sendRegistryProgress(stream, p.phase, p.message)
 	})
 	if buildErr == nil {
@@ -30,21 +30,21 @@ func (s *registryServiceServer) BuildRegistry(req *cdspb.BuildRegistryRequest, s
 }
 
 func (s *registryServiceServer) StartRegistry(ctx context.Context, req *cdspb.StartRegistryRequest) (*cdspb.StartRegistryResponse, error) {
-	if err := s.core.registryOps().StartRegistry(); err != nil {
+	if err := s.core.registryOps().StartRegistry(ctx); err != nil {
 		return nil, status.Errorf(codes.Internal, "start registry: %v", err)
 	}
 	return &cdspb.StartRegistryResponse{Output: fmt.Sprintf("Registry %s started", registry.Name)}, nil
 }
 
 func (s *registryServiceServer) StopRegistry(ctx context.Context, req *cdspb.StopRegistryRequest) (*cdspb.StopRegistryResponse, error) {
-	if err := s.core.registryOps().StopRegistry(); err != nil {
+	if err := s.core.registryOps().StopRegistry(ctx); err != nil {
 		return nil, status.Errorf(codes.Internal, "stop registry: %v", err)
 	}
 	return &cdspb.StopRegistryResponse{Output: fmt.Sprintf("Registry %s stopped", registry.Name)}, nil
 }
 
 func (s *registryServiceServer) DeleteRegistry(ctx context.Context, req *cdspb.DeleteRegistryRequest) (*cdspb.DeleteRegistryResponse, error) {
-	if err := s.core.registryOps().DeleteRegistry(req.GetForce()); err != nil {
+	if err := s.core.registryOps().DeleteRegistry(ctx, req.GetForce()); err != nil {
 		return nil, status.Errorf(codes.Internal, "delete registry: %v", err)
 	}
 	return &cdspb.DeleteRegistryResponse{Output: fmt.Sprintf("Registry %s deleted", registry.Name)}, nil

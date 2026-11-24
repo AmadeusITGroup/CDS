@@ -38,7 +38,7 @@ type mockClusterOps struct {
 	registryTrustErr      error
 }
 
-func (m *mockClusterOps) BuildCluster(_, _ string, report clusterProgressReporter) error {
+func (m *mockClusterOps) BuildCluster(_ context.Context, _, _ string, report clusterProgressReporter) error {
 	for _, p := range m.buildProgress {
 		if err := report(p); err != nil {
 			return err
@@ -46,9 +46,9 @@ func (m *mockClusterOps) BuildCluster(_, _ string, report clusterProgressReporte
 	}
 	return m.buildErr
 }
-func (m *mockClusterOps) StartCluster() error { return m.startErr }
-func (m *mockClusterOps) StopCluster() error  { return m.stopErr }
-func (m *mockClusterOps) DeleteCluster(force bool) error {
+func (m *mockClusterOps) StartCluster(context.Context) error { return m.startErr }
+func (m *mockClusterOps) StopCluster(context.Context) error  { return m.stopErr }
+func (m *mockClusterOps) DeleteCluster(_ context.Context, force bool) error {
 	m.deleteForce = force
 	return m.deleteErr
 }
@@ -58,19 +58,19 @@ func (m *mockClusterOps) GetCluster() (orchestration.Cluster, error) {
 func (m *mockClusterOps) GetKubeconfig() (string, error) {
 	return m.kubeconfig, m.kubeconfigErr
 }
-func (m *mockClusterOps) ApplyMirrors(mirrors []orchestration.Mirror) error {
+func (m *mockClusterOps) ApplyMirrors(_ context.Context, mirrors []orchestration.Mirror) error {
 	m.appliedMirrors = mirrors
 	return m.applyMirrorsErr
 }
-func (m *mockClusterOps) DeployIngress() error {
+func (m *mockClusterOps) DeployIngress(context.Context) error {
 	m.ingressDeployed = true
 	return m.deployIngressErr
 }
-func (m *mockClusterOps) CreateRegistrySecret(host string, port int, user, pass string) error {
+func (m *mockClusterOps) CreateRegistrySecret(_ context.Context, host string, port int, user, pass string) error {
 	m.registrySecretCreated = true
 	return m.registrySecretErr
 }
-func (m *mockClusterOps) TrustRegistryOnNodes(host string, port int, caPEM string) error {
+func (m *mockClusterOps) TrustRegistryOnNodes(_ context.Context, host string, port int, caPEM string) error {
 	m.registryTrusted = true
 	return m.registryTrustErr
 }
