@@ -14,6 +14,7 @@ import (
 
 	"github.com/amadeusitgroup/cds/internal/bo"
 	"github.com/amadeusitgroup/cds/internal/containerconf"
+	"github.com/amadeusitgroup/cds/internal/engine"
 	cg "github.com/amadeusitgroup/cds/internal/global"
 	"github.com/amadeusitgroup/cds/internal/shexec"
 	"github.com/stretchr/testify/assert"
@@ -596,7 +597,8 @@ func TestBuildDecorationCommandsKeepSecretsOffCommandLine(t *testing.T) {
 	spec.registryUser = "cdsu"
 	spec.registryPassword = regSecret
 
-	events := buildDecorationCommands(spec)
+	events, err := buildDecorationCommands(spec)
+	require.NoError(t, err)
 
 	require.Len(t, events, 2, "kubeconfig + registry env")
 	var inputs string
@@ -618,4 +620,25 @@ func TestBuildDecorationCommandsKeepSecretsOffCommandLine(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "ok-"+regSecret+"\n", out)
 	assert.NotContains(t, readLog(t, logPath), regSecret)
+}
+
+// a decoration step that cannot be built fails the deploy instead of being
+// skipped: the container would otherwise lack its kubeconfig/CA/registry env
+// while the deploy reports success (CDS-036).
+func TestDecorationEventsFailsWhenAStepCannotBeBuilt(t *testing.T) {
+	spec := deploySpecForTest(t, "dev-1", `{"image":"ubuntu:24.04"}`)
+	spec.orchestration = containerconf.KindOrchestrationConfig{Requested: true}
+	spec.kubeconfig = "apiVersion: v1"
+	calls := 0
+	failing := func(*engine.ContainersEngine) ([]shexec.ExecuteEvent, error) {
+		calls++
+		return nil, errors.New("build boom")
+	}
+
+	events, err := decorationEvents(spec, failing)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "build boom")
+	assert.Nil(t, events)
+	assert.Equal(t, 1, calls, "stops at the first step that cannot be built")
 }

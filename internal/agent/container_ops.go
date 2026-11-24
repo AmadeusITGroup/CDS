@@ -364,7 +364,11 @@ func (defaultContainerOps) DeployContainer(ctx context.Context, spec deployConta
 	// decorate the devcontainer with cluster/registry access when orchestration
 	// is requested (kubeconfig + registry trust installed inside the container).
 	if spec.orchestration.Requested {
-		cmds = append(cmds, buildDecorationCommands(spec)...)
+		decorationCommands, err := buildDecorationCommands(spec)
+		if err != nil {
+			return result, cerr.AppendError("failed to build container decoration commands", err)
+		}
+		cmds = append(cmds, decorationCommands...)
 	}
 
 	// retain only a bounded tail of the combined command output; the full output
@@ -653,13 +657,18 @@ func compensateOrphanedCreate(containerName, preexistingID string) {
 	}
 }
 
-// buildSSHKeyInstallCommands installs the staged public key, if any, for the
-// remote user of the container.
 // buildDecorationCommands builds the exec commands that decorate a running
 // devcontainer with cluster/registry access: the cluster kubeconfig and the
 // registry CA are installed inside the container. Each decoration step runs as
 // root in the container via a custom command.
-func buildDecorationCommands(spec deployContainerSpec) []shexec.ExecuteEvent {
+func buildDecorationCommands(spec deployContainerSpec) ([]shexec.ExecuteEvent, error) {
+	return decorationEvents(spec, (*engine.ContainersEngine).BuildCommands)
+}
+
+// decorationEvents builds the decoration steps with build. A step that cannot
+// be built fails the whole build: skipping it would deploy a container missing
+// its kubeconfig, CA or registry env while reporting success (CDS-036).
+func decorationEvents(spec deployContainerSpec, build func(*engine.ContainersEngine) ([]shexec.ExecuteEvent, error)) ([]shexec.ExecuteEvent, error) {
 	var events []shexec.ExecuteEvent
 	reg := registryEnv{}
 	if spec.orchestration.Registry.Requested && spec.registryUser != cg.EmptyStr {
@@ -682,18 +691,19 @@ func buildDecorationCommands(spec deployContainerSpec) []shexec.ExecuteEvent {
 		ce.SetContainerName(spec.containerName)
 		ce.SetRemoteUser(engine.KRootUsr)
 		ce.SetCustomCommand(kScriptOnStdin)
-		cmds, err := ce.BuildCommands()
+		cmds, err := build(ce)
 		if err != nil {
-			clog.Warn("failed to build container decoration command", err)
-			continue
+			return nil, cerr.AppendError(fmt.Sprintf("failed to build container decoration command (%s)", dc.info), err)
 		}
 		for _, cmd := range cmds {
 			events = append(events, &shexec.StdinShEvent{ExecuteEvent: cmd, Input: []byte(dc.script)})
 		}
 	}
-	return events
+	return events, nil
 }
 
+// buildSSHKeyInstallCommands installs the staged public key, if any, for the
+// remote user of the container.
 func buildSSHKeyInstallCommands(spec deployContainerSpec) ([]shexec.ExecuteEvent, error) {
 	identifier, err := containerconf.SingletonIdentifier(containerconf.KindPubKey)
 	if err != nil {
