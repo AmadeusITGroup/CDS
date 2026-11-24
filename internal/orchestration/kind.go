@@ -519,9 +519,9 @@ func (k *kindProvider) supervisionUnit() ([]byte, error) {
 		{Section: "Service", Name: "ExecStop", Value: fmt.Sprintf("%s stop %s", podman, ControlPlaneNode)},
 		{Section: "Service", Name: "Delegate", Value: "yes"},
 		{Section: "Service", Name: "Restart", Value: "no"},
-		// installed but intentionally NOT WantedBy any boot target: the cluster
-		// is started on demand, not at boot (kind restart IP issues).
-		{Section: "Install", Name: "WantedBy", Value: "default.target"},
+		// installed but intentionally without an [Install] section, so it can
+		// never be enabled at boot/login: the cluster is started on demand
+		// (kind restart IP issues, kind#2272/#3071; CDS-035).
 	}
 	data, err := io.ReadAll(unit.Serialize(options))
 	if err != nil {

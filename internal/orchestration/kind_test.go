@@ -340,3 +340,14 @@ func TestKindCreateCommandQuotesConfigFile(t *testing.T) {
 		kindCreateCommand("x; touch pwned"))
 	assert.Contains(t, kindCreateCommand("a'b"), `--config='a'\''b'`)
 }
+
+// the supervision unit must not be enable-able at boot: an [Install] section
+// would let `systemctl --user enable` start the cluster at login (CDS-035).
+func TestKindSupervisionUnitHasNoInstallSection(t *testing.T) {
+	data, err := kindProviderWithRunner(newFakeRunner()).supervisionUnit()
+	require.NoError(t, err)
+	unitText := string(data)
+	assert.Contains(t, unitText, "ExecStart=/usr/bin/podman start --attach "+ControlPlaneNode)
+	assert.NotContains(t, unitText, "[Install]")
+	assert.NotContains(t, unitText, "WantedBy")
+}
