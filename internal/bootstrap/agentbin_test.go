@@ -133,6 +133,29 @@ func TestResolveAgentBinaryDownloadFailures(t *testing.T) {
 	}
 }
 
+// TestResolveAgentBinaryNamesMissingConfiguredPath: when CDS_AGENT_BINARY is
+// set but resolves to a missing file, the error names that path instead of
+// telling the user to set the variable they already set; for the local
+// platform it also says how to build the local agent (CDS-059).
+func TestResolveAgentBinaryNamesMissingConfiguredPath(t *testing.T) {
+	t.Setenv("CDS_CONFIG_PATH", t.TempDir())
+	t.Setenv("PATH", t.TempDir()) // no stale cds-api-agent on PATH
+	dir := t.TempDir()
+	t.Setenv("CDS_AGENT_BINARY", filepath.Join(dir, "cds-api-agent-{{os}}-{{arch}}"))
+
+	_, err := resolveAgentBinary(remotePlatform)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), filepath.Join(dir, "cds-api-agent-linux-riscv64")+", which does not exist")
+	assert.NotContains(t, err.Error(), "set CDS_AGENT_BINARY")
+	assert.NotContains(t, err.Error(), "make build-api-agent", "the build hint is for the local platform only")
+
+	local := localPlatform()
+	_, err = resolveAgentBinary(local)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), filepath.Join(dir, "cds-api-agent-"+local.os+"-"+local.arch))
+	assert.Contains(t, err.Error(), "make build-api-agent")
+}
+
 func TestResolveAgentBinaryNotAvailable(t *testing.T) {
 	t.Setenv("CDS_CONFIG_PATH", t.TempDir())
 

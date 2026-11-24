@@ -53,7 +53,8 @@ func agentBinaryName(p platform) string {
 //   - the local cache of downloaded binaries;
 //   - a download from the agent_download_url setting (CDS_AGENT_DOWNLOAD_URL) into the cache.
 func resolveAgentBinary(p platform) (string, error) {
-	if configured := config.AgentBinary(p.os, p.arch, cg.Version); configured != cg.EmptyStr {
+	configured := config.AgentBinary(p.os, p.arch, cg.Version)
+	if configured != cg.EmptyStr {
 		// the template may not be provided for every platform
 		if _, err := os.Stat(configured); err == nil {
 			if err := validateExecutable(configured); err != nil {
@@ -88,9 +89,22 @@ func resolveAgentBinary(p platform) (string, error) {
 		return cached, nil
 	}
 
-	return cg.EmptyStr, cerr.NewError(fmt.Sprintf(
-		"no %s binary available for %s (version %s): set CDS_AGENT_BINARY or CDS_AGENT_DOWNLOAD_URL",
-		kAgentBinaryName, p, cg.Version))
+	return cg.EmptyStr, cerr.NewError(fmt.Sprintf("no %s binary available for %s (version %s): %s",
+		kAgentBinaryName, p, cg.Version, missingAgentHint(p, configured)))
+}
+
+// missingAgentHint tells the user what to do when no agent binary was found.
+// When CDS_AGENT_BINARY is set it names the path it resolved to, rather than
+// asking to set a variable that is already set (CDS-059).
+func missingAgentHint(p platform, configured string) string {
+	if configured == cg.EmptyStr {
+		return "set CDS_AGENT_BINARY or CDS_AGENT_DOWNLOAD_URL"
+	}
+	hint := fmt.Sprintf("CDS_AGENT_BINARY resolves to %s, which does not exist", configured)
+	if p == localPlatform() {
+		hint += " (a local agent is needed: build it with `make build-api-agent`)"
+	}
+	return hint
 }
 
 func validateExecutable(path string) error {
