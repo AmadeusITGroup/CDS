@@ -19,7 +19,7 @@ type registryProgressReporter func(registryProgress) error
 // without running podman. It mirrors clusterOps: the operations that change the
 // registry take the request context and are serialized on one lock (CDS-029).
 type registryOps interface {
-	BuildRegistry(ctx context.Context, secure bool, report registryProgressReporter) error
+	BuildRegistry(ctx context.Context, report registryProgressReporter) error
 	StartRegistry(ctx context.Context) error
 	StopRegistry(ctx context.Context) error
 	DeleteRegistry(ctx context.Context, force bool) error
@@ -33,9 +33,9 @@ type defaultRegistryOps struct{}
 
 var _ registryOps = defaultRegistryOps{}
 
-func (defaultRegistryOps) BuildRegistry(ctx context.Context, secure bool, report registryProgressReporter) error {
+func (defaultRegistryOps) BuildRegistry(ctx context.Context, report registryProgressReporter) error {
 	return locked(ctx, sRegistryLock, "registry", func() error {
-		return registry.New().Build(secure, func(phase, message string) error {
+		return registry.New().Build(func(phase, message string) error {
 			if report == nil {
 				return nil
 			}

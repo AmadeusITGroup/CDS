@@ -16,7 +16,7 @@ func (s *registryServiceServer) BuildRegistry(req *cdspb.BuildRegistryRequest, s
 	if err := sendRegistryProgress(stream, "init", "Starting registry build"); err != nil {
 		return err
 	}
-	buildErr := s.core.registryOps().BuildRegistry(stream.Context(), req.GetSecure(), func(p registryProgress) error {
+	buildErr := s.core.registryOps().BuildRegistry(stream.Context(), func(p registryProgress) error {
 		return sendRegistryProgress(stream, p.phase, p.message)
 	})
 	if buildErr == nil {

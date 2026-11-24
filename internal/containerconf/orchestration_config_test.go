@@ -19,7 +19,7 @@ func TestOrchestrationConfigAbsentSection(t *testing.T) {
 	assert.Empty(t, oc.ConfigFile)
 	assert.False(t, oc.PersistentVolume)
 	assert.False(t, oc.Registry.Requested)
-	assert.False(t, oc.Registry.Secure)
+	assert.False(t, oc.Registry.InsecureRequested)
 	assert.False(t, config.RegistryPortIgnored())
 }
 
@@ -45,7 +45,7 @@ func TestOrchestrationConfigKindWithSecureRegistry(t *testing.T) {
 	assert.Equal(t, "/etc/cds/kind.yaml", oc.ConfigFile)
 	assert.True(t, oc.PersistentVolume)
 	assert.True(t, oc.Registry.Requested)
-	assert.True(t, oc.Registry.Secure)
+	assert.False(t, oc.Registry.InsecureRequested, "secure: true is accepted")
 	assert.True(t, config.RegistryPortIgnored(), "the removed port key is detected so the client can warn (CDS-033)")
 }
 
@@ -61,10 +61,10 @@ func TestOrchestrationConfigEngineWithoutRegistry(t *testing.T) {
 	assert.True(t, oc.Requested)
 	assert.Equal(t, "kind", oc.Engine)
 	assert.False(t, oc.Registry.Requested, "no registry sub-section means no registry")
-	assert.False(t, oc.Registry.Secure)
+	assert.False(t, oc.Registry.InsecureRequested)
 }
 
-func TestOrchestrationConfigInsecureRegistry(t *testing.T) {
+func TestOrchestrationConfigEmptyRegistry(t *testing.T) {
 	config, err := ParseBytes(strings.NewReader(`{
 		"image": "alpine:3.19",
 		"orchestration": {"engine": "kind", "registry": {}}
@@ -74,6 +74,19 @@ func TestOrchestrationConfigInsecureRegistry(t *testing.T) {
 	oc := config.OrchestrationConfig()
 
 	assert.True(t, oc.Registry.Requested, "an empty registry object still requests a registry")
-	assert.False(t, oc.Registry.Secure)
+	assert.False(t, oc.Registry.InsecureRequested, "an absent secure key means secured (CDS-034)")
 	assert.False(t, config.RegistryPortIgnored())
+}
+
+func TestOrchestrationConfigRegistrySecureFalseIsInsecureRequest(t *testing.T) {
+	config, err := ParseBytes(strings.NewReader(`{
+		"image": "alpine:3.19",
+		"orchestration": {"engine": "kind", "registry": {"secure": false}}
+	}`))
+	require.NoError(t, err)
+
+	oc := config.OrchestrationConfig()
+
+	assert.True(t, oc.Registry.Requested)
+	assert.True(t, oc.Registry.InsecureRequested, "an explicit secure: false is flagged so the deploy rejects it (CDS-034)")
 }

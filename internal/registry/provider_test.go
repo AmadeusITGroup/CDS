@@ -50,13 +50,6 @@ func testProvider(t *testing.T) (*podmanProvider, *fakeRunner) {
 	return p, r
 }
 
-func TestBuildRejectsInsecure(t *testing.T) {
-	p, _ := testProvider(t)
-	err := p.Build(false, nil)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "insecure registry is not supported")
-}
-
 func TestQuadletUnitHasExpectedShape(t *testing.T) {
 	p, _ := testProvider(t)
 	m, err := ensureMaterial(p.materialRoot)

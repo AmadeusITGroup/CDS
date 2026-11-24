@@ -63,12 +63,9 @@ func runLocal(command string) (string, error) {
 }
 
 // Build generates the registry material and reconciles the Quadlet unit, then
-// starts the registry and installs host trust. secure must be true: an insecure
-// registry is not supported.
-func (p *podmanProvider) Build(secure bool, report ProgressReporter) error {
-	if !secure {
-		return cerr.NewError("insecure registry is not supported; secure must be true")
-	}
+// starts the registry and installs host trust. The registry is always secured
+// (auth+TLS).
+func (p *podmanProvider) Build(report ProgressReporter) error {
 	if err := reportf(report, "material", "Generating registry material"); err != nil {
 		return err
 	}

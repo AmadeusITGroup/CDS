@@ -47,10 +47,9 @@ type Registry struct {
 // ClusterProvider so the service layer stays provider-agnostic.
 type Provider interface {
 	// Build generates the registry material if needed and (re)creates the
-	// registry, streaming progress. secure reports whether auth+TLS are
-	// required (an insecure registry is not supported yet; secure must be
-	// true). Build is idempotent.
-	Build(secure bool, report ProgressReporter) error
+	// registry, streaming progress. The registry is always secured (auth+TLS).
+	// Build is idempotent.
+	Build(report ProgressReporter) error
 	// Start starts an existing, stopped registry.
 	Start() error
 	// Stop stops a running registry without deleting it.

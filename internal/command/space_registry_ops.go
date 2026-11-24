@@ -45,7 +45,7 @@ func (s *spcRegistryRun) runE(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 	var callback stubCallback = func(c agentServices, ctx context.Context) error {
-		stream, err := c.registry.BuildRegistry(ctx, &cdspb.BuildRegistryRequest{Secure: true})
+		stream, err := c.registry.BuildRegistry(ctx, &cdspb.BuildRegistryRequest{})
 		if err != nil {
 			return cerr.AppendError("Failed to build registry through agent", err)
 		}

@@ -39,11 +39,11 @@ func TestEnsureOrchestrationBuildsClusterAndRegistry(t *testing.T) {
 	oc := containerconf.KindOrchestrationConfig{
 		Requested: true,
 		Engine:    "kind",
-		Registry:  containerconf.RegistryConfig{Requested: true, Secure: true},
+		Registry:  containerconf.RegistryConfig{Requested: true},
 	}
 	err := ensureOrchestration(context.Background(), cluster, reg, oc, func(deployProgress) error { return nil })
 	require.NoError(t, err)
-	assert.True(t, reg.secure, "registry built when requested")
+	assert.True(t, reg.built, "registry built when requested")
 }
 
 func TestEnsureOrchestrationSkipsRegistryWhenNotRequested(t *testing.T) {
@@ -205,7 +205,7 @@ func TestEnsureOrchestrationCreatesPullSecret(t *testing.T) {
 
 	oc := containerconf.KindOrchestrationConfig{
 		Requested: true,
-		Registry:  containerconf.RegistryConfig{Requested: true, Secure: true},
+		Registry:  containerconf.RegistryConfig{Requested: true},
 	}
 	err := ensureOrchestration(context.Background(), cluster, reg, oc, func(deployProgress) error { return nil })
 	require.NoError(t, err)
@@ -231,6 +231,42 @@ func TestRegistryPortSettingIsIgnored(t *testing.T) {
 	env := newRegistryEnv("cdsu", "cdsp", "")
 	assert.Equal(t, registry.DefaultPort, env.port)
 	assert.Contains(t, env.caPath, fmt.Sprintf(":%d/ca.crt", registry.DefaultPort))
+}
+
+// TestEnsureOrchestrationRegistrySecureKey: the registry is always secured, so
+// an absent or true `secure` key deploys and anything else fails before any
+// build starts (CDS-034).
+func TestEnsureOrchestrationRegistrySecureKey(t *testing.T) {
+	for _, tc := range []struct {
+		name, registry string
+		wantErr        bool
+	}{
+		{"empty object", `{}`, false},
+		{"secure true", `{"secure": true}`, false},
+		{"secure false", `{"secure": false}`, true},
+		{"secure not a bool", `{"secure": "yes"}`, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			config, err := containerconf.ParseBytes(strings.NewReader(`{
+				"image": "alpine:3.19",
+				"orchestration": {"engine": "kind", "registry": ` + tc.registry + `}
+			}`))
+			require.NoError(t, err)
+
+			cluster := &mockClusterOps{}
+			reg := &mockRegistryOps{user: "cdsu", pass: "cdsp"}
+			err = ensureOrchestration(context.Background(), cluster, reg, config.OrchestrationConfig(), func(deployProgress) error { return nil })
+			if tc.wantErr {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), "insecure registry is not supported")
+				assert.False(t, reg.built, "nothing is built for an insecure request")
+				return
+			}
+			require.NoError(t, err)
+			assert.True(t, reg.built)
+			assert.True(t, cluster.registrySecretCreated)
+		})
+	}
 }
 
 func TestEnsureOrchestrationNoPullSecretWithoutRegistry(t *testing.T) {

@@ -24,7 +24,7 @@ type mockRegistryOps struct {
 	stopErr       error
 	deleteErr     error
 	deleteForce   bool
-	secure        bool
+	built         bool
 	reg           registry.Registry
 	regErr        error
 	ca            string
@@ -34,8 +34,8 @@ type mockRegistryOps struct {
 	credErr       error
 }
 
-func (m *mockRegistryOps) BuildRegistry(_ context.Context, secure bool, report registryProgressReporter) error {
-	m.secure = secure
+func (m *mockRegistryOps) BuildRegistry(_ context.Context, report registryProgressReporter) error {
+	m.built = true
 	for _, p := range m.buildProgress {
 		if err := report(p); err != nil {
 			return err
@@ -82,10 +82,10 @@ func TestBuildRegistryStreamsProgressThenResponse(t *testing.T) {
 	svc := newTestRegistryService(t, ops)
 	stream := &mockRegistryBuildStream{}
 
-	err := svc.BuildRegistry(&cdspb.BuildRegistryRequest{Secure: true}, stream)
+	err := svc.BuildRegistry(&cdspb.BuildRegistryRequest{}, stream)
 	require.NoError(t, err)
 	require.Len(t, stream.events, 4) // init + 2 progress + response
-	assert.True(t, ops.secure, "secure flag is threaded to the ops layer")
+	assert.True(t, ops.built, "an empty request builds the (always secured) registry (CDS-034)")
 	resp := stream.events[3].GetResponse()
 	require.NotNil(t, resp)
 	assert.Equal(t, registry.Name, resp.GetName())
@@ -97,7 +97,7 @@ func TestBuildRegistryReportsErrorInResponse(t *testing.T) {
 	svc := newTestRegistryService(t, ops)
 	stream := &mockRegistryBuildStream{}
 
-	require.NoError(t, svc.BuildRegistry(&cdspb.BuildRegistryRequest{Secure: true}, stream))
+	require.NoError(t, svc.BuildRegistry(&cdspb.BuildRegistryRequest{}, stream))
 	resp := stream.events[len(stream.events)-1].GetResponse()
 	require.NotNil(t, resp)
 	assert.Contains(t, resp.GetError(), "boom")
@@ -161,7 +161,7 @@ func TestBuildRegistryRefreshesClusterTrust(t *testing.T) {
 	cluster := &mockClusterOps{cluster: orchestration.Cluster{Status: bo.KContainerStatusRunning}}
 	srv := newTestOrchestrationServer(t, cluster, &mockRegistryOps{ca: "CA", user: "u", pass: "p"}, kOrchestratedConfig)
 
-	require.NoError(t, newRegistryServiceServer(srv).BuildRegistry(&cdspb.BuildRegistryRequest{Secure: true}, &mockRegistryBuildStream{}))
+	require.NoError(t, newRegistryServiceServer(srv).BuildRegistry(&cdspb.BuildRegistryRequest{}, &mockRegistryBuildStream{}))
 
 	assert.True(t, cluster.registryTrusted)
 	assert.True(t, cluster.registrySecretCreated)
@@ -173,7 +173,7 @@ func TestBuildRegistrySkipsClusterTrustWithoutRunningCluster(t *testing.T) {
 	cluster := &mockClusterOps{clusterErr: errors.New("no cluster")}
 	srv := newTestOrchestrationServer(t, cluster, &mockRegistryOps{ca: "CA"}, kOrchestratedConfig)
 
-	require.NoError(t, newRegistryServiceServer(srv).BuildRegistry(&cdspb.BuildRegistryRequest{Secure: true}, &mockRegistryBuildStream{}))
+	require.NoError(t, newRegistryServiceServer(srv).BuildRegistry(&cdspb.BuildRegistryRequest{}, &mockRegistryBuildStream{}))
 
 	assert.False(t, cluster.registryTrusted)
 	assert.False(t, cluster.registrySecretCreated)

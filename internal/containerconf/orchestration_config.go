@@ -46,9 +46,10 @@ type RegistryConfig struct {
 	// Requested reports whether a registry was requested
 	// (orchestration.registry is present).
 	Requested bool
-	// Secure reports whether the requested registry must be secured
-	// (orchestration.registry.secure).
-	Secure bool
+	// InsecureRequested reports whether orchestration.registry.secure is set
+	// to anything but true. The registry is always secured, so such a request
+	// is rejected; an absent key is fine (CDS-034).
+	InsecureRequested bool
 }
 
 // kOrchestrationRegistryIgnoredPort is the former orchestration.registry.port
@@ -86,7 +87,8 @@ func (c *Config) OrchestrationConfig() KindOrchestrationConfig {
 func (c *Config) registryConfig() RegistryConfig {
 	return RegistryConfig{
 		Requested: c.IsRegistryRequested(),
-		Secure:    c.boolAt(KOrchestration, KOrchestrationRegistry, KOrchestrationRegistrySecure),
+		InsecureRequested: c.IsSet(KOrchestration, KOrchestrationRegistry, KOrchestrationRegistrySecure) &&
+			!c.boolAt(KOrchestration, KOrchestrationRegistry, KOrchestrationRegistrySecure),
 	}
 }
 

@@ -34,6 +34,10 @@ func ensureOrchestration(
 	if !oc.Requested {
 		return nil
 	}
+	if oc.Registry.Requested && oc.Registry.InsecureRequested {
+		// fail before building anything: only a secured registry exists (CDS-034)
+		return cerr.NewError("insecure registry is not supported; remove orchestration.registry.secure or set it to true")
+	}
 
 	// the cluster and registry goroutines share one gRPC stream; grpc-go forbids
 	// concurrent SendMsg, so serialize every report call.
@@ -67,7 +71,7 @@ func ensureOrchestration(
 
 	if oc.Registry.Requested {
 		g.Go(func() error {
-			err := reg.BuildRegistry(ctx, oc.Registry.Secure, func(p registryProgress) error {
+			err := reg.BuildRegistry(ctx, func(p registryProgress) error {
 				return report(deployProgress{phase: "registry", message: p.message})
 			})
 			if err != nil {
