@@ -35,8 +35,10 @@ func (s *spcOrcKubeconfig) command() *cobra.Command {
 			Short:   "Fetch the cluster kubeconfig from the target host",
 			Long: `Fetch the kind cluster kubeconfig from the agent on the target host.
 
-By default the kubeconfig is printed. With --write it is written to the local
-kubeconfig (~/.kube/config or $KUBECONFIG), replacing it. Use --server to
+By default the kubeconfig is printed. With --write its cluster, user and
+context entries are merged into the local kubeconfig (~/.kube/config or
+$KUBECONFIG): other contexts are kept, and so is the current-context (it is
+set to the cluster's context only when none is set). Use --server to
 rewrite the API server address to one reachable from this machine (for example
 a local port forwarded to the agent host with 'ssh -L <port>:127.0.0.1:<kind-api-port>').`,
 			Args:          cobra.NoArgs,
@@ -46,7 +48,7 @@ a local port forwarded to the agent host with 'ssh -L <port>:127.0.0.1:<kind-api
 		}
 		s.bind(s.cmd)
 		s.cmd.Flags().StringVar(&s.server, "server", "", "rewrite the API server host:port (e.g. 127.0.0.1:6443)")
-		s.cmd.Flags().BoolVar(&s.write, "write", false, "write to the local kubeconfig instead of printing")
+		s.cmd.Flags().BoolVar(&s.write, "write", false, "merge into the local kubeconfig instead of printing (other contexts kept)")
 	}
 	return s.cmd
 }
