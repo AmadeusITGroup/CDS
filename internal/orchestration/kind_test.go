@@ -221,6 +221,12 @@ func TestKindDeployIngressAppliesVendoredManifestOnStdin(t *testing.T) {
 
 	require.NoError(t, k.DeployIngress())
 
+	// the immutable one-shot admission Jobs are removed before the apply, so an
+	// older install upgrades in place (CDS-028)
+	require.GreaterOrEqual(t, len(r.ran), 2)
+	assert.Contains(t, r.ran[0], "-n ingress-nginx delete job ingress-nginx-admission-create ingress-nginx-admission-patch --ignore-not-found")
+	assert.Contains(t, r.ran[1], "apply -f -")
+
 	// the vendored manifest goes on stdin; nothing is downloaded (CDS-028)
 	require.Len(t, r.stdins, 1)
 	assert.Equal(t, string(ingressManifest), r.stdins[0])

@@ -347,6 +347,17 @@ var ingressManifest []byte
 // applying the vendored kind manifest via kubectl on the control-plane node,
 // on stdin. It is best-effort idempotent (kubectl apply).
 func (k *kindProvider) DeployIngress() error {
+	// The admission Jobs are one-shot and their pod template is immutable, so
+	// applying a newer manifest over a cluster set up by an older one fails
+	// with "field is immutable" (CDS-028 upgrade). Delete them first: apply
+	// re-creates them, and they are a no-op when the webhook secret exists.
+	delJobs := fmt.Sprintf(
+		"podman exec %s kubectl --kubeconfig /etc/kubernetes/admin.conf -n ingress-nginx delete job ingress-nginx-admission-create ingress-nginx-admission-patch --ignore-not-found",
+		ControlPlaneNode,
+	)
+	if out, err := k.runner(delJobs); err != nil {
+		return cerr.AppendErrorFmt("failed to remove old ingress admission jobs: %s", err, out)
+	}
 	apply := fmt.Sprintf("podman exec -i %s kubectl --kubeconfig /etc/kubernetes/admin.conf apply -f -", ControlPlaneNode)
 	if out, err := k.runnerIn(apply, ingressManifest); err != nil {
 		return cerr.AppendErrorFmt("failed to apply ingress on cluster: %s", err, out)
