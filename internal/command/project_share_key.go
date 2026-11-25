@@ -29,13 +29,9 @@ func projectSharedKeyPair(projectName string) shexec.KeyPair {
 }
 
 // ensureProjectSharedKeyPair returns the shared key pair of the project,
-// generated when missing.
+// generated when missing (never overwriting an existing key file).
 func ensureProjectSharedKeyPair(projectName string) (shexec.KeyPair, error) {
-	keyPair := projectSharedKeyPair(projectName)
-	if cos.Exists(keyPair.PathToPrv) && cos.Exists(keyPair.PathToPub) {
-		return keyPair, nil
-	}
-	keyPair, err := shexec.GenerateKeyPair(projectSharedKeySuffix(projectName))
+	keyPair, err := shexec.EnsureKeyPair(projectSharedKeySuffix(projectName))
 	if err != nil {
 		return shexec.KeyPair{}, cerr.AppendErrorFmt("Failed to generate the shared key pair of project %s", err, projectName)
 	}

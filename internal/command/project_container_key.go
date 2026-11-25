@@ -1,7 +1,6 @@
 package command
 
 import (
-	"fmt"
 	"path/filepath"
 
 	"github.com/amadeusitgroup/cds/internal/cenv"
@@ -40,25 +39,14 @@ func ensureProjectContainerKeyPair(projectName string) (pathToPrv, pathToPub str
 	}
 
 	// Never overwrite a key we do not track (e.g. created by another tool):
-	// reuse a complete pair, refuse a half-present one.
-	conventional := shexec.KeyPairPaths(hostName)
-	if prv, pub, ok := existingKeyPair(conventional.PathToPrv, conventional.PathToPub); ok {
-		return persistContainerKeyRef(hostName, prv, pub)
-	}
-	for _, path := range []string{conventional.PathToPrv, conventional.PathToPub} {
-		if _, statErr := cos.Fs.Stat(path); statErr == nil {
-			return cg.EmptyStr, cg.EmptyStr, cerr.NewError(fmt.Sprintf("Refusing to overwrite existing %s: the key pair is incomplete; move or complete it", path))
-		}
-	}
-
-	clog.Info("No SSH key found to access containers; generating a host key pair")
+	// EnsureKeyPair reuses a complete pair and refuses a half-present one.
 	sshDir := filepath.Join(cenv.GetUserHomeDir(), ".ssh")
 	if mkErr := cos.Fs.MkdirAll(sshDir, 0700); mkErr != nil {
 		return cg.EmptyStr, cg.EmptyStr, cerr.AppendError("Failed to create ~/.ssh directory for container-access key", mkErr)
 	}
-	keyPair, genErr := shexec.GenerateKeyPair(hostName)
+	keyPair, genErr := shexec.EnsureKeyPair(hostName)
 	if genErr != nil {
-		return cg.EmptyStr, cg.EmptyStr, cerr.AppendError("Failed to generate a container-access SSH key pair", genErr)
+		return cg.EmptyStr, cg.EmptyStr, cerr.AppendError("Failed to get a container-access SSH key pair", genErr)
 	}
 	return persistContainerKeyRef(hostName, keyPair.PathToPrv, keyPair.PathToPub)
 }

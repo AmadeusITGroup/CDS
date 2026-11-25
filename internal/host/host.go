@@ -158,9 +158,9 @@ func (h *host) Build() (returnErr error) {
 		return cerr.AppendError("Failed to ensure SSH directory existence", err)
 	}
 
-	keys, errGen := shexec.GenerateKeyPair(h.name)
+	keys, errGen := shexec.EnsureKeyPair(h.name)
 	if errGen != nil {
-		return cerr.AppendError(fmt.Sprintf("Unable to generate key pair for %v", h.name), errGen)
+		return cerr.AppendError(fmt.Sprintf("Unable to get a key pair for %v", h.name), errGen)
 	}
 
 	h.keyPair = keyPair{pathToPub: keys.PathToPub, pathToPrv: keys.PathToPrv}
