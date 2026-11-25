@@ -185,18 +185,20 @@ func newRegistryEnv(user, password, owner string) registryEnv {
 
 // containerDecorationCommands builds the exec commands that decorate a running
 // devcontainer so it can use the cluster and registry: the cluster kubeconfig
-// is installed at the container's default kubeconfig path, the registry CA in
-// the container's per-registry trust directory, and the CDS_REGISTRY_* env in a
-// 0600 file in the container user's home. The commands run as root inside the container.
+// is installed at root's and the container user's default kubeconfig path, the
+// registry CA in the container's per-registry trust directory, and the
+// CDS_REGISTRY_* env in a 0600 file in the container user's home. The commands
+// run as root inside the container.
 //
-// kubeconfig is the cluster kubeconfig and caCert the registry CA PEM; each
-// step is skipped when its material is empty (or reg is unset).
-func containerDecorationCommands(kubeconfig, caCert string, reg registryEnv) []decorationCommand {
+// kubeconfig is the cluster kubeconfig, caCert the registry CA PEM and owner
+// the container user (remoteUser, empty means root); each step is skipped when
+// its material is empty (or reg is unset).
+func containerDecorationCommands(kubeconfig, caCert, owner string, reg registryEnv) []decorationCommand {
 	var cmds []decorationCommand
 	if kubeconfig != "" {
 		cmds = append(cmds, decorationCommand{
 			info:   "Installing cluster kubeconfig in container",
-			script: installKubeconfigScript(kubeconfig),
+			script: installKubeconfigScript(kubeconfig, owner),
 		})
 	}
 	if caCert != "" {
@@ -237,28 +239,10 @@ const registryEnvFile = ".config/cds/registry.env"
 // only stdout, and the agent sends those lines to the client (CDS-061).
 func installRegistryEnvScript(reg registryEnv) string {
 	return fmt.Sprintf(`set -eu
-u=%s
-home=$(getent passwd "$u" 2>/dev/null | cut -d: -f6) || home=
-[ -n "$home" ] || home=$(awk -F: -v u="$u" '$1 == u { print $6 }' /etc/passwd)
-[ -n "$home" ] || { echo "container user $u has no home directory" >&2; exit 1; }
-g=$(id -g "$u")
-uid=$(id -u "$u")
-# owned: is $1 owned by the user? ls, not find: minimal images lack find (CDS-057).
-owned() {
-  o=$(ls -nd "$1" 2>/dev/null) || o=
-  set -f; set -- "$1" $o; set +f
-  [ -n "${4-}" ] || { echo "cds: cannot tell who owns $1"; return 1; }
-  [ "$4" = "$uid" ]
-}
+%s
 rm -f /etc/profile.d/cds-registry.sh
-# root must not create dirs or write through a user-planted dir link (CDS-055).
-# shortcut: check-then-write, so a user racing the script can still swap the
-# dir; write as the user (runuser) if that matters.
 for d in "$home/.config" "$home/.config/cds"; do
-  if [ -L "$d" ] || { [ -e "$d" ] && { [ ! -d "$d" ] || ! owned "$d"; }; }; then
-    echo "cds: $d is a link or not a directory owned by $u, $home/%s not written"; exit 0
-  fi
-  if [ ! -d "$d" ]; then mkdir -m 700 "$d"; chown "$u:$g" "$d"; fi
+  user_dir "$d" "$home/%s"
 done
 tmp=$(mktemp "$home/.config/cds/.registry.env.XXXXXX")
 cat > "$tmp" <<'CDS_EOF'
@@ -294,7 +278,7 @@ for rc in .profile .bashrc .bash_profile .zshrc; do
   printf '%%s\n' "$line" >> "$f"
   if [ "$new" = 1 ]; then chown "$u:$g" "$f"; fi
 done`,
-		cg.ShellSingleQuote(reg.owner),
+		containerUserPrelude(reg.owner),
 		registryEnvFile,
 		reg.name, reg.port, reg.caPath, reg.user, reg.password,
 		registryEnvFile, registryEnvFile, registryEnvFile)
@@ -307,15 +291,65 @@ type decorationCommand struct {
 	script string
 }
 
-func installKubeconfigScript(kubeconfig string) string {
-	// write the kubeconfig to root's default path; a here-doc keeps the content
-	// intact regardless of quoting.
-	return fmt.Sprintf(`set -eu
+// containerUserPrelude is the shell prelude of a decoration script that writes
+// into the home of container user owner while running as root. It sets u,
+// home, g and uid (exit 1 when the user has no home) and defines:
+//   - owned PATH: is PATH owned by the user? ls, not find: minimal images lack
+//     find (CDS-057).
+//   - user_dir DIR TARGET: creates DIR (700, the user's) when missing; when DIR
+//     is a link, not a dir, or not the user's, prints a "cds: " warning that
+//     TARGET is not written and exits 0, so root never writes through a
+//     user-planted dir link (CDS-055).
+//
+// shortcut: check-then-write, so a user racing the script can still swap the
+// dir; write as the user (runuser) if that matters.
+func containerUserPrelude(owner string) string {
+	return fmt.Sprintf(`u=%s
+home=$(getent passwd "$u" 2>/dev/null | cut -d: -f6) || home=
+[ -n "$home" ] || home=$(awk -F: -v u="$u" '$1 == u { print $6 }' /etc/passwd)
+[ -n "$home" ] || { echo "container user $u has no home directory" >&2; exit 1; }
+g=$(id -g "$u")
+uid=$(id -u "$u")
+owned() {
+  o=$(ls -nd "$1" 2>/dev/null) || o=
+  set -f; set -- "$1" $o; set +f
+  [ -n "${4-}" ] || { echo "cds: cannot tell who owns $1"; return 1; }
+  [ "$4" = "$uid" ]
+}
+user_dir() {
+  if [ -L "$1" ] || { [ -e "$1" ] && { [ ! -d "$1" ] || ! owned "$1"; }; }; then
+    echo "cds: $1 is a link or not a directory owned by $u, $2 not written"; exit 0
+  fi
+  if [ ! -d "$1" ]; then mkdir -m 700 "$1"; chown "$u:$g" "$1"; fi
+}`, cg.ShellSingleQuote(owner))
+}
+
+// installKubeconfigScript writes the cluster kubeconfig to root's default
+// path and, for a non-root container user (remoteUser), also to that user's
+// ~/.kube/config (600, the user's), so the shell `cds project ssh` opens can
+// run kubectl and helm (CDS-065). The user copy is written to a temp file and
+// renamed, so a link planted at the target is replaced, not followed; a
+// ~/.kube that is a link, not a dir, or not the user's is skipped with a
+// warning, as for the registry env (CDS-055).
+func installKubeconfigScript(kubeconfig, owner string) string {
+	// a here-doc keeps the content intact regardless of quoting.
+	script := fmt.Sprintf(`set -eu
 mkdir -p /root/.kube
 cat > /root/.kube/config <<'CDS_EOF'
 %s
 CDS_EOF
 chmod 600 /root/.kube/config`, kubeconfig)
+	if owner == cg.EmptyStr || owner == engine.KRootUsr {
+		return script
+	}
+	return script + "\n" + containerUserPrelude(owner) + `
+[ "$uid" != 0 ] || exit 0
+user_dir "$home/.kube" "$home/.kube/config"
+tmp=$(mktemp "$home/.kube/.config.XXXXXX")
+cat /root/.kube/config > "$tmp"
+chmod 600 "$tmp"
+chown "$u:$g" "$tmp"
+mv -f "$tmp" "$home/.kube/config"`
 }
 
 func installRegistryTrustScript(caCert string) string {
@@ -411,7 +445,7 @@ func (s *grpcServer) redecorateContainers(ctx context.Context, report deployProg
 		if oc.Registry.Requested {
 			ca, reg = registryCA, newRegistryEnv(registryUser, registryPassword, d.remoteUser)
 		}
-		s.redecorateOne(ctx, d.name, containerDecorationCommands(kubeconfig, ca, reg), report)
+		s.redecorateOne(ctx, d.name, containerDecorationCommands(kubeconfig, ca, d.remoteUser, reg), report)
 	}
 }
 
@@ -419,7 +453,7 @@ func (s *grpcServer) redecorateContainers(ctx context.Context, report deployProg
 type orchestratedDeployment struct {
 	name string
 	oc   containerconf.KindOrchestrationConfig
-	// remoteUser is the container user the registry env is written for.
+	// remoteUser is the container user the kubeconfig and registry env are written for.
 	remoteUser string
 }
 

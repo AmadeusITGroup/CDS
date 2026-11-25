@@ -663,10 +663,11 @@ func buildDecorationCommands(spec deployContainerSpec) ([]shexec.ExecuteEvent, e
 func decorationEvents(spec deployContainerSpec, build func(*engine.ContainersEngine) ([]shexec.ExecuteEvent, error)) ([]shexec.ExecuteEvent, error) {
 	var events []shexec.ExecuteEvent
 	reg := registryEnv{}
+	owner := engine.ResolveRemoteUserFromConfig(spec.config)
 	if spec.orchestration.Registry.Requested {
-		reg = newRegistryEnv(spec.registryUser, spec.registryPassword, engine.ResolveRemoteUserFromConfig(spec.config))
+		reg = newRegistryEnv(spec.registryUser, spec.registryPassword, owner)
 	}
-	for _, dc := range containerDecorationCommands(spec.kubeconfig, spec.registryCA, reg) {
+	for _, dc := range containerDecorationCommands(spec.kubeconfig, spec.registryCA, owner, reg) {
 		ce := engine.NewContainerEngine(engine.WithContainerConfig(spec.config))
 		ce.SetAction(engine.K_ACTION_EXE)
 		ce.SetExecuteCmd(engine.K_EXEC_CUSTOM_CMD)

@@ -70,7 +70,7 @@ func TestEnsureOrchestrationPropagatesClusterError(t *testing.T) {
 }
 
 func TestContainerDecorationCommandsShape(t *testing.T) {
-	cmds := containerDecorationCommands("KUBECONFIG_CONTENT", "CA_PEM", registryEnv{})
+	cmds := containerDecorationCommands("KUBECONFIG_CONTENT", "CA_PEM", "", registryEnv{})
 	require.Len(t, cmds, 2)
 	assert.Contains(t, cmds[0].script, "/root/.kube/config")
 	assert.Contains(t, cmds[0].script, "KUBECONFIG_CONTENT")
@@ -79,11 +79,95 @@ func TestContainerDecorationCommandsShape(t *testing.T) {
 }
 
 func TestContainerDecorationCommandsSkipEmpty(t *testing.T) {
-	assert.Empty(t, containerDecorationCommands("", "", registryEnv{}))
+	assert.Empty(t, containerDecorationCommands("", "", "", registryEnv{}))
 
-	onlyKube := containerDecorationCommands("KC", "", registryEnv{})
+	onlyKube := containerDecorationCommands("KC", "", "", registryEnv{})
 	require.Len(t, onlyKube, 1)
 	assert.Contains(t, onlyKube[0].script, "/root/.kube/config")
+}
+
+// runKubeconfigScript runs installKubeconfigScript for owner "dev" with a real
+// /bin/sh: root's /root/.kube is moved to a temp dir and getent/id/chown are
+// stubbed (the test is not root); mktemp, cat, mv and the link checks are real.
+func runKubeconfigScript(t *testing.T, home, owner string) (rootKube, out string) {
+	t.Helper()
+	stubs := t.TempDir()
+	for name, body := range map[string]string{
+		"getent": `echo "dev:x:1000:1000::` + home + `:/bin/sh"`,
+		"id":     fmt.Sprintf("echo %d", os.Getuid()),
+		"chown":  `exit 0`,
+	} {
+		require.NoError(t, os.WriteFile(filepath.Join(stubs, name), []byte("#!/bin/sh\n"+body+"\n"), 0o755))
+	}
+	rootKube = filepath.Join(t.TempDir(), "root-kube")
+	script := strings.ReplaceAll(installKubeconfigScript("apiVersion: v1\nkind: Config", owner), "/root/.kube", rootKube)
+	cmd := exec.Command("/bin/sh", "-s")
+	cmd.Env = append(os.Environ(), "PATH="+stubs+":"+os.Getenv("PATH"))
+	cmd.Stdin = strings.NewReader(script)
+	// warnings must be on stdout: a successful first-deploy step keeps only stdout (CDS-061)
+	b, err := cmd.Output()
+	require.NoError(t, err, string(b))
+	return rootKube, string(b)
+}
+
+// TestInstallKubeconfigScriptForRemoteUser: with a remoteUser the kubeconfig
+// also lands in that user's ~/.kube/config (600), root keeps its copy, and a
+// link planted at the target is replaced, not followed (CDS-065).
+func TestInstallKubeconfigScriptForRemoteUser(t *testing.T) {
+	home := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(home, ".kube"), 0o700))
+	victim := filepath.Join(t.TempDir(), "root-file")
+	require.NoError(t, os.WriteFile(victim, []byte("root-data\n"), 0o644))
+	require.NoError(t, os.Symlink(victim, filepath.Join(home, ".kube", "config")))
+
+	rootKube, _ := runKubeconfigScript(t, home, "dev")
+	_, _ = runKubeconfigScript(t, home, "dev") // re-decoration is idempotent
+
+	for _, p := range []string{filepath.Join(rootKube, "config"), filepath.Join(home, ".kube", "config")} {
+		fi, err := os.Lstat(p)
+		require.NoError(t, err, p)
+		assert.True(t, fi.Mode().IsRegular(), p)
+		assert.Equal(t, os.FileMode(0o600), fi.Mode().Perm(), p)
+		b, err := os.ReadFile(p)
+		require.NoError(t, err)
+		assert.Equal(t, "apiVersion: v1\nkind: Config\n", string(b), p)
+	}
+	b, err := os.ReadFile(victim)
+	require.NoError(t, err)
+	assert.Equal(t, "root-data\n", string(b), "the link target is not written")
+	matches, _ := filepath.Glob(filepath.Join(home, ".kube", ".config.*"))
+	assert.Empty(t, matches, "no temp file left behind")
+
+	// a user without ~/.kube gets it created
+	fresh := t.TempDir()
+	_, _ = runKubeconfigScript(t, fresh, "dev")
+	assert.FileExists(t, filepath.Join(fresh, ".kube", "config"))
+}
+
+// TestInstallKubeconfigScriptSkipsLinkedKubeDir: root never writes through a
+// user-planted ~/.kube link; it warns and keeps root's copy (CDS-065, CDS-055).
+func TestInstallKubeconfigScriptSkipsLinkedKubeDir(t *testing.T) {
+	home := t.TempDir()
+	target := t.TempDir()
+	require.NoError(t, os.Symlink(target, filepath.Join(home, ".kube")))
+
+	rootKube, out := runKubeconfigScript(t, home, "dev")
+	assert.FileExists(t, filepath.Join(rootKube, "config"))
+	entries, err := os.ReadDir(target)
+	require.NoError(t, err)
+	assert.Empty(t, entries, "nothing is created in the link target")
+	assert.Contains(t, out, "cds: "+filepath.Join(home, ".kube")+" is a link")
+}
+
+// TestInstallKubeconfigScriptRootOnly: a root (or unset) remoteUser only gets
+// root's copy, as before.
+func TestInstallKubeconfigScriptRootOnly(t *testing.T) {
+	for _, owner := range []string{"", "root"} {
+		script := installKubeconfigScript("KC", owner)
+		assert.Contains(t, script, "/root/.kube/config", owner)
+		assert.NotContains(t, script, "$home/.kube", owner)
+	}
+	assert.Contains(t, installKubeconfigScript("KC", "dev"), "u='dev'")
 }
 
 func TestEnsureOrchestrationAppliesMirrors(t *testing.T) {
@@ -125,7 +209,7 @@ func TestEnsureOrchestrationSkipsIngressWhenNotRequested(t *testing.T) {
 
 func TestContainerDecorationIncludesRegistryEnv(t *testing.T) {
 	reg := newRegistryEnv("cdsabc", "secret", "dev")
-	cmds := containerDecorationCommands("KC", "CA", reg)
+	cmds := containerDecorationCommands("KC", "CA", "dev", reg)
 	// kubeconfig + trust + registry env
 	require.Len(t, cmds, 3)
 	last := cmds[2].script
@@ -328,7 +412,7 @@ func TestInstallRegistryEnvScriptWithoutFind(t *testing.T) {
 }
 
 func TestContainerDecorationSkipsRegistryEnvWhenUnset(t *testing.T) {
-	cmds := containerDecorationCommands("KC", "CA", registryEnv{})
+	cmds := containerDecorationCommands("KC", "CA", "", registryEnv{})
 	require.Len(t, cmds, 2, "no registry env step when creds are not set")
 }
 
