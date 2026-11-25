@@ -1,6 +1,7 @@
 package bootstrap
 
 import (
+	"crypto/rand"
 	"crypto/sha256"
 	"fmt"
 	"io"
@@ -186,14 +187,39 @@ func (rb remoteBootstrap) ensureBinary(p platform, binDir string) (string, error
 	if err := rb.ensureDir(binDir); err != nil {
 		return cg.EmptyStr, err
 	}
-	// upload aside then rename, the binary may be in use by a running agent
-	if _, err := rb.upload(local, remote+kRemoteUploadExt, kRemoteBinaryPerm); err != nil {
+	// upload aside then rename, the binary may be in use by a running agent.
+	// The staging name is unique per run: concurrent clients installing the
+	// same version must not chmod/rename each other's staging file (CDS-063);
+	// the rename is atomic, so the last one wins with a complete binary.
+	staging, err := uploadStagingPath(remote)
+	if err != nil {
 		return cg.EmptyStr, err
 	}
-	if _, err := rb.h.Execute("mv", "-f", remote+kRemoteUploadExt, remote); err != nil {
+	if _, err := rb.upload(local, staging, kRemoteBinaryPerm); err != nil {
+		rb.removeQuietly(staging)
+		return cg.EmptyStr, err
+	}
+	if _, err := rb.h.Execute("mv", "-f", staging, remote); err != nil {
+		rb.removeQuietly(staging)
 		return cg.EmptyStr, cerr.AppendErrorFmt("Failed to install %s on %s", err, remote, rb.hostname)
 	}
 	return remote, nil
+}
+
+// uploadStagingPath returns a staging path next to remote, unique to this run.
+func uploadStagingPath(remote string) (string, error) {
+	token := make([]byte, 8)
+	if _, err := rand.Read(token); err != nil {
+		return cg.EmptyStr, cerr.AppendError("Failed to generate upload staging name", err)
+	}
+	return fmt.Sprintf("%s%s.%x", remote, kRemoteUploadExt, token), nil
+}
+
+// removeQuietly deletes a leftover remote file, best effort.
+func (rb remoteBootstrap) removeQuietly(remote string) {
+	if _, err := rb.h.Execute("rm", "-f", remote); err != nil {
+		clog.Debug(fmt.Sprintf("Failed to remove %s on %s: %v", remote, rb.hostname, err))
+	}
 }
 
 // ensureCerts installs the CA and the server certificate of the host in certsDir.

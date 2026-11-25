@@ -108,6 +108,17 @@ func remoteBinaryPath() string {
 	return strings.Replace(kTestBinary, "%s", cg.Version, 1)
 }
 
+// stagedBinaries returns the staging paths the agent binary was uploaded to.
+func stagedBinaries(h *fakeRemoteHost) []string {
+	var staged []string
+	for remote := range h.copied {
+		if strings.HasPrefix(remote, remoteBinaryPath()+".upload.") {
+			staged = append(staged, remote)
+		}
+	}
+	return staged
+}
+
 func TestRemoteBootstrapInstallsAndStartsTheAgent(t *testing.T) {
 	h := newFakeRemoteHost()
 	rb, rec := newTestRemoteBootstrap(t, h)
@@ -115,9 +126,11 @@ func TestRemoteBootstrapInstallsAndStartsTheAgent(t *testing.T) {
 	require.NoError(t, rb.run())
 
 	binary := remoteBinaryPath()
-	assert.Equal(t, "agent binary", h.copied[binary+".upload"], "the binary is uploaded aside")
-	assert.Contains(t, h.executed, "chmod 700 "+binary+".upload")
-	assert.Contains(t, h.executed, "mv -f "+binary+".upload "+binary)
+	staged := stagedBinaries(h)
+	require.Len(t, staged, 1, "the binary is uploaded aside")
+	assert.Equal(t, "agent binary", h.copied[staged[0]])
+	assert.Contains(t, h.executed, "chmod 700 "+staged[0])
+	assert.Contains(t, h.executed, "mv -f "+staged[0]+" "+binary)
 	assert.Contains(t, h.executed, "chmod 700 "+kTestAgentDir)
 	for _, file := range []string{"ca.pem", "agent-srv.pem", "agent-srv-key.pem"} {
 		remote := kTestAgentDir + "/certs/" + file
@@ -140,7 +153,7 @@ func TestRemoteBootstrapSkipsUpToDateBinary(t *testing.T) {
 
 	require.NoError(t, rb.run())
 
-	assert.NotContains(t, h.copied, remoteBinaryPath()+".upload")
+	assert.Empty(t, stagedBinaries(h))
 	assert.Equal(t, []string{remoteBinaryPath()}, rec.started)
 }
 
@@ -151,7 +164,46 @@ func TestRemoteBootstrapReplacesDifferentBinary(t *testing.T) {
 
 	require.NoError(t, rb.run())
 
-	assert.Contains(t, h.copied, remoteBinaryPath()+".upload")
+	assert.Len(t, stagedBinaries(h), 1)
+}
+
+// CDS-063: two clients installing the same version at once must not share a
+// staging file, or one's rename removes the file the other is about to chmod.
+func TestRemoteBootstrapConcurrentInstallsUseDistinctStagingFiles(t *testing.T) {
+	h := newFakeRemoteHost()
+	first, _ := newTestRemoteBootstrap(t, h)
+	second, _ := newTestRemoteBootstrap(t, h)
+
+	require.NoError(t, first.run())
+	require.NoError(t, second.run())
+
+	assert.Len(t, stagedBinaries(h), 2, "each run stages the binary under its own name")
+}
+
+func TestRemoteBootstrapRemovesStagingFileOnFailedInstall(t *testing.T) {
+	h := newFakeRemoteHost()
+	rb, _ := newTestRemoteBootstrap(t, h)
+	binDir := strings.TrimSuffix(remoteBinaryPath(), "/cds-api-agent")
+	// fail the rename, whatever the staging name
+	failing := &renameFailingHost{fakeRemoteHost: h}
+	rb.h = failing
+
+	_, err := rb.ensureBinary(platform{os: "linux", arch: "amd64"}, binDir)
+	require.Error(t, err)
+	staged := stagedBinaries(h)
+	require.Len(t, staged, 1)
+	assert.Contains(t, h.executed, "rm -f "+staged[0])
+}
+
+// renameFailingHost fails every `mv` command.
+type renameFailingHost struct{ *fakeRemoteHost }
+
+func (r *renameFailingHost) Execute(name string, args ...string) (string, error) {
+	out, err := r.fakeRemoteHost.Execute(name, args...)
+	if name == "mv" {
+		return "", errors.New("exit status 1")
+	}
+	return out, err
 }
 
 func TestRemoteBootstrapPlatformProbe(t *testing.T) {
