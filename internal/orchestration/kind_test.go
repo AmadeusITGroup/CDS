@@ -576,6 +576,34 @@ func TestKindCreateCommandQuotesConfigFile(t *testing.T) {
 	assert.Contains(t, kindCreateCommand("a'b"), `--config='a'\''b'`)
 }
 
+// TestKindCheckConfigFile: configFile is read on the agent host, so a relative
+// or missing path fails before anything runs (CDS-079). Real shell runner.
+func TestKindCheckConfigFile(t *testing.T) {
+	dir := t.TempDir()
+	present := filepath.Join(dir, "kind it's.yaml")
+	require.NoError(t, os.WriteFile(present, []byte("kind: Cluster\n"), 0600))
+	k := &kindProvider{runner: runLocal}
+
+	require.NoError(t, k.checkConfigFile(""))
+	require.NoError(t, k.checkConfigFile(present))
+	for _, bad := range []string{"kind.yaml", "./kind.yaml", filepath.Join(dir, "missing.yaml"), dir, filepath.Join(dir, "x'; touch pwned; '")} {
+		err := k.checkConfigFile(bad)
+		require.Error(t, err, bad)
+		assert.Contains(t, err.Error(), "agent host", bad)
+		assert.Contains(t, err.Error(), "not sent from the client", bad)
+	}
+	assert.NoFileExists(t, "pwned")
+}
+
+func TestKindBuildRejectsRelativeConfigFileBeforeRunning(t *testing.T) {
+	r := newFakeRunner()
+	k := kindProviderWithRunner(r)
+	err := k.Build(context.Background(), "kind.yaml", nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "must be an absolute path on the agent host")
+	assert.Empty(t, r.ran)
+}
+
 // the supervision unit must not be enable-able at boot: an [Install] section
 // would let `systemctl --user enable` start the cluster at login (CDS-035).
 func TestKindSupervisionUnitHasNoInstallSection(t *testing.T) {

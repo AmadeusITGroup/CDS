@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/url"
 	"os/exec"
+	"path"
 	"regexp"
 	"strconv"
 	"strings"
@@ -97,6 +98,9 @@ func (k *kindProvider) Name() string { return kindEngineName }
 // starts it when it is stopped (CDS-041).
 // Cancelling ctx kills `kind create cluster` (CDS-029).
 func (k *kindProvider) Build(ctx context.Context, configFile string, report ProgressReporter) error {
+	if err := k.checkConfigFile(configFile); err != nil {
+		return err
+	}
 	if err := reportf(report, "network", "Ensuring IPv4-only kind network"); err != nil {
 		return err
 	}
@@ -141,6 +145,24 @@ func (k *kindProvider) createCluster(ctx context.Context, configFile string) err
 		k.deletePartialCluster()
 	}
 	return cerr.AppendErrorFmt("failed to create kind cluster %s: %s", err, ClusterName, out)
+}
+
+// checkConfigFile fails early, with a clear error, on a configFile kind could
+// not read: the path is read on the agent host and never sent from the client,
+// so it must be absolute and exist there (CDS-079).
+// shortcut: no staging; stage the file like the other client artifacts if a
+// client-side configFile is ever needed.
+func (k *kindProvider) checkConfigFile(configFile string) error {
+	if configFile == cg.EmptyStr {
+		return nil
+	}
+	if !path.IsAbs(configFile) {
+		return cerr.NewError(fmt.Sprintf("orchestration configFile %q must be an absolute path on the agent host: it is not sent from the client", configFile))
+	}
+	if _, err := k.runner("test -f " + shellQuote(configFile)); err != nil {
+		return cerr.NewError(fmt.Sprintf("orchestration configFile %q is not a file on the agent host: it is not sent from the client", configFile))
+	}
+	return nil
 }
 
 // stopCreateScope stops the kind create scope, killing every process left in
