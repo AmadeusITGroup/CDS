@@ -64,29 +64,35 @@ type cmd interface {
 }
 
 func main() {
+	os.Exit(run(root))
+}
+
+// run executes c and returns the process exit code. The db is saved even when
+// c fails: os.Exit skips deferred calls, so exiting inside run would drop every
+// state change the command made before failing (CDS-102).
+func run(c cmd) (code int) {
 	dbSrc, err := config.DBSource()
 	if err != nil {
 		clog.Error("Failed to resolve state database source", err)
-		os.Exit(1)
+		return 1
 	}
 
 	if err := db.Load(dbSrc); err != nil {
 		clog.Error("Failed to load state from database", err)
-		os.Exit(1)
+		return 1
 	}
-	var saveConfigErr error
 	defer func() {
-		saveConfigErr = db.Save()
-		if saveConfigErr != nil {
-			clog.Error("Failed to save state to database", saveConfigErr)
-			os.Exit(1)
+		if saveErr := db.Save(); saveErr != nil {
+			clog.Error("Failed to save state to database", saveErr)
+			code = 1
 		}
 	}()
 
-	if err := root.Execute(); err != nil {
+	if err := c.Execute(); err != nil {
 		clog.Error(fmt.Sprintf("Failed to execute command: %v", err))
-		os.Exit(1)
+		return 1
 	}
+	return 0
 }
 
 // TODO:BK: refactor - logging implementation details exposed into the wild
