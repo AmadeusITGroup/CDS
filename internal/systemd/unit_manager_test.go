@@ -97,6 +97,17 @@ func TestManagerRemoveResetsFailedState(t *testing.T) {
 	assert.Equal(t, "systemctl --user reset-failed cds-kind.service", h.executed[len(h.executed)-1])
 }
 
+// TestManagerRemoveResetsQuadletService: a Quadlet "<name>.container" file is
+// loaded as "<name>.service", so that is the unit whose failed state is reset
+// (CDS-098).
+func TestManagerRemoveResetsQuadletService(t *testing.T) {
+	h := newFakeHost()
+	const dir = "/home/remote-user/.config/systemd/user"
+
+	require.NoError(t, newUnitManager(h).remove(dir, "cds-sec-registry.container"))
+	assert.Equal(t, "systemctl --user reset-failed cds-sec-registry.service", h.executed[len(h.executed)-1])
+}
+
 func TestManagerRestart(t *testing.T) {
 	h := newFakeHost()
 	require.NoError(t, newUnitManager(h).restart("cds.service"))

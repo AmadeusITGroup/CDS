@@ -211,12 +211,25 @@ func (m *unitManager) remove(unitDir string, unitNames ...string) error {
 	if err := m.daemonReload(); err != nil {
 		return err
 	}
-	resetArgs := append([]string{"--user", "reset-failed"}, unitNames...)
+	resetArgs := []string{"--user", "reset-failed"}
+	for _, name := range unitNames {
+		resetArgs = append(resetArgs, loadedUnitName(name))
+	}
 	if _, err := m.h.Execute("systemctl", resetArgs...); err != nil {
 		// best effort: the unit may not be in a failed state
 		_ = err
 	}
 	return nil
+}
+
+// loadedUnitName returns the name systemd loads for a unit file: a Quadlet
+// "<name>.container" file is generated into "<name>.service", which is the
+// unit that can end failed. Other names are returned unchanged.
+func loadedUnitName(fileName string) string {
+	if base, ok := strings.CutSuffix(fileName, ".container"); ok {
+		return base + ".service"
+	}
+	return fileName
 }
 
 // HostOps is the public shape of a target host: it runs commands and copies
