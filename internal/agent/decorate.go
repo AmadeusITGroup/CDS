@@ -187,8 +187,12 @@ func newRegistryEnv(user, password, owner string) registryEnv {
 // devcontainer so it can use the cluster and registry: the cluster kubeconfig
 // is installed at root's and the container user's default kubeconfig path, the
 // registry CA in the container's per-registry trust directory, and the
-// CDS_REGISTRY_* env in a 0600 file in the container user's home. The commands
-// run as root inside the container.
+// CDS_REGISTRY_* env in a 0600 file in the container user's home.
+//
+// Root writes only root-owned paths (/root/.kube, /etc/containers/certs.d,
+// /etc/profile.d). Every write into the container user's home runs AS that
+// user: root following a link the user planted in a dir the user owns would
+// let the user take any root file (CDS-067).
 //
 // kubeconfig is the cluster kubeconfig, caCert the registry CA PEM and owner
 // the container user (remoteUser, empty means root); each step is skipped when
@@ -198,8 +202,15 @@ func containerDecorationCommands(kubeconfig, caCert, owner string, reg registryE
 	if kubeconfig != "" {
 		cmds = append(cmds, decorationCommand{
 			info:   "Installing cluster kubeconfig in container",
-			script: installKubeconfigScript(kubeconfig, owner),
+			script: installKubeconfigScript(kubeconfig),
 		})
+		if !isRootUser(owner) {
+			cmds = append(cmds, decorationCommand{
+				info:   "Installing cluster kubeconfig for the container user",
+				script: installUserKubeconfigScript(kubeconfig, owner),
+				user:   owner,
+			})
+		}
 	}
 	if caCert != "" {
 		cmds = append(cmds, decorationCommand{
@@ -209,42 +220,57 @@ func containerDecorationCommands(kubeconfig, caCert, owner string, reg registryE
 	}
 	if reg.set() {
 		cmds = append(cmds, decorationCommand{
+			info:   "Removing legacy registry environment from container",
+			script: kRemoveLegacyRegistryEnvScript,
+		}, decorationCommand{
 			info:   "Exporting registry environment in container",
 			script: installRegistryEnvScript(reg),
+			user:   userOrRoot(reg.owner),
 		})
 	}
 	return cmds
 }
+
+// isRootUser reports whether the container user owner is root (empty means root).
+func isRootUser(owner string) bool {
+	return owner == cg.EmptyStr || owner == engine.KRootUsr
+}
+
+// userOrRoot is owner, or root when owner is empty.
+func userOrRoot(owner string) string {
+	if owner == cg.EmptyStr {
+		return engine.KRootUsr
+	}
+	return owner
+}
+
+// kRemoveLegacyRegistryEnvScript removes the world-readable /etc/profile.d
+// script that earlier versions wrote the registry password to (CDS-024).
+const kRemoveLegacyRegistryEnvScript = `rm -f /etc/profile.d/cds-registry.sh`
 
 // registryEnvFile is the env file, relative to the container user's home, that
 // holds the CDS_REGISTRY_* variables.
 const registryEnvFile = ".config/cds/registry.env"
 
 // installRegistryEnvScript writes the CDS_REGISTRY_* variables to a 0600 env
-// file owned by the container user, in that user's home, and sources it from
-// the user's shell rc files, so the user's shells can podman login and push to
-// the local registry while other container users cannot read the password
-// (CDS-024). It also removes the world-readable /etc/profile.d script that
-// earlier versions wrote.
+// file in the container user's home and sources it from the user's shell rc
+// files, so the user's shells can podman login and push to the local registry
+// while other container users cannot read the password (CDS-024).
 //
-// The script runs as root: the file is written to a fresh temp file and
-// renamed, so a link planted at the target is replaced, not followed. For the
-// same reason an rc file that is a link, not a regular file, or not owned by
-// the user is skipped with a warning, never appended to (CDS-054), and a
-// ~/.config or ~/.config/cds that is a link, not a dir, or not owned by the
-// user makes the script skip the env file and rc files with a warning (CDS-055).
-// Ownership is read with ls, not find, which minimal images may lack; an owner
-// it cannot read is warned about as such, not as "not owned" (CDS-057).
-// The "cds: " skip warnings go to stdout: a successful first-deploy step keeps
-// only stdout, and the agent sends those lines to the client (CDS-061).
+// The script runs AS the container user (CDS-067), so a link or a file the
+// user does not own in the home can only make a write fail, never redirect
+// it: a dir or env file it cannot write is skipped with a warning, and so is
+// an rc file it cannot append to. The "cds: " warnings go to stdout: a
+// successful first-deploy step keeps only stdout, and the agent sends those
+// lines to the client (CDS-061).
 func installRegistryEnvScript(reg registryEnv) string {
 	return fmt.Sprintf(`set -eu
 %s
-rm -f /etc/profile.d/cds-registry.sh
-for d in "$home/.config" "$home/.config/cds"; do
-  user_dir "$d" "$home/%s"
-done
-tmp=$(mktemp "$home/.config/cds/.registry.env.XXXXXX")
+umask 077
+d="$home/.config/cds"
+if ! mkdir -p "$d" 2>/dev/null || ! tmp=$(mktemp "$d/.registry.env.XXXXXX" 2>/dev/null); then
+  echo "cds: cannot write to $d, $home/%s not written"; exit 0
+fi
 cat > "$tmp" <<'CDS_EOF'
 export CDS_REGISTRY_NAME=%s
 export CDS_REGISTRY_PORT=%d
@@ -252,31 +278,17 @@ export CDS_REGISTRY_PATH_TO_CA=%s
 export CDS_REGISTRY_USR=%s
 export CDS_REGISTRY_PWD=%s
 CDS_EOF
-chmod 600 "$tmp"
-chown "$u:$g" "$tmp"
 mv -f "$tmp" "$home/%s"
 line='if [ -r "$HOME/%s" ]; then . "$HOME/%s"; fi # cds registry env'
 for rc in .profile .bashrc .bash_profile .zshrc; do
   f="$home/$rc"
-  # root must not write through a user-planted link, nor into a file the user
-  # does not own (a hard link to a root file) (CDS-054).
-  # shortcut: check-then-append, so a user racing the script can still swap
-  # the file; append as the user (runuser) if that matters.
-  if [ -L "$f" ]; then
-    echo "cds: $f is a link, not changed; add to it: $line"; continue
-  fi
   # .profile is created when missing (sh/dash/bash login shells read it);
   # the others are only appended to when the user already has them.
   if [ "$rc" != .profile ] && [ ! -e "$f" ]; then continue; fi
-  if [ -e "$f" ]; then
-    if [ ! -f "$f" ] || ! owned "$f"; then
-      echo "cds: $f is not a regular file owned by $u, not changed; add to it: $line"; continue
-    fi
-    if grep -qF "$line" "$f"; then continue; fi
+  if [ -e "$f" ] && grep -qF "$line" "$f" 2>/dev/null; then continue; fi
+  if ! { printf '%%s\n' "$line" >> "$f"; } 2>/dev/null; then
+    echo "cds: cannot write to $f, not changed; add to it: $line"
   fi
-  new=0; [ -e "$f" ] || new=1
-  printf '%%s\n' "$line" >> "$f"
-  if [ "$new" = 1 ]; then chown "$u:$g" "$f"; fi
 done`,
 		containerUserPrelude(reg.owner),
 		registryEnvFile,
@@ -284,72 +296,56 @@ done`,
 		registryEnvFile, registryEnvFile, registryEnvFile)
 }
 
-// decorationCommand is a shell snippet run as root inside the container with a
-// human-readable description.
+// decorationCommand is a shell snippet run inside the container, as user
+// (empty means root), with a human-readable description.
 type decorationCommand struct {
 	info   string
 	script string
+	user   string
 }
 
-// containerUserPrelude is the shell prelude of a decoration script that writes
-// into the home of container user owner while running as root. It sets u,
-// home, g and uid (exit 1 when the user has no home) and defines:
-//   - owned PATH: is PATH owned by the user? ls, not find: minimal images lack
-//     find (CDS-057).
-//   - user_dir DIR TARGET: creates DIR (700, the user's) when missing; when DIR
-//     is a link, not a dir, or not the user's, prints a "cds: " warning that
-//     TARGET is not written and exits 0, so root never writes through a
-//     user-planted dir link (CDS-055).
-//
-// shortcut: check-then-write, so a user racing the script can still swap the
-// dir; write as the user (runuser) if that matters.
+// runAs is the container user the command runs as.
+func (dc decorationCommand) runAs() string { return userOrRoot(dc.user) }
+
+// containerUserPrelude is the shell prelude of a decoration script that runs
+// as container user owner and writes into its home: it sets u and home and
+// exits 1 when the user has no home. The home comes from the passwd entry,
+// not $HOME, which an image ENV can override.
 func containerUserPrelude(owner string) string {
 	return fmt.Sprintf(`u=%s
 home=$(getent passwd "$u" 2>/dev/null | cut -d: -f6) || home=
 [ -n "$home" ] || home=$(awk -F: -v u="$u" '$1 == u { print $6 }' /etc/passwd)
-[ -n "$home" ] || { echo "container user $u has no home directory" >&2; exit 1; }
-g=$(id -g "$u")
-uid=$(id -u "$u")
-owned() {
-  o=$(ls -nd "$1" 2>/dev/null) || o=
-  set -f; set -- "$1" $o; set +f
-  [ -n "${4-}" ] || { echo "cds: cannot tell who owns $1"; return 1; }
-  [ "$4" = "$uid" ]
-}
-user_dir() {
-  if [ -L "$1" ] || { [ -e "$1" ] && { [ ! -d "$1" ] || ! owned "$1"; }; }; then
-    echo "cds: $1 is a link or not a directory owned by $u, $2 not written"; exit 0
-  fi
-  if [ ! -d "$1" ]; then mkdir -m 700 "$1"; chown "$u:$g" "$1"; fi
-}`, cg.ShellSingleQuote(owner))
+[ -n "$home" ] || { echo "container user $u has no home directory" >&2; exit 1; }`, cg.ShellSingleQuote(userOrRoot(owner)))
 }
 
 // installKubeconfigScript writes the cluster kubeconfig to root's default
-// path and, for a non-root container user (remoteUser), also to that user's
-// ~/.kube/config (600, the user's), so the shell `cds project ssh` opens can
-// run kubectl and helm (CDS-065). The user copy is written to a temp file and
-// renamed, so a link planted at the target is replaced, not followed; a
-// ~/.kube that is a link, not a dir, or not the user's is skipped with a
-// warning, as for the registry env (CDS-055).
-func installKubeconfigScript(kubeconfig, owner string) string {
+// path. It runs as root.
+func installKubeconfigScript(kubeconfig string) string {
 	// a here-doc keeps the content intact regardless of quoting.
-	script := fmt.Sprintf(`set -eu
+	return fmt.Sprintf(`set -eu
 mkdir -p /root/.kube
 cat > /root/.kube/config <<'CDS_EOF'
 %s
 CDS_EOF
 chmod 600 /root/.kube/config`, kubeconfig)
-	if owner == cg.EmptyStr || owner == engine.KRootUsr {
-		return script
-	}
-	return script + "\n" + containerUserPrelude(owner) + `
-[ "$uid" != 0 ] || exit 0
-user_dir "$home/.kube" "$home/.kube/config"
-tmp=$(mktemp "$home/.kube/.config.XXXXXX")
-cat /root/.kube/config > "$tmp"
-chmod 600 "$tmp"
-chown "$u:$g" "$tmp"
-mv -f "$tmp" "$home/.kube/config"`
+}
+
+// installUserKubeconfigScript writes the cluster kubeconfig to the ~/.kube/config
+// (600) of the non-root container user owner (remoteUser), so the shell
+// `cds project ssh` opens can run kubectl and helm (CDS-065). It runs AS that
+// user (CDS-067): a temp file renamed over the target, so a reader never sees
+// a partial file; a ~/.kube it cannot write is skipped with a warning.
+func installUserKubeconfigScript(kubeconfig, owner string) string {
+	return "set -eu\n" + containerUserPrelude(owner) + fmt.Sprintf(`
+umask 077
+d="$home/.kube"
+if ! mkdir -p "$d" 2>/dev/null || ! tmp=$(mktemp "$d/.config.XXXXXX" 2>/dev/null); then
+  echo "cds: cannot write to $d, $d/config not written"; exit 0
+fi
+cat > "$tmp" <<'CDS_EOF'
+%s
+CDS_EOF
+mv -f "$tmp" "$d/config"`, kubeconfig)
 }
 
 func installRegistryTrustScript(caCert string) string {
@@ -530,14 +526,14 @@ func (s *grpcServer) reapplyOrchestration(ctx context.Context, clusterRebuilt bo
 	}
 }
 
-// redecorateOne runs the decoration install scripts inside a single container
-// as root, each fed on stdin (they carry the kubeconfig and registry secrets).
+// redecorateOne runs the decoration install scripts inside a single container,
+// each as its user (root or the container user, CDS-067) and fed on stdin (they carry the kubeconfig and registry secrets).
 func (s *grpcServer) redecorateOne(ctx context.Context, name string, cmds []decorationCommand, report deployProgressReporter) {
 	for _, dc := range cmds {
 		if report != nil {
 			_ = report(deployProgress{phase: "decorate", message: fmt.Sprintf("%s: %s", name, dc.info)})
 		}
-		out, _, err := s.containerOps().ExecuteScriptInContainer(ctx, name, dc.script, "root")
+		out, _, err := s.containerOps().ExecuteScriptInContainer(ctx, name, dc.script, dc.runAs())
 		if err != nil {
 			clog.Warn(fmt.Sprintf("failed to re-decorate container %s (%s)", name, dc.info), err)
 		}

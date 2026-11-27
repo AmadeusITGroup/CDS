@@ -600,7 +600,7 @@ func TestBuildDecorationCommandsKeepSecretsOffCommandLine(t *testing.T) {
 	events, err := buildDecorationCommands(spec)
 	require.NoError(t, err)
 
-	require.Len(t, events, 2, "kubeconfig + registry env")
+	require.Len(t, events, 3, "kubeconfig + legacy registry env cleanup + registry env")
 	var inputs string
 	for _, e := range events {
 		assert.NotContains(t, e.Cmd(), kubeSecret)
@@ -620,6 +620,26 @@ func TestBuildDecorationCommandsKeepSecretsOffCommandLine(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "ok-"+regSecret+"\n", out)
 	assert.NotContains(t, readLog(t, logPath), regSecret)
+}
+
+// TestBuildDecorationCommandsWritesUserHomeAsRemoteUser: with a remoteUser,
+// the steps that write into its home run as that user, the others as root
+// (CDS-067).
+func TestBuildDecorationCommandsWritesUserHomeAsRemoteUser(t *testing.T) {
+	spec := deploySpecForTest(t, "dev-1", `{"image":"ubuntu:24.04","remoteUser":"dev"}`)
+	spec.orchestration = containerconf.KindOrchestrationConfig{Requested: true}
+	spec.orchestration.Registry.Requested = true
+	spec.kubeconfig = "apiVersion: v1"
+	spec.registryUser, spec.registryPassword = "cdsu", "pw"
+
+	events, err := buildDecorationCommands(spec)
+	require.NoError(t, err)
+
+	// root kubeconfig, user kubeconfig, legacy cleanup, registry env
+	require.Len(t, events, 4)
+	for i, want := range []string{"root", "dev", "root", "dev"} {
+		assert.Contains(t, events[i].Cmd(), "exec -u "+want+" ", i)
+	}
 }
 
 // a decoration step that cannot be built fails the deploy instead of being

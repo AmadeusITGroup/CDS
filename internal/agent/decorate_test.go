@@ -86,88 +86,113 @@ func TestContainerDecorationCommandsSkipEmpty(t *testing.T) {
 	assert.Contains(t, onlyKube[0].script, "/root/.kube/config")
 }
 
-// runKubeconfigScript runs installKubeconfigScript for owner "dev" with a real
-// /bin/sh: root's /root/.kube is moved to a temp dir and getent/id/chown are
-// stubbed (the test is not root); mktemp, cat, mv and the link checks are real.
-func runKubeconfigScript(t *testing.T, home, owner string) (rootKube, out string) {
+// stubGetent puts a getent on PATH that gives user dev the home home; the
+// scripts run as the test user, as they run as the container user (CDS-067).
+func stubGetent(t *testing.T, home string) []string {
 	t.Helper()
 	stubs := t.TempDir()
-	for name, body := range map[string]string{
-		"getent": `echo "dev:x:1000:1000::` + home + `:/bin/sh"`,
-		"id":     fmt.Sprintf("echo %d", os.Getuid()),
-		"chown":  `exit 0`,
-	} {
-		require.NoError(t, os.WriteFile(filepath.Join(stubs, name), []byte("#!/bin/sh\n"+body+"\n"), 0o755))
-	}
-	rootKube = filepath.Join(t.TempDir(), "root-kube")
-	script := strings.ReplaceAll(installKubeconfigScript("apiVersion: v1\nkind: Config", owner), "/root/.kube", rootKube)
-	cmd := exec.Command("/bin/sh", "-s")
-	cmd.Env = append(os.Environ(), "PATH="+stubs+":"+os.Getenv("PATH"))
-	cmd.Stdin = strings.NewReader(script)
-	// warnings must be on stdout: a successful first-deploy step keeps only stdout (CDS-061)
-	b, err := cmd.Output()
-	require.NoError(t, err, string(b))
-	return rootKube, string(b)
+	require.NoError(t, os.WriteFile(filepath.Join(stubs, "getent"),
+		[]byte("#!/bin/sh\necho \"dev:x:1000:1000::"+home+":/bin/sh\"\n"), 0o755))
+	return append(os.Environ(), "PATH="+stubs+":"+os.Getenv("PATH"))
 }
 
-// TestInstallKubeconfigScriptForRemoteUser: with a remoteUser the kubeconfig
-// also lands in that user's ~/.kube/config (600), root keeps its copy, and a
-// link planted at the target is replaced, not followed (CDS-065).
-func TestInstallKubeconfigScriptForRemoteUser(t *testing.T) {
+// runScript runs script with a real /bin/sh as the test user and returns its
+// stdout: warnings must be there, a successful first-deploy step keeps only
+// stdout (CDS-061).
+func runScript(t *testing.T, home, script string) string {
+	t.Helper()
+	cmd := exec.Command("/bin/sh", "-s")
+	cmd.Env = stubGetent(t, home)
+	cmd.Stdin = strings.NewReader(script)
+	b, err := cmd.Output()
+	require.NoError(t, err, string(b))
+	return string(b)
+}
+
+// TestInstallUserKubeconfigScript: with a remoteUser the kubeconfig lands in
+// that user's ~/.kube/config (600), and a link planted at the target is
+// replaced, not followed (CDS-065).
+func TestInstallUserKubeconfigScript(t *testing.T) {
 	home := t.TempDir()
 	require.NoError(t, os.MkdirAll(filepath.Join(home, ".kube"), 0o700))
-	victim := filepath.Join(t.TempDir(), "root-file")
-	require.NoError(t, os.WriteFile(victim, []byte("root-data\n"), 0o644))
+	victim := filepath.Join(t.TempDir(), "other-file")
+	require.NoError(t, os.WriteFile(victim, []byte("other-data\n"), 0o644))
 	require.NoError(t, os.Symlink(victim, filepath.Join(home, ".kube", "config")))
 
-	rootKube, _ := runKubeconfigScript(t, home, "dev")
-	_, _ = runKubeconfigScript(t, home, "dev") // re-decoration is idempotent
+	script := installUserKubeconfigScript("apiVersion: v1\nkind: Config", "dev")
+	runScript(t, home, script)
+	runScript(t, home, script) // re-decoration is idempotent
 
-	for _, p := range []string{filepath.Join(rootKube, "config"), filepath.Join(home, ".kube", "config")} {
-		fi, err := os.Lstat(p)
-		require.NoError(t, err, p)
-		assert.True(t, fi.Mode().IsRegular(), p)
-		assert.Equal(t, os.FileMode(0o600), fi.Mode().Perm(), p)
-		b, err := os.ReadFile(p)
-		require.NoError(t, err)
-		assert.Equal(t, "apiVersion: v1\nkind: Config\n", string(b), p)
-	}
-	b, err := os.ReadFile(victim)
+	p := filepath.Join(home, ".kube", "config")
+	fi, err := os.Lstat(p)
 	require.NoError(t, err)
-	assert.Equal(t, "root-data\n", string(b), "the link target is not written")
+	assert.True(t, fi.Mode().IsRegular())
+	assert.Equal(t, os.FileMode(0o600), fi.Mode().Perm())
+	b, err := os.ReadFile(p)
+	require.NoError(t, err)
+	assert.Equal(t, "apiVersion: v1\nkind: Config\n", string(b))
+	b, err = os.ReadFile(victim)
+	require.NoError(t, err)
+	assert.Equal(t, "other-data\n", string(b), "the link target is not written")
 	matches, _ := filepath.Glob(filepath.Join(home, ".kube", ".config.*"))
 	assert.Empty(t, matches, "no temp file left behind")
 
-	// a user without ~/.kube gets it created
+	// a user without ~/.kube gets it created, 700
 	fresh := t.TempDir()
-	_, _ = runKubeconfigScript(t, fresh, "dev")
+	runScript(t, fresh, script)
 	assert.FileExists(t, filepath.Join(fresh, ".kube", "config"))
+	fi, err = os.Stat(filepath.Join(fresh, ".kube"))
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o700), fi.Mode().Perm())
 }
 
-// TestInstallKubeconfigScriptSkipsLinkedKubeDir: root never writes through a
-// user-planted ~/.kube link; it warns and keeps root's copy (CDS-065, CDS-055).
-func TestInstallKubeconfigScriptSkipsLinkedKubeDir(t *testing.T) {
+// TestInstallUserKubeconfigScriptUnwritableKubeDir: a ~/.kube the user cannot
+// write is skipped with a warning, the script still succeeds.
+func TestInstallUserKubeconfigScriptUnwritableKubeDir(t *testing.T) {
 	home := t.TempDir()
-	target := t.TempDir()
-	require.NoError(t, os.Symlink(target, filepath.Join(home, ".kube")))
+	require.NoError(t, os.WriteFile(filepath.Join(home, ".kube"), []byte("not a dir\n"), 0o644))
 
-	rootKube, out := runKubeconfigScript(t, home, "dev")
-	assert.FileExists(t, filepath.Join(rootKube, "config"))
-	entries, err := os.ReadDir(target)
-	require.NoError(t, err)
-	assert.Empty(t, entries, "nothing is created in the link target")
-	assert.Contains(t, out, "cds: "+filepath.Join(home, ".kube")+" is a link")
+	out := runScript(t, home, installUserKubeconfigScript("KC", "dev"))
+	assert.Contains(t, out, "cds: cannot write to "+filepath.Join(home, ".kube"))
+}
+
+// TestDecorationRootNeverWritesUserHome: root writes only root-owned paths;
+// every write into the container user's home runs as that user, so a link
+// the user swaps in can never redirect a root write (CDS-067).
+func TestDecorationRootNeverWritesUserHome(t *testing.T) {
+	for _, owner := range []string{"", "root", "dev"} {
+		cmds := containerDecorationCommands("KC", "CA", owner, newRegistryEnv("cdsabc", "secret", owner))
+		var asUser []string
+		for _, dc := range cmds {
+			if dc.runAs() == "root" && owner == "dev" {
+				assert.NotContains(t, dc.script, "$home", "%s: %s runs as root", owner, dc.info)
+			}
+			assert.NotContains(t, dc.script, "chown", "%s: %s", owner, dc.info)
+			if dc.runAs() != "root" {
+				asUser = append(asUser, dc.info)
+				assert.Equal(t, owner, dc.runAs(), dc.info)
+			}
+		}
+		if owner == "dev" {
+			assert.Equal(t, []string{"Installing cluster kubeconfig for the container user", "Exporting registry environment in container"}, asUser)
+		} else {
+			assert.Empty(t, asUser, owner)
+		}
+	}
 }
 
 // TestInstallKubeconfigScriptRootOnly: a root (or unset) remoteUser only gets
 // root's copy, as before.
 func TestInstallKubeconfigScriptRootOnly(t *testing.T) {
 	for _, owner := range []string{"", "root"} {
-		script := installKubeconfigScript("KC", owner)
-		assert.Contains(t, script, "/root/.kube/config", owner)
-		assert.NotContains(t, script, "$home/.kube", owner)
+		cmds := containerDecorationCommands("KC", "", owner, registryEnv{})
+		require.Len(t, cmds, 1, owner)
+		assert.Contains(t, cmds[0].script, "/root/.kube/config", owner)
 	}
-	assert.Contains(t, installKubeconfigScript("KC", "dev"), "u='dev'")
+	cmds := containerDecorationCommands("KC", "", "dev", registryEnv{})
+	require.Len(t, cmds, 2)
+	assert.Contains(t, cmds[1].script, "u='dev'")
+	assert.Contains(t, cmds[1].script, "$home/.kube")
 }
 
 func TestEnsureOrchestrationAppliesMirrors(t *testing.T) {
@@ -210,18 +235,20 @@ func TestEnsureOrchestrationSkipsIngressWhenNotRequested(t *testing.T) {
 func TestContainerDecorationIncludesRegistryEnv(t *testing.T) {
 	reg := newRegistryEnv("cdsabc", "secret", "dev")
 	cmds := containerDecorationCommands("KC", "CA", "dev", reg)
-	// kubeconfig + trust + registry env
-	require.Len(t, cmds, 3)
-	last := cmds[2].script
-	assert.Contains(t, last, "CDS_REGISTRY_NAME=registry.cds.internal")
-	assert.Contains(t, last, "CDS_REGISTRY_PORT=5000")
-	assert.Contains(t, last, "CDS_REGISTRY_USR=cdsabc")
-	assert.Contains(t, last, "CDS_REGISTRY_PWD=secret")
-	assert.Contains(t, last, "u='dev'")
-	assert.Contains(t, last, registryEnvFile)
-	// the old world-readable profile script is removed, never written (CDS-024)
-	assert.Contains(t, last, "rm -f /etc/profile.d/cds-registry.sh")
-	assert.NotContains(t, last, "chmod 644")
+	// kubeconfig (root + user) + trust + legacy cleanup + registry env
+	require.Len(t, cmds, 5)
+	// the old world-readable profile script is removed, as root (CDS-024)
+	assert.Equal(t, kRemoveLegacyRegistryEnvScript, cmds[3].script)
+	assert.Equal(t, "root", cmds[3].runAs())
+	last := cmds[4]
+	assert.Equal(t, "dev", last.runAs())
+	assert.Contains(t, last.script, "CDS_REGISTRY_NAME=registry.cds.internal")
+	assert.Contains(t, last.script, "CDS_REGISTRY_PORT=5000")
+	assert.Contains(t, last.script, "CDS_REGISTRY_USR=cdsabc")
+	assert.Contains(t, last.script, "CDS_REGISTRY_PWD=secret")
+	assert.Contains(t, last.script, "u='dev'")
+	assert.Contains(t, last.script, registryEnvFile)
+	assert.NotContains(t, last.script, "chmod 644")
 }
 
 func TestNewRegistryEnvDefaultsOwnerToRoot(t *testing.T) {
@@ -229,36 +256,26 @@ func TestNewRegistryEnvDefaultsOwnerToRoot(t *testing.T) {
 }
 
 // TestInstallRegistryEnvScriptRealShell runs the script with a real /bin/sh
-// against a temp home: getent/id/chown are stubbed (the test is not root), the
-// rest (mktemp, mv, grep, rc sourcing) is real.
+// against a temp home, as the test user (the script runs as the container
+// user, CDS-067); only getent is stubbed.
 func TestInstallRegistryEnvScriptRealShell(t *testing.T) {
 	home := t.TempDir()
-	stubs := t.TempDir()
-	for name, body := range map[string]string{
-		"getent": `echo "dev:x:1000:1000::` + home + `:/bin/sh"`,
-		"id":     fmt.Sprintf("echo %d", os.Getuid()), // the user owns its rc files
-		"chown":  `exit 0`,
-	} {
-		require.NoError(t, os.WriteFile(filepath.Join(stubs, name), []byte("#!/bin/sh\n"+body+"\n"), 0o755))
-	}
 	// an existing .bashrc is appended to; a missing .zshrc is not created
 	require.NoError(t, os.WriteFile(filepath.Join(home, ".bashrc"), []byte("# user rc\n"), 0o644))
 
 	script := installRegistryEnvScript(newRegistryEnv("cdsabc", "s3cr3t", "dev"))
-	run := func() {
-		cmd := exec.Command("/bin/sh", "-s")
-		cmd.Env = append(os.Environ(), "PATH="+stubs+":"+os.Getenv("PATH"))
-		cmd.Stdin = strings.NewReader(script)
-		out, err := cmd.CombinedOutput()
-		require.NoError(t, err, string(out))
-	}
-	run()
-	run() // re-decoration is idempotent
+	runScript(t, home, script)
+	runScript(t, home, script) // re-decoration is idempotent
 
 	envFile := filepath.Join(home, registryEnvFile)
 	info, err := os.Stat(envFile)
 	require.NoError(t, err)
 	assert.Equal(t, os.FileMode(0o600), info.Mode().Perm())
+	for _, d := range []string{".config", ".config/cds"} {
+		fi, err := os.Stat(filepath.Join(home, d))
+		require.NoError(t, err)
+		assert.Equal(t, os.FileMode(0o700), fi.Mode().Perm(), d)
+	}
 	matches, _ := filepath.Glob(filepath.Join(home, ".config/cds/.registry.env.*"))
 	assert.Empty(t, matches, "no temp file left behind")
 
@@ -278,137 +295,40 @@ func TestInstallRegistryEnvScriptRealShell(t *testing.T) {
 	assert.Equal(t, "cdsabc:s3cr3t:"+registry.Hostname+":5000\n", string(out))
 }
 
-// TestInstallRegistryEnvScriptSkipsLinkedConfigDirs: the script runs as root,
-// so it never creates dirs or writes registry.env through a user-planted
-// ~/.config or ~/.config/cds link (CDS-055).
-func TestInstallRegistryEnvScriptSkipsLinkedConfigDirs(t *testing.T) {
-	for _, tc := range []struct {
-		name string
-		link string // path under home made a link to the target dir
-	}{
-		{"linked .config", ".config"},
-		{"linked .config/cds", ".config/cds"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			home := t.TempDir()
-			stubs := t.TempDir()
-			for name, body := range map[string]string{
-				"getent": `echo "dev:x:1000:1000::` + home + `:/bin/sh"`,
-				"id":     fmt.Sprintf("echo %d", os.Getuid()),
-				"chown":  `exit 0`,
-			} {
-				require.NoError(t, os.WriteFile(filepath.Join(stubs, name), []byte("#!/bin/sh\n"+body+"\n"), 0o755))
-			}
-			// a root dir outside the home, linked from the user's config path
-			target := t.TempDir()
-			require.NoError(t, os.WriteFile(filepath.Join(target, "keep"), []byte("root-data\n"), 0o644))
-			require.NoError(t, os.MkdirAll(filepath.Dir(filepath.Join(home, tc.link)), 0o700))
-			require.NoError(t, os.Symlink(target, filepath.Join(home, tc.link)))
-
-			cmd := exec.Command("/bin/sh", "-s")
-			cmd.Env = append(os.Environ(), "PATH="+stubs+":"+os.Getenv("PATH"))
-			cmd.Stdin = strings.NewReader(installRegistryEnvScript(newRegistryEnv("cdsabc", "s3cr3t", "dev")))
-			// the skip warning must be on stdout: a successful first-deploy
-			// step keeps only stdout (CDS-061)
-			out, err := cmd.Output()
-			require.NoError(t, err, string(out))
-
-			entries, err := os.ReadDir(target)
-			require.NoError(t, err)
-			require.Len(t, entries, 1, "nothing is created in the link target")
-			assert.Equal(t, "keep", entries[0].Name())
-			fi, err := os.Lstat(filepath.Join(home, tc.link))
-			require.NoError(t, err)
-			assert.NotZero(t, fi.Mode()&os.ModeSymlink, "the link is left as is")
-			assert.Contains(t, string(out), tc.link)
-			assert.NoFileExists(t, filepath.Join(home, ".profile"), "no rc line for an env file that was not written")
-		})
-	}
-}
-
-// TestInstallRegistryEnvScriptSkipsUnsafeRcFiles: the script runs as root, so
-// it never appends through a user-planted rc link or into an rc file the
-// container user does not own (CDS-054).
-func TestInstallRegistryEnvScriptSkipsUnsafeRcFiles(t *testing.T) {
-	for _, tc := range []struct {
-		name      string
-		uid       int
-		wantRcSet bool
-	}{
-		{"rc files owned by the user", os.Getuid(), true},
-		{"rc files owned by someone else", os.Getuid() + 1, false},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			home := t.TempDir()
-			stubs := t.TempDir()
-			for name, body := range map[string]string{
-				"getent": `echo "dev:x:1000:1000::` + home + `:/bin/sh"`,
-				"id":     fmt.Sprintf("echo %d", tc.uid),
-				"chown":  `exit 0`,
-			} {
-				require.NoError(t, os.WriteFile(filepath.Join(stubs, name), []byte("#!/bin/sh\n"+body+"\n"), 0o755))
-			}
-			// a root-owned file outside the home, linked from the user's .zshrc
-			target := filepath.Join(t.TempDir(), "qa-target")
-			require.NoError(t, os.WriteFile(target, []byte("root-data\n"), 0o644))
-			require.NoError(t, os.Symlink(target, filepath.Join(home, ".zshrc")))
-			require.NoError(t, os.WriteFile(filepath.Join(home, ".bashrc"), []byte("# user rc\n"), 0o644))
-
-			cmd := exec.Command("/bin/sh", "-s")
-			cmd.Env = append(os.Environ(), "PATH="+stubs+":"+os.Getenv("PATH"))
-			cmd.Stdin = strings.NewReader(installRegistryEnvScript(newRegistryEnv("cdsabc", "s3cr3t", "dev")))
-			// the skip warning must be on stdout: a successful first-deploy
-			// step keeps only stdout (CDS-061)
-			out, err := cmd.Output()
-			require.NoError(t, err, string(out))
-
-			b, err := os.ReadFile(target)
-			require.NoError(t, err)
-			assert.Equal(t, "root-data\n", string(b), "the link target is not written")
-			fi, err := os.Lstat(filepath.Join(home, ".zshrc"))
-			require.NoError(t, err)
-			assert.NotZero(t, fi.Mode()&os.ModeSymlink, "the link is left as is")
-			assert.Contains(t, string(out), ".zshrc")
-
-			b, err = os.ReadFile(filepath.Join(home, ".bashrc"))
-			require.NoError(t, err)
-			assert.Equal(t, tc.wantRcSet, strings.Contains(string(b), "# cds registry env"), ".bashrc")
-		})
-	}
-}
-
-// TestInstallRegistryEnvScriptWithoutFind: an image without find still gets
-// registry.env in an existing ~/.config and the guard line in the user's own
-// rc files; the owner checks must not read "no find" as "not owned" (CDS-057).
-func TestInstallRegistryEnvScriptWithoutFind(t *testing.T) {
+// TestInstallRegistryEnvScriptUnwritableConfigDir: a ~/.config the user cannot
+// write makes the script skip the env file and rc files with a warning, and
+// still succeed (CDS-055, CDS-061).
+func TestInstallRegistryEnvScriptUnwritableConfigDir(t *testing.T) {
 	home := t.TempDir()
-	stubs := t.TempDir()
-	for name, body := range map[string]string{
-		"getent": `echo "dev:x:1000:1000::` + home + `:/bin/sh"`,
-		"id":     fmt.Sprintf("echo %d", os.Getuid()),
-		"chown":  `exit 0`,
-		"find":   `echo "find: not found" >&2; exit 127`, // the image has no find
-	} {
-		require.NoError(t, os.WriteFile(filepath.Join(stubs, name), []byte("#!/bin/sh\n"+body+"\n"), 0o755))
-	}
-	require.NoError(t, os.MkdirAll(filepath.Join(home, ".config"), 0o755))
-	for _, rc := range []string{".bashrc", ".bash_profile"} {
-		require.NoError(t, os.WriteFile(filepath.Join(home, rc), []byte("# user rc\n"), 0o644))
-	}
+	require.NoError(t, os.WriteFile(filepath.Join(home, ".config"), []byte("not a dir\n"), 0o644))
 
-	cmd := exec.Command("/bin/sh", "-s")
-	cmd.Env = append(os.Environ(), "PATH="+stubs+":"+os.Getenv("PATH"))
-	cmd.Stdin = strings.NewReader(installRegistryEnvScript(newRegistryEnv("cdsabc", "s3cr3t", "dev")))
-	out, err := cmd.CombinedOutput()
-	require.NoError(t, err, string(out))
+	out := runScript(t, home, installRegistryEnvScript(newRegistryEnv("cdsabc", "s3cr3t", "dev")))
+	assert.Contains(t, out, "cds: cannot write to "+filepath.Join(home, ".config/cds"))
+	assert.NoFileExists(t, filepath.Join(home, ".profile"), "no rc line for an env file that was not written")
+}
 
-	assert.FileExists(t, filepath.Join(home, registryEnvFile))
-	for _, rc := range []string{".profile", ".bashrc", ".bash_profile"} {
-		b, err := os.ReadFile(filepath.Join(home, rc))
-		require.NoError(t, err, rc)
-		assert.Equal(t, 1, strings.Count(string(b), "# cds registry env"), rc)
+// TestInstallRegistryEnvScriptUnwritableRcFile: an rc file the user cannot
+// append to (here a link to a read-only file) is skipped with a warning; the
+// other rc files still get the line (CDS-054).
+func TestInstallRegistryEnvScriptUnwritableRcFile(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("root can write a read-only file")
 	}
-	assert.NotContains(t, string(out), "not changed")
+	home := t.TempDir()
+	target := filepath.Join(t.TempDir(), "read-only")
+	require.NoError(t, os.WriteFile(target, []byte("other-data\n"), 0o444))
+	require.NoError(t, os.Symlink(target, filepath.Join(home, ".zshrc")))
+	require.NoError(t, os.WriteFile(filepath.Join(home, ".bashrc"), []byte("# user rc\n"), 0o644))
+
+	out := runScript(t, home, installRegistryEnvScript(newRegistryEnv("cdsabc", "s3cr3t", "dev")))
+
+	b, err := os.ReadFile(target)
+	require.NoError(t, err)
+	assert.Equal(t, "other-data\n", string(b), "the read-only file is not written")
+	assert.Contains(t, out, "cds: cannot write to "+filepath.Join(home, ".zshrc"))
+	b, err = os.ReadFile(filepath.Join(home, ".bashrc"))
+	require.NoError(t, err)
+	assert.Contains(t, string(b), "# cds registry env")
 }
 
 func TestContainerDecorationSkipsRegistryEnvWhenUnset(t *testing.T) {

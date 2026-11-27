@@ -651,8 +651,9 @@ func compensateOrphanedCreate(containerName, preexistingID string) {
 
 // buildDecorationCommands builds the exec commands that decorate a running
 // devcontainer with cluster/registry access: the cluster kubeconfig and the
-// registry CA are installed inside the container. Each decoration step runs as
-// root in the container via a custom command.
+// registry CA are installed inside the container. Each decoration step runs in
+// the container via a custom command, as root or, for writes into the
+// container user's home, as that user (CDS-067).
 func buildDecorationCommands(spec deployContainerSpec) ([]shexec.ExecuteEvent, error) {
 	return decorationEvents(spec, (*engine.ContainersEngine).BuildCommands)
 }
@@ -672,7 +673,7 @@ func decorationEvents(spec deployContainerSpec, build func(*engine.ContainersEng
 		ce.SetAction(engine.K_ACTION_EXE)
 		ce.SetExecuteCmd(engine.K_EXEC_CUSTOM_CMD)
 		ce.SetContainerName(spec.containerName)
-		ce.SetRemoteUser(engine.KRootUsr)
+		ce.SetRemoteUser(dc.runAs())
 		ce.SetCustomCommand(kScriptOnStdin)
 		cmds, err := build(ce)
 		if err != nil {
