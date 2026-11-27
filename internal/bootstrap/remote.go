@@ -26,6 +26,9 @@ const (
 	kRemoteDirPerm     = "700"
 	kRemoteBinaryPerm  = "700"
 	kRemoteSecretsPerm = "600"
+	// kStaleUploadMinutes is the age past which a staging upload is treated
+	// as left behind by an interrupted run.
+	kStaleUploadMinutes = 60
 )
 
 // remoteHost is a host reachable through SSH, see internal/host.
@@ -203,7 +206,24 @@ func (rb remoteBootstrap) ensureBinary(p platform, binDir string) (string, error
 		rb.removeQuietly(staging)
 		return cg.EmptyStr, cerr.AppendErrorFmt("Failed to install %s on %s", err, remote, rb.hostname)
 	}
+	rb.removeStaleStaging(remote)
 	return remote, nil
+}
+
+// removeStaleStaging deletes, best effort, the staging files an interrupted
+// run left next to remote (CDS-085). Only files older than
+// kStaleUploadMinutes go: a younger one may be a concurrent client's upload
+// still in flight (CDS-063).
+func (rb remoteBootstrap) removeStaleStaging(remote string) {
+	if _, err := rb.h.Execute("sh", "-c", cg.ShellSingleQuote(staleStagingScript(remote))); err != nil {
+		clog.Debug(fmt.Sprintf("Failed to remove stale uploads next to %s on %s: %v", remote, rb.hostname, err))
+	}
+}
+
+// staleStagingScript returns the sh script deleting the stale staging files of remote.
+func staleStagingScript(remote string) string {
+	return fmt.Sprintf("find %s -maxdepth 1 -type f -name %s -mmin +%d -exec rm -f {} +",
+		cg.ShellSingleQuote(path.Dir(remote)), cg.ShellSingleQuote(path.Base(remote)+kRemoteUploadExt+".*"), kStaleUploadMinutes)
 }
 
 // uploadStagingPath returns a staging path next to remote, unique to this run.

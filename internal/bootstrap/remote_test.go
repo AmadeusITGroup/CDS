@@ -3,9 +3,12 @@ package bootstrap
 import (
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	cg "github.com/amadeusitgroup/cds/internal/global"
 	"github.com/stretchr/testify/assert"
@@ -193,6 +196,65 @@ func TestRemoteBootstrapRemovesStagingFileOnFailedInstall(t *testing.T) {
 	staged := stagedBinaries(h)
 	require.Len(t, staged, 1)
 	assert.Contains(t, h.executed, "rm -f "+staged[0])
+	assert.NotContains(t, h.executed, "sh -c "+cg.ShellSingleQuote(staleStagingScript(remoteBinaryPath())),
+		"no sweep when the install failed")
+}
+
+// CDS-085: after a successful install, stale staging files of interrupted
+// runs are swept.
+func TestRemoteBootstrapSweepsStaleStagingAfterInstall(t *testing.T) {
+	h := newFakeRemoteHost()
+	rb, _ := newTestRemoteBootstrap(t, h)
+
+	require.NoError(t, rb.run())
+
+	staged := stagedBinaries(h)
+	require.Len(t, staged, 1)
+	mv := indexOf(h.executed, "mv -f "+staged[0]+" "+remoteBinaryPath())
+	sweep := indexOf(h.executed, "sh -c "+cg.ShellSingleQuote(staleStagingScript(remoteBinaryPath())))
+	require.NotEqual(t, -1, sweep, "stale staging files are swept")
+	assert.Greater(t, sweep, mv, "the sweep runs after the rename")
+}
+
+// CDS-085: the sweep, run by a real sh, deletes only old staging files of the
+// binary: a young one may be a concurrent upload in flight (CDS-063).
+func TestStaleStagingScriptRealShell(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("needs sh and find")
+	}
+	dir := t.TempDir()
+	binary := filepath.Join(dir, "cds-api-agent")
+	old := time.Now().Add(-2 * time.Hour)
+	files := map[string]bool{ // name -> kept
+		"cds-api-agent":                         true,
+		"cds-api-agent.upload.0123456789abcdef": false,
+		"cds-api-agent.upload.young":            true,
+		"other.upload.0123":                     true,
+	}
+	for name := range files {
+		p := filepath.Join(dir, name)
+		require.NoError(t, os.WriteFile(p, []byte(name), 0600))
+		if name != "cds-api-agent.upload.young" {
+			require.NoError(t, os.Chtimes(p, old, old))
+		}
+	}
+
+	out, err := exec.Command("sh", "-c", staleStagingScript(binary)).CombinedOutput()
+	require.NoError(t, err, string(out))
+
+	for name, kept := range files {
+		_, err := os.Stat(filepath.Join(dir, name))
+		assert.Equal(t, kept, err == nil, name)
+	}
+}
+
+func indexOf(cmds []string, cmd string) int {
+	for i, c := range cmds {
+		if c == cmd {
+			return i
+		}
+	}
+	return -1
 }
 
 // renameFailingHost fails every `mv` command.
