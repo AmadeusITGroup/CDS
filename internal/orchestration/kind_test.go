@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/amadeusitgroup/cds/internal/bo"
+	cg "github.com/amadeusitgroup/cds/internal/global"
 	"github.com/amadeusitgroup/cds/internal/systemd"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -583,4 +584,63 @@ func TestKindSupervisionUnitHasNoInstallSection(t *testing.T) {
 	assert.Contains(t, unitText, "ExecStart=/usr/bin/podman start --attach "+ControlPlaneNode)
 	assert.NotContains(t, unitText, "[Install]")
 	assert.NotContains(t, unitText, "WantedBy")
+}
+
+// failingHostOps fails the systemd commands whose "name args" line starts with
+// one of failPrefixes and answers every other one like a healthy host.
+type failingHostOps struct{ failPrefixes []string }
+
+func (f failingHostOps) Execute(name string, args ...string) (string, error) {
+	line := name + " " + strings.Join(args, " ")
+	for _, p := range f.failPrefixes {
+		if strings.HasPrefix(line, p) {
+			return "boom", assertErr(line)
+		}
+	}
+	if name == "systemd-path" {
+		return "/home/u/.config", nil
+	}
+	return cg.EmptyStr, nil
+}
+func (failingHostOps) Copy(string, string) error { return nil }
+
+// TestKindDeleteReturnsTeardownFailures: a unit dir or unit removal failure is
+// returned, and the cluster delete is still attempted (CDS-077, like CDS-026).
+func TestKindDeleteReturnsTeardownFailures(t *testing.T) {
+	cases := map[string]struct {
+		failPrefixes []string
+		kindFails    bool
+		want         []string
+	}{
+		"unit dir fails":     {failPrefixes: []string{"systemd-path"}, want: []string{"failed to remove kind supervision unit", "systemd user configuration directory"}},
+		"unit file rm fails": {failPrefixes: []string{"rm -f "}, want: []string{"failed to remove kind supervision unit"}},
+		"kind delete fails":  {kindFails: true, want: []string{"failed to delete kind cluster"}},
+		"all fail":           {failPrefixes: []string{"rm -f "}, kindFails: true, want: []string{"failed to remove kind supervision unit", "failed to delete kind cluster"}},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			r := newFakeRunner()
+			if tc.kindFails {
+				r.replies["kind delete cluster"] = "boom"
+				r.fail["kind delete cluster"] = true
+			}
+			k := kindProviderWithRunner(r)
+			k.units = systemd.NewUnitManager(failingHostOps{failPrefixes: tc.failPrefixes})
+
+			err := k.Delete(true)
+			require.Error(t, err)
+			for _, w := range tc.want {
+				assert.Contains(t, err.Error(), w)
+			}
+			assert.True(t, r.ranContaining("kind delete cluster --name="+ClusterName), "cluster delete is still attempted")
+		})
+	}
+}
+
+func TestKindDeleteSucceedsWhenTeardownSucceeds(t *testing.T) {
+	r := newFakeRunner()
+	k := kindProviderWithRunner(r)
+	k.units = systemd.NewUnitManager(failingHostOps{})
+	require.NoError(t, k.Delete(true))
+	assert.True(t, r.ranContaining("kind delete cluster --name="+ClusterName))
 }

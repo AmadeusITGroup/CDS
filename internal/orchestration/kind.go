@@ -259,16 +259,30 @@ func (k *kindProvider) Stop() error {
 // preserves the pods. force is accepted for interface parity (the agent decides
 // "in use"); kind delete is unconditional and returns zero even if the cluster
 // is absent.
+//
+// Every step is attempted and any failure is returned (CDS-077, as CDS-026 did
+// for the registry), so delete never reports success while cds-kind.service
+// is still installed.
 func (k *kindProvider) Delete(force bool) error {
-	if unitDir, err := k.units.UserUnitDir(); err == nil {
-		if err := k.units.Remove(unitDir, kindSupervisionUnit); err != nil {
-			clog.Warn("failed to remove kind supervision unit", err)
-		}
+	var errs []error
+	if err := k.removeSupervisionUnit(); err != nil {
+		errs = append(errs, cerr.AppendError("failed to remove kind supervision unit", err))
 	}
 	if out, err := k.runner(kindDeleteCommand()); err != nil {
-		return cerr.AppendErrorFmt("failed to delete kind cluster %s: %s", err, ClusterName, out)
+		errs = append(errs, cerr.AppendErrorFmt("failed to delete kind cluster %s: %s", err, ClusterName, out))
+	}
+	if len(errs) > 0 {
+		return cerr.AppendMultipleErrors("failed to delete cluster", errs)
 	}
 	return nil
+}
+
+func (k *kindProvider) removeSupervisionUnit() error {
+	unitDir, err := k.units.UserUnitDir()
+	if err != nil {
+		return err
+	}
+	return k.units.Remove(unitDir, kindSupervisionUnit)
 }
 
 // Status returns the live cluster view from the control-plane node status.
