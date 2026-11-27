@@ -165,8 +165,45 @@ func writeKubeconfig(path string, data []byte) error {
 	} else if err != nil && !os.IsNotExist(err) {
 		return cerr.AppendErrorFmt("failed to read kubeconfig %s", err, path)
 	}
-	if err := os.WriteFile(path, data, 0600); err != nil {
-		return cerr.AppendErrorFmt("failed to write kubeconfig %s", err, path)
+	return replaceFileAtomically(path, data)
+}
+
+// replaceFileAtomically writes data to a temp file next to path's real target
+// (symlinks resolved, so a linked kubeconfig stays linked), keeps the target's
+// mode (cg.KPermFile for a new file), fsyncs it and renames it over the target,
+// so a failure mid-write never leaves a truncated kubeconfig (CDS-070).
+func replaceFileAtomically(path string, data []byte) error {
+	target, perm := path, cg.KPermFile
+	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+		target = resolved
+		if fi, sErr := os.Stat(target); sErr == nil {
+			perm = fi.Mode().Perm()
+		}
+	} else if !os.IsNotExist(err) {
+		return cerr.AppendErrorFmt("failed to resolve kubeconfig %s", err, path)
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(target), "."+filepath.Base(target)+"-*.tmp")
+	if err != nil {
+		return cerr.AppendErrorFmt("failed to create a temp file for kubeconfig %s", err, target)
+	}
+	defer func() {
+		_ = tmp.Close()
+		_ = os.Remove(tmp.Name())
+	}()
+	if err := tmp.Chmod(perm); err != nil {
+		return cerr.AppendErrorFmt("failed to set the mode of kubeconfig %s", err, target)
+	}
+	if _, err := tmp.Write(data); err != nil {
+		return cerr.AppendErrorFmt("failed to write kubeconfig %s", err, target)
+	}
+	if err := tmp.Sync(); err != nil {
+		return cerr.AppendErrorFmt("failed to sync kubeconfig %s", err, target)
+	}
+	if err := tmp.Close(); err != nil {
+		return cerr.AppendErrorFmt("failed to write kubeconfig %s", err, target)
+	}
+	if err := os.Rename(tmp.Name(), target); err != nil {
+		return cerr.AppendErrorFmt("failed to replace kubeconfig %s", err, target)
 	}
 	return nil
 }

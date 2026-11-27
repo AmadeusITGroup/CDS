@@ -111,3 +111,53 @@ func TestLocalKubeconfigPathMultiPath(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, filepath.Join(home, ".kube", "config"), localKubeconfigPath())
 }
+
+// TestWriteKubeconfigReplacesAtomically checks that the merged kubeconfig
+// replaces the user's file with a rename, never by truncating it in place: a
+// reader holding the old file still sees it whole, the mode is kept, a
+// symlinked kubeconfig stays a symlink, and no temp file is left (CDS-070).
+func TestWriteKubeconfigReplacesAtomically(t *testing.T) {
+	d := t.TempDir()
+	target := filepath.Join(d, "real-config")
+	link := filepath.Join(d, "config")
+	prod := "apiVersion: v1\nkind: Config\nclusters:\n- name: prod\n  cluster: {server: 'https://prod:6443'}\n"
+	require.NoError(t, os.WriteFile(target, []byte(prod), 0600))
+	require.NoError(t, os.Chmod(target, 0640))
+	require.NoError(t, os.Symlink(target, link))
+
+	old, err := os.Open(target)
+	require.NoError(t, err)
+	defer func() { _ = old.Close() }()
+
+	kind := "apiVersion: v1\nkind: Config\nclusters:\n- name: kind-cds-kind\n  cluster: {server: 'https://127.0.0.1:1'}\n"
+	require.NoError(t, writeKubeconfig(link, []byte(kind)))
+
+	// the old file was not truncated or rewritten in place.
+	b := make([]byte, len(prod)+1)
+	n, _ := old.ReadAt(b, 0)
+	assert.Equal(t, prod, string(b[:n]))
+
+	fi, err := os.Lstat(link)
+	require.NoError(t, err)
+	assert.True(t, fi.Mode()&os.ModeSymlink != 0, "symlink replaced by a file")
+	fi, err = os.Stat(target)
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0640), fi.Mode().Perm())
+	got, err := os.ReadFile(target)
+	require.NoError(t, err)
+	assert.Contains(t, string(got), "name: prod")
+	assert.Contains(t, string(got), "name: kind-cds-kind")
+
+	entries, err := os.ReadDir(d)
+	require.NoError(t, err)
+	assert.Len(t, entries, 2, "temp file left behind")
+}
+
+// TestWriteKubeconfigNewFileMode checks a new kubeconfig is created 0600.
+func TestWriteKubeconfigNewFileMode(t *testing.T) {
+	path := filepath.Join(t.TempDir(), ".kube", "config")
+	require.NoError(t, writeKubeconfig(path, []byte("apiVersion: v1\nkind: Config\n")))
+	fi, err := os.Stat(path)
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0600), fi.Mode().Perm())
+}
