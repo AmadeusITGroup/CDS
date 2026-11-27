@@ -166,8 +166,13 @@ func (k *kindProvider) checkConfigFile(configFile string) error {
 }
 
 // stopCreateScope stops the kind create scope, killing every process left in
-// it. Best-effort: the scope is already gone when kind's children exited.
+// it. It SIGKILLs the scope first: the node's conmon ignores SIGTERM, so a
+// plain stop waited out systemd's 90 s stop timeout while the cluster lock was
+// held. Best-effort: the scope is already gone when kind's children exited.
 func (k *kindProvider) stopCreateScope() {
+	if out, err := k.runner("systemctl --user kill --signal=SIGKILL " + kindCreateScope); err != nil {
+		clog.Debug(fmt.Sprintf("failed to kill scope %s: %s", kindCreateScope, out), err)
+	}
 	if out, err := k.runner("systemctl --user stop " + kindCreateScope); err != nil {
 		clog.Debug(fmt.Sprintf("failed to stop scope %s: %s", kindCreateScope, out), err)
 	}

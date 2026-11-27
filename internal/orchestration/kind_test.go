@@ -100,7 +100,8 @@ func TestKindCreateClusterCancelledRemovesPartialCluster(t *testing.T) {
 
 // TestKindCreateClusterCancelledStopsScope: under systemd a cancelled create
 // stops its whole scope (kind's podman children too) before the delete, so
-// they do not race it.
+// they do not race it. It SIGKILLs the scope first: the node's conmon ignores
+// SIGTERM, so a plain stop waited out the 90 s stop timeout under the lock.
 func TestKindCreateClusterCancelledStopsScope(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("needs a POSIX systemd-run stub")
@@ -116,10 +117,11 @@ func TestKindCreateClusterCancelledStopsScope(t *testing.T) {
 
 	require.Error(t, k.createCluster(ctx, ""))
 
-	require.Len(t, r.ran, 3)
+	require.Len(t, r.ran, 4)
 	assert.Contains(t, r.ran[0], "--unit=cds-kind-create.scope")
-	assert.Equal(t, "systemctl --user stop cds-kind-create.scope", r.ran[1])
-	assert.Contains(t, r.ran[2], "kind delete cluster --name=cds-kind")
+	assert.Equal(t, "systemctl --user kill --signal=SIGKILL cds-kind-create.scope", r.ran[1])
+	assert.Equal(t, "systemctl --user stop cds-kind-create.scope", r.ran[2])
+	assert.Contains(t, r.ran[3], "kind delete cluster --name=cds-kind")
 }
 
 // TestKindBoundedWaitsHonourCancel: the API server, ingress webhook and
