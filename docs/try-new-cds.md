@@ -142,6 +142,7 @@ Create a project whose devcontainer requests orchestration + ingress + registry.
 mkdir -p ~/labs/mylab/.devcontainer
 cat > ~/labs/mylab/.devcontainer/devcontainer.json <<'JSON'
 {
+  "name": "mylab",
   "image": "<an image with sshd + skopeo/podman + kubectl/helm>",
   "orchestration": {
     "engine": "kind",
