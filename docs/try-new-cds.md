@@ -17,11 +17,20 @@ host, a kind cluster, a secure registry and a devcontainer that uses them.
 
 ```sh
 # keep a timestamped backup of an earlier cds state, then step aside
-[ -d ~/.cds ] && mv ~/.cds ~/.cds.backup.$(date +%Y%m%d-%H%M%S)
-[ -d ~/.cds-agent ] && mv ~/.cds-agent ~/.cds-agent.backup.$(date +%Y%m%d-%H%M%S)
+TS=$(date +%Y%m%d-%H%M%S); echo "backup: $TS"
+[ -d ~/.cds ] && mv ~/.cds ~/.cds.backup.$TS
+[ -d ~/.cds-agent ] && mv ~/.cds-agent ~/.cds-agent.backup.$TS
 ```
 
-To restore it later: `rm -rf ~/.cds && mv ~/.cds.backup.* ~/.cds`.
+To restore it later, pick the backup timestamp (`ls -d ~/.cds.backup.* ~/.cds-agent.backup.*`
+lists them) and put both directories back:
+
+```sh
+TS=20261127-101500   # the backup to restore
+rm -rf ~/.cds ~/.cds-agent
+[ -d ~/.cds.backup.$TS ] && mv ~/.cds.backup.$TS ~/.cds
+[ -d ~/.cds-agent.backup.$TS ] && mv ~/.cds-agent.backup.$TS ~/.cds-agent
+```
 
 If another `cds` binary is installed, make sure it is **not** first on your
 `PATH` (`which cds` should point at the binary you install below).
@@ -218,7 +227,7 @@ cds space host delete <HOST>            # tears down the agent on the HOST
 ## Reporting a problem
 
 When you open an issue, include the exact command, the `-t`/project used, the
-full error (the client logs to `~/.cds/cds.log`), and the HOST's podman/kind
+full error (the client logs to the file `~/.cds/logs`), and the HOST's podman/kind
 versions.
 
 Known limitations:
