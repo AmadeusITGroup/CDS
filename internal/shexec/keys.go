@@ -76,7 +76,12 @@ func KeyPairPaths(suffix string) KeyPair {
 // EnsureKeyPair returns the $HOME/.ssh/id_rsa_SUFFIX key pair. A complete pair
 // already on disk is reused as is; otherwise a new pair is generated. An existing
 // key file is never overwritten (a half pair is refused), even through a symlink.
+// A suffix that is empty or holds a path separator or ".." is refused, so the
+// pair cannot land outside $HOME/.ssh (CDS-086).
 func EnsureKeyPair(suffix string) (KeyPair, error) {
+	if suffix == "" || strings.ContainsAny(suffix, `/\`) || strings.Contains(suffix, "..") {
+		return KeyPair{}, cerr.NewError(fmt.Sprintf("Invalid key pair name %q: it must not be empty or hold '/', '\\' or '..'", suffix))
+	}
 	keyPairPath := KeyPairPaths(suffix)
 	if isRegularFile(keyPairPath.PathToPrv) && isRegularFile(keyPairPath.PathToPub) {
 		clog.Debug(fmt.Sprintf("Key pair %s exists. Use it!", keyPairPath.PathToPrv))

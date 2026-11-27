@@ -184,3 +184,27 @@ func TestEnsureKeyPairNeverOverwrites(t *testing.T) {
 	assert.NoFileExists(t, filepath.Join(target, "missing"))
 	assert.NoFileExists(t, dangling.PathToPub)
 }
+
+// CDS-086: a suffix that would leave $HOME/.ssh (separator or "..") is
+// refused and nothing is written.
+func TestEnsureKeyPairRejectsPathSuffix(t *testing.T) {
+	cos.SetRealFileSystem()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	if err := os.MkdirAll(filepath.Join(home, ".ssh"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	for _, suffix := range []string{"", "../../../x", "../x", "a/b", `a\b`, ".."} {
+		_, err := EnsureKeyPair(suffix)
+		assert.Error(t, err, suffix)
+	}
+	assert.NoFileExists(t, filepath.Join(home, "x"))
+	assert.NoFileExists(t, filepath.Join(home, "id_rsa_x"))
+	entries, _ := os.ReadDir(filepath.Join(home, ".ssh"))
+	assert.Empty(t, entries)
+
+	// a dotted host name is still fine
+	_, err := EnsureKeyPair("host.example.com")
+	assert.NoError(t, err)
+}
