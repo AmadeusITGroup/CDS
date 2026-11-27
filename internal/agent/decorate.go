@@ -369,15 +369,23 @@ func (s *containerServiceServer) ensureAndResolveDecoration(
 	// apply the mirrors of every recorded deployment, not only this one, so the
 	// prune below keeps theirs (CDS-078)
 	oc := spec.orchestration
-	others, known := s.core.otherDeploymentMirrors(spec.containerName)
+	others, known := s.core.otherDeployments(spec.containerName)
+	mirrorSets := [][]containerconf.Mirror{oc.Mirrors}
+	for _, d := range others {
+		mirrorSets = append(mirrorSets, d.oc.Mirrors)
+	}
 	var conflicts []string
-	oc.Mirrors, conflicts = mergeMirrors(append([][]containerconf.Mirror{oc.Mirrors}, others...)...)
+	oc.Mirrors, conflicts = mergeMirrors(mirrorSets...)
 	for _, c := range conflicts {
 		clog.Warn(c)
 		_ = report(deployProgress{phase: kProgressPhaseWarning, message: c})
 	}
+	created := s.core.clusterAbsent()
 	if err := ensureOrchestration(ctx, s.core.clusterOps(), s.core.registryOps(), oc, report); err != nil {
 		return spec, err
+	}
+	if created {
+		s.core.restoreOtherDeployments(ctx, oc, others, report)
 	}
 	if known {
 		// a stale mirror is not worth failing the deploy for
@@ -492,16 +500,56 @@ func (s *grpcServer) orchestratedDeployments() (out []orchestratedDeployment, ok
 	return out, true
 }
 
-// otherDeploymentMirrors returns the mirrors of every recorded orchestrated
-// deployment but name; ok is false when the record cannot be read.
-func (s *grpcServer) otherDeploymentMirrors(name string) (sets [][]containerconf.Mirror, ok bool) {
+// otherDeployments returns every recorded orchestrated deployment but name; ok
+// is false when the record cannot be read.
+func (s *grpcServer) otherDeployments(name string) (others []orchestratedDeployment, ok bool) {
 	deployed, ok := s.orchestratedDeployments()
 	for _, d := range deployed {
 		if d.name != name {
-			sets = append(sets, d.oc.Mirrors)
+			others = append(others, d)
 		}
 	}
-	return sets, ok
+	return others, ok
+}
+
+// clusterAbsent reports whether the cluster does not exist yet, so a build
+// creates it. A status that cannot be read counts as absent: restoring the
+// other deployments is best effort and safe to repeat.
+func (s *grpcServer) clusterAbsent() bool {
+	c, err := s.clusterOps().GetCluster()
+	return err != nil || c.Status == bo.KContainerStatusDeleted
+}
+
+// restoreOtherDeployments gives a cluster a deploy just created what the other
+// recorded deployments need, as BuildCluster does (CDS-082): their ingress and
+// registry access, then a re-decoration of their running containers, which
+// hold the old cluster's kubeconfig. Their mirrors are already merged into
+// oc.Mirrors. Best effort: a failed step is reported, the deploy goes on.
+func (s *grpcServer) restoreOtherDeployments(ctx context.Context, oc containerconf.KindOrchestrationConfig, others []orchestratedDeployment, report deployProgressReporter) {
+	if len(others) == 0 {
+		return
+	}
+	ingress, registryRequested := false, false
+	for _, d := range others {
+		ingress = ingress || d.oc.Ingress
+		registryRequested = registryRequested || d.oc.Registry.Requested
+	}
+	if ingress && !oc.Ingress {
+		warnReapply(report, deployIngress(ctx, s.clusterOps(), report))
+	}
+	if registryRequested && !oc.Registry.Requested {
+		warnReapply(report, connectRegistryToCluster(ctx, s.clusterOps(), s.registryOps(), report))
+	}
+	s.redecorateContainers(ctx, report)
+}
+
+// warnReapply logs and reports a failed re-apply step; nil is a no-op.
+func warnReapply(report deployProgressReporter, err error) {
+	if err == nil {
+		return
+	}
+	clog.Warn("failed to re-apply orchestration setting", err)
+	_ = report(deployProgress{phase: "cluster", message: fmt.Sprintf("Warning: %v", err)})
 }
 
 // mergeMirrors merges mirror sets into one mirror per registry. When two sets
@@ -552,13 +600,7 @@ func (s *grpcServer) reapplyOrchestration(ctx context.Context, clusterRebuilt bo
 	}
 	mirrors, conflicts := mergeMirrors(mirrorSets...)
 
-	warn := func(err error) {
-		if err == nil {
-			return
-		}
-		clog.Warn("failed to re-apply orchestration setting", err)
-		_ = report(deployProgress{phase: "cluster", message: fmt.Sprintf("Warning: %v", err)})
-	}
+	warn := func(err error) { warnReapply(report, err) }
 	if clusterRebuilt {
 		for _, c := range conflicts {
 			warn(cerr.NewError(c))

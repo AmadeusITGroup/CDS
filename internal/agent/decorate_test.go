@@ -13,6 +13,8 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/amadeusitgroup/cds/internal/api/v1/cdspb"
+	"github.com/amadeusitgroup/cds/internal/bo"
 	"github.com/amadeusitgroup/cds/internal/containerconf"
 	"github.com/amadeusitgroup/cds/internal/orchestration"
 	"github.com/amadeusitgroup/cds/internal/registry"
@@ -540,4 +542,50 @@ func TestEnsureAndResolveDecorationMergesAndPrunesMirrors(t *testing.T) {
 	assert.Equal(t, want, cluster.prunedKeep, "ghcr.io from dev-1's old config is pruned")
 	require.Len(t, warnings, 1)
 	assert.Contains(t, warnings[0], "conflict for docker.io: using https://b, ignoring https://a")
+}
+
+// TestEnsureAndResolveDecorationRestoresOthersOnCreatedCluster: a deploy that
+// creates the cluster (it was deleted) restores the other recorded
+// deployments' ingress and registry access and re-decorates their running
+// containers; a deploy onto an existing cluster does not (CDS-082).
+func TestEnsureAndResolveDecorationRestoresOthersOnCreatedCluster(t *testing.T) {
+	for name, tc := range map[string]struct {
+		status  bo.ContainerStatus
+		restore bool
+	}{
+		"cluster created":  {status: bo.KContainerStatusDeleted, restore: true},
+		"cluster existing": {status: bo.KContainerStatusRunning, restore: false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			cluster := &mockClusterOps{cluster: orchestration.Cluster{Status: tc.status}, kubeconfig: "NEWKC"}
+			containers := &mockContainerOps{containers: bo.Containers{{Name: "dev-0", Status: bo.KContainerStatusRunning}}}
+			srv, err := newgrpcServer(NewConfig(
+				withStagingDir(t.TempDir()),
+				withStateDir(t.TempDir()),
+				withContainerOps(containers),
+				withClusterOps(cluster),
+				withRegistryOps(&mockRegistryOps{ca: "CA", user: "u", pass: "p"}),
+			))
+			require.NoError(t, err)
+			require.NoError(t, srv.deployments().save(&cdspb.DeployContainerRequest{
+				ContainerName: "dev-0", ProjectName: "a", DevcontainerConfig: []byte(kOrchestratedConfig),
+			}))
+
+			// project B: no ingress, no registry
+			oc := containerconf.KindOrchestrationConfig{Requested: true}
+			_, err = (&containerServiceServer{core: srv}).ensureAndResolveDecoration(context.Background(),
+				deployContainerSpec{containerName: "dev-1", orchestration: oc},
+				func(deployProgress) error { return nil })
+			require.NoError(t, err)
+
+			assert.Equal(t, tc.restore, cluster.ingressDeployed, "A's ingress")
+			assert.Equal(t, tc.restore, cluster.registryTrusted, "A's registry CA on the nodes")
+			assert.Equal(t, tc.restore, cluster.registrySecretCreated, "A's pull secret")
+			if tc.restore {
+				assert.Contains(t, containers.lastExecCmd, "CDS_REGISTRY_USR=u", "dev-0 re-decorated")
+			} else {
+				assert.Empty(t, containers.lastExecCmd, "dev-0 left alone")
+			}
+		})
+	}
 }
