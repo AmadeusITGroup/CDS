@@ -29,6 +29,7 @@ type clusterOps interface {
 	GetCluster() (orchestration.Cluster, error)
 	GetKubeconfig() (string, error)
 	ApplyMirrors(ctx context.Context, mirrors []orchestration.Mirror) error
+	PruneMirrors(ctx context.Context, keep []orchestration.Mirror) error
 	DeployIngress(ctx context.Context) error
 	CreateRegistrySecret(ctx context.Context, registryHost string, port int, username, password string) error
 	TrustRegistryOnNodes(ctx context.Context, registryHost string, port int, caPEM string) error
@@ -98,6 +99,12 @@ func (defaultClusterOps) GetKubeconfig() (string, error) {
 func (defaultClusterOps) ApplyMirrors(ctx context.Context, mirrors []orchestration.Mirror) error {
 	return withCluster(ctx, "", func(provider orchestration.ClusterProvider) error {
 		return provider.ApplyMirrors(mirrors)
+	})
+}
+
+func (defaultClusterOps) PruneMirrors(ctx context.Context, keep []orchestration.Mirror) error {
+	return withCluster(ctx, "", func(provider orchestration.ClusterProvider) error {
+		return provider.PruneMirrors(keep)
 	})
 }
 

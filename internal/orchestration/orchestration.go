@@ -68,6 +68,10 @@ type ClusterProvider interface {
 	// given registries are served from their upstream endpoints. It is
 	// idempotent and a no-op when mirrors is empty.
 	ApplyMirrors(mirrors []Mirror) error
+	// PruneMirrors removes, on every cluster node, the mirror configuration
+	// ApplyMirrors wrote for any registry not in keep. Configuration CDS did
+	// not write is left alone (CDS-078).
+	PruneMirrors(keep []Mirror) error
 	// DeployIngress installs an nginx ingress controller on the cluster and
 	// returns once it accepts Ingresses. It is best-effort idempotent
 	// (kubectl apply).

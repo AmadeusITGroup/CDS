@@ -504,6 +504,46 @@ func (k *kindProvider) ApplyMirrors(mirrors []Mirror) error {
 	return nil
 }
 
+// PruneMirrors removes, on every kind node, the CDS-managed hosts.toml (first
+// line kMirrorMarker) of each registry not in keep, so a mirror dropped from
+// devcontainer.json stops applying (CDS-078).
+func (k *kindProvider) PruneMirrors(keep []Mirror) error {
+	registries := make([]string, 0, len(keep))
+	for _, m := range keep {
+		if err := validateMirror(m); err != nil {
+			return err
+		}
+		registries = append(registries, m.Registry)
+	}
+	nodes, err := k.nodes()
+	if err != nil {
+		return err
+	}
+	script := pruneMirrorsScript(kContainerdCertsDir, registries)
+	for _, node := range nodes {
+		cmd := fmt.Sprintf("podman exec %s sh -c %s", node, shellQuote(script))
+		if out, err := k.runner(cmd); err != nil {
+			return cerr.AppendErrorFmt("failed to prune mirrors on node %s: %s", err, node, out)
+		}
+	}
+	return nil
+}
+
+// pruneMirrorsScript removes <dir>/<registry>/hosts.toml when its first line is
+// kMirrorMarker and registry is not in keep, then the registry dir when empty.
+// keep holds validated host[:port] names (no spaces or quotes).
+func pruneMirrorsScript(dir string, keep []string) string {
+	return fmt.Sprintf(`set -eu
+for f in %s/*/hosts.toml; do
+  [ -f "$f" ] || continue
+  first=; IFS= read -r first < "$f" || true
+  [ "$first" = %s ] || continue
+  d=${f%%/hosts.toml}; r=${d##*/}
+  case " %s " in *" $r "*) continue ;; esac
+  rm -f "$f"; rmdir "$d" 2>/dev/null || true
+done`, shellQuote(dir), shellQuote(kMirrorMarker), strings.Join(keep, " "))
+}
+
 // TrustRegistryOnNodes writes the registry CA into every kind node's containerd
 // per-registry trust dir (/etc/containerd/certs.d/<host>:<port>/ca.crt) so
 // containerd can pull from the secure registry over TLS. Without this, pods
@@ -545,7 +585,7 @@ func (k *kindProvider) nodes() ([]string, error) {
 // applyMirrorOnNode writes the containerd hosts.toml for one registry on one
 // node. containerd reads /etc/containerd/certs.d/<registry>/hosts.toml.
 func (k *kindProvider) applyMirrorOnNode(node string, m Mirror) error {
-	dir := shellQuote(fmt.Sprintf("/etc/containerd/certs.d/%s", m.Registry))
+	dir := shellQuote(fmt.Sprintf("%s/%s", kContainerdCertsDir, m.Registry))
 	script := fmt.Sprintf("set -eu; mkdir -p %s; printf '%%s' %s > %s/hosts.toml", dir, shellQuote(mirrorHostsToml(m)), dir)
 	cmd := fmt.Sprintf("podman exec %s sh -c %s", node, shellQuote(script))
 	if out, err := k.runner(cmd); err != nil {
@@ -558,6 +598,13 @@ func (k *kindProvider) applyMirrorOnNode(node string, m Mirror) error {
 // not serve the registry API (containerd maps it the same way).
 const kDockerHubServer = "https://registry-1.docker.io"
 
+// kContainerdCertsDir is where containerd reads per-registry hosts.toml.
+const kContainerdCertsDir = "/etc/containerd/certs.d"
+
+// kMirrorMarker is the first line of every hosts.toml CDS writes: PruneMirrors
+// only removes files that carry it (CDS-078).
+const kMirrorMarker = "# managed by cds"
+
 // mirrorHostsToml renders the containerd hosts.toml for one mirror (CDS-030).
 // override_path tells containerd the endpoint already holds the API root, so
 // it stops adding /v2: set it only when the endpoint has a path of its own.
@@ -566,7 +613,7 @@ func mirrorHostsToml(m Mirror) string {
 	if m.Registry == "docker.io" {
 		server = kDockerHubServer
 	}
-	toml := fmt.Sprintf("server = %s\n\n[host.%s]\n  capabilities = [\"pull\", \"resolve\"]\n", strconv.Quote(server), strconv.Quote(m.Endpoint))
+	toml := fmt.Sprintf("%s\nserver = %s\n\n[host.%s]\n  capabilities = [\"pull\", \"resolve\"]\n", kMirrorMarker, strconv.Quote(server), strconv.Quote(m.Endpoint))
 	if u, err := url.Parse(m.Endpoint); err == nil && strings.Trim(u.Path, "/") != cg.EmptyStr {
 		toml += "  override_path = true\n"
 	}

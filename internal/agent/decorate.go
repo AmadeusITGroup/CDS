@@ -366,8 +366,26 @@ func (s *containerServiceServer) ensureAndResolveDecoration(
 	spec deployContainerSpec,
 	report deployProgressReporter,
 ) (deployContainerSpec, error) {
-	if err := ensureOrchestration(ctx, s.core.clusterOps(), s.core.registryOps(), spec.orchestration, report); err != nil {
+	// apply the mirrors of every recorded deployment, not only this one, so the
+	// prune below keeps theirs (CDS-078)
+	oc := spec.orchestration
+	others, known := s.core.otherDeploymentMirrors(spec.containerName)
+	var conflicts []string
+	oc.Mirrors, conflicts = mergeMirrors(append([][]containerconf.Mirror{oc.Mirrors}, others...)...)
+	for _, c := range conflicts {
+		clog.Warn(c)
+		_ = report(deployProgress{phase: kProgressPhaseWarning, message: c})
+	}
+	if err := ensureOrchestration(ctx, s.core.clusterOps(), s.core.registryOps(), oc, report); err != nil {
 		return spec, err
+	}
+	if known {
+		// a stale mirror is not worth failing the deploy for
+		if err := s.core.clusterOps().PruneMirrors(ctx, toOrchestrationMirrors(oc.Mirrors)); err != nil {
+			msg := fmt.Sprintf("failed to remove unused registry mirrors: %v", err)
+			clog.Warn(msg)
+			_ = report(deployProgress{phase: kProgressPhaseWarning, message: msg})
+		}
 	}
 
 	kubeconfig, err := s.core.clusterOps().GetKubeconfig()
@@ -474,6 +492,37 @@ func (s *grpcServer) orchestratedDeployments() (out []orchestratedDeployment, ok
 	return out, true
 }
 
+// otherDeploymentMirrors returns the mirrors of every recorded orchestrated
+// deployment but name; ok is false when the record cannot be read.
+func (s *grpcServer) otherDeploymentMirrors(name string) (sets [][]containerconf.Mirror, ok bool) {
+	deployed, ok := s.orchestratedDeployments()
+	for _, d := range deployed {
+		if d.name != name {
+			sets = append(sets, d.oc.Mirrors)
+		}
+	}
+	return sets, ok
+}
+
+// mergeMirrors merges mirror sets into one mirror per registry. When two sets
+// map a registry to different endpoints, the first one wins and a conflict
+// message is returned for the other (CDS-078).
+func mergeMirrors(sets ...[]containerconf.Mirror) (merged []containerconf.Mirror, conflicts []string) {
+	endpoint := map[string]string{}
+	for _, set := range sets {
+		for _, m := range set {
+			kept, seen := endpoint[m.Registry]
+			if !seen {
+				endpoint[m.Registry] = m.Endpoint
+				merged = append(merged, m)
+			} else if kept != m.Endpoint {
+				conflicts = append(conflicts, fmt.Sprintf("registry mirror conflict for %s: using %s, ignoring %s set by another deployment", m.Registry, kept, m.Endpoint))
+			}
+		}
+	}
+	return merged, conflicts
+}
+
 // reapplyOrchestration re-runs the post-build steps of ensureOrchestration for
 // every orchestration setting found in the recorded deployments (CDS-031): a
 // deleted and rebuilt cluster has lost them, and a rebuilt registry has a new
@@ -494,19 +543,14 @@ func (s *grpcServer) reapplyOrchestration(ctx context.Context, clusterRebuilt bo
 		}
 	}
 
-	var mirrors []containerconf.Mirror
-	seenMirror := map[containerconf.Mirror]bool{}
+	var mirrorSets [][]containerconf.Mirror
 	ingress, registryRequested := false, false
 	for _, d := range deployed {
-		for _, m := range d.oc.Mirrors {
-			if !seenMirror[m] {
-				seenMirror[m] = true
-				mirrors = append(mirrors, m)
-			}
-		}
+		mirrorSets = append(mirrorSets, d.oc.Mirrors)
 		ingress = ingress || d.oc.Ingress
 		registryRequested = registryRequested || d.oc.Registry.Requested
 	}
+	mirrors, conflicts := mergeMirrors(mirrorSets...)
 
 	warn := func(err error) {
 		if err == nil {
@@ -516,6 +560,9 @@ func (s *grpcServer) reapplyOrchestration(ctx context.Context, clusterRebuilt bo
 		_ = report(deployProgress{phase: "cluster", message: fmt.Sprintf("Warning: %v", err)})
 	}
 	if clusterRebuilt {
+		for _, c := range conflicts {
+			warn(cerr.NewError(c))
+		}
 		warn(applyMirrors(ctx, s.clusterOps(), mirrors, report))
 		if ingress {
 			warn(deployIngress(ctx, s.clusterOps(), report))

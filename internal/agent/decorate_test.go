@@ -14,6 +14,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/amadeusitgroup/cds/internal/containerconf"
+	"github.com/amadeusitgroup/cds/internal/orchestration"
 	"github.com/amadeusitgroup/cds/internal/registry"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -508,4 +509,35 @@ func TestReportDecorationWarnings(t *testing.T) {
 	err = reportDecorationWarnings(func(deployProgress) error { return assert.AnError }, "dev-1", "cds: a\n")
 	assert.ErrorIs(t, err, assert.AnError)
 	assert.NoError(t, reportDecorationWarnings(nil, "dev-1", "cds: a\n"))
+}
+
+// TestEnsureAndResolveDecorationMergesAndPrunesMirrors: a deploy applies its own
+// mirrors plus those of the other recorded deployments (its own wins on a
+// conflict, with a warning), and prunes every other CDS mirror, such as one
+// this container's previous config had (CDS-078).
+func TestEnsureAndResolveDecorationMergesAndPrunesMirrors(t *testing.T) {
+	cluster := &mockClusterOps{}
+	srv := newTestOrchestrationServer(t, cluster, &mockRegistryOps{},
+		`{"image":"ubuntu:24.04","orchestration":{"engine":"kind","mirrors":[
+			{"registry":"docker.io","endpoint":"https://a"},{"registry":"quay.io","endpoint":"https://q"}]}}`,
+		`{"image":"ubuntu:24.04","orchestration":{"engine":"kind","mirrors":[{"registry":"ghcr.io","endpoint":"https://g"}]}}`)
+
+	oc := containerconf.KindOrchestrationConfig{Requested: true, Mirrors: []containerconf.Mirror{{Registry: "docker.io", Endpoint: "https://b"}}}
+	var warnings []string
+	_, err := (&containerServiceServer{core: srv}).ensureAndResolveDecoration(context.Background(),
+		deployContainerSpec{containerName: "dev-1", orchestration: oc},
+		func(p deployProgress) error {
+			if p.phase == kProgressPhaseWarning {
+				warnings = append(warnings, p.message)
+			}
+			return nil
+		})
+	require.NoError(t, err)
+
+	want := []orchestration.Mirror{{Registry: "docker.io", Endpoint: "https://b"}, {Registry: "quay.io", Endpoint: "https://q"}}
+	assert.Equal(t, want, cluster.appliedMirrors)
+	assert.True(t, cluster.pruned)
+	assert.Equal(t, want, cluster.prunedKeep, "ghcr.io from dev-1's old config is pruned")
+	require.Len(t, warnings, 1)
+	assert.Contains(t, warnings[0], "conflict for docker.io: using https://b, ignoring https://a")
 }

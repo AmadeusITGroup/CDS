@@ -30,6 +30,10 @@ type mockClusterOps struct {
 	kubeconfigErr    error
 	appliedMirrors   []orchestration.Mirror
 	applyMirrorsErr  error
+	// prunedKeep is the keep set of the last PruneMirrors call; pruned tells it ran.
+	prunedKeep       []orchestration.Mirror
+	pruned           bool
+	pruneMirrorsErr  error
 	ingressDeployed  bool
 	deployIngressErr error
 
@@ -64,6 +68,10 @@ func (m *mockClusterOps) GetKubeconfig() (string, error) {
 func (m *mockClusterOps) ApplyMirrors(_ context.Context, mirrors []orchestration.Mirror) error {
 	m.appliedMirrors = mirrors
 	return m.applyMirrorsErr
+}
+func (m *mockClusterOps) PruneMirrors(_ context.Context, keep []orchestration.Mirror) error {
+	m.pruned, m.prunedKeep = true, keep
+	return m.pruneMirrorsErr
 }
 func (m *mockClusterOps) DeployIngress(context.Context) error {
 	m.ingressDeployed = true

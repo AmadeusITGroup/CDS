@@ -457,17 +457,17 @@ func TestMirrorHostsToml(t *testing.T) {
 		{
 			name: "docker hub, endpoint without path",
 			m:    Mirror{Registry: "docker.io", Endpoint: "https://registry-1.docker.io"},
-			want: "server = \"https://registry-1.docker.io\"\n\n[host.\"https://registry-1.docker.io\"]\n  capabilities = [\"pull\", \"resolve\"]\n",
+			want: "# managed by cds\nserver = \"https://registry-1.docker.io\"\n\n[host.\"https://registry-1.docker.io\"]\n  capabilities = [\"pull\", \"resolve\"]\n",
 		},
 		{
 			name: "trailing slash is no path",
 			m:    Mirror{Registry: "quay.io", Endpoint: "https://mirror.local/"},
-			want: "server = \"https://quay.io\"\n\n[host.\"https://mirror.local/\"]\n  capabilities = [\"pull\", \"resolve\"]\n",
+			want: "# managed by cds\nserver = \"https://quay.io\"\n\n[host.\"https://mirror.local/\"]\n  capabilities = [\"pull\", \"resolve\"]\n",
 		},
 		{
 			name: "endpoint with API path",
 			m:    Mirror{Registry: "reg.local:5000", Endpoint: "http://10.0.0.1:5000/v2/proxy"},
-			want: "server = \"https://reg.local:5000\"\n\n[host.\"http://10.0.0.1:5000/v2/proxy\"]\n  capabilities = [\"pull\", \"resolve\"]\n  override_path = true\n",
+			want: "# managed by cds\nserver = \"https://reg.local:5000\"\n\n[host.\"http://10.0.0.1:5000/v2/proxy\"]\n  capabilities = [\"pull\", \"resolve\"]\n  override_path = true\n",
 		},
 	}
 	for _, c := range cases {
@@ -643,4 +643,55 @@ func TestKindDeleteSucceedsWhenTeardownSucceeds(t *testing.T) {
 	k.units = systemd.NewUnitManager(failingHostOps{})
 	require.NoError(t, k.Delete(true))
 	assert.True(t, r.ranContaining("kind delete cluster --name="+ClusterName))
+}
+
+// TestKindPruneMirrorsRunsOnEveryNode: the keep set reaches each node's prune
+// script, and a hostile keep entry runs nothing (CDS-078).
+func TestKindPruneMirrorsRunsOnEveryNode(t *testing.T) {
+	r := newFakeRunner()
+	r.replies["kind get nodes"] = "n1\nn2\n"
+	k := kindProviderWithRunner(r)
+
+	require.NoError(t, k.PruneMirrors([]Mirror{{Registry: "docker.io", Endpoint: "https://m"}, {Registry: "quay.io", Endpoint: "https://q"}}))
+	assert.True(t, r.ranContaining("podman exec n1 sh -c"))
+	assert.True(t, r.ranContaining("podman exec n2 sh -c"))
+	assert.True(t, r.ranContaining(" docker.io quay.io "), "keep set is in the script")
+
+	r = newFakeRunner()
+	require.Error(t, kindProviderWithRunner(r).PruneMirrors([]Mirror{{Registry: "x; touch /pwned", Endpoint: "https://m"}}))
+	assert.Empty(t, r.ran)
+}
+
+// TestPruneMirrorsScriptRealShell runs the prune script with /bin/sh: a CDS
+// hosts.toml not kept is removed with its dir, a kept one and one CDS did not
+// write stay (CDS-078).
+func TestPruneMirrorsScriptRealShell(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("needs /bin/sh")
+	}
+	dir := t.TempDir()
+	write := func(registry, content string) {
+		require.NoError(t, os.MkdirAll(filepath.Join(dir, registry), 0o755))
+		require.NoError(t, os.WriteFile(filepath.Join(dir, registry, "hosts.toml"), []byte(content), 0o644))
+	}
+	write("docker.io", mirrorHostsToml(Mirror{Registry: "docker.io", Endpoint: "https://m"}))
+	write("quay.io", mirrorHostsToml(Mirror{Registry: "quay.io", Endpoint: "https://q"}))
+	write("reg.local:5000", mirrorHostsToml(Mirror{Registry: "reg.local:5000", Endpoint: "https://r"}))
+	write("ghcr.io", "server = \"https://ghcr.io\"\n")
+	// the CDS registry's CA dir holds no hosts.toml and is never touched
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "cds-registry:5000"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "cds-registry:5000", "ca.crt"), []byte("CA"), 0o644))
+
+	out, err := exec.Command("/bin/sh", "-c", pruneMirrorsScript(dir, []string{"docker.io"})).CombinedOutput()
+	require.NoError(t, err, string(out))
+
+	assert.FileExists(t, filepath.Join(dir, "docker.io", "hosts.toml"), "kept")
+	assert.NoDirExists(t, filepath.Join(dir, "quay.io"), "dropped CDS mirror removed")
+	assert.NoDirExists(t, filepath.Join(dir, "reg.local:5000"), "dropped CDS mirror with a port removed")
+	assert.FileExists(t, filepath.Join(dir, "ghcr.io", "hosts.toml"), "a file CDS did not write stays")
+	assert.FileExists(t, filepath.Join(dir, "cds-registry:5000", "ca.crt"))
+
+	// nothing to prune and an empty keep set both succeed
+	out, err = exec.Command("/bin/sh", "-c", pruneMirrorsScript(filepath.Join(dir, "none"), nil)).CombinedOutput()
+	require.NoError(t, err, string(out))
 }
