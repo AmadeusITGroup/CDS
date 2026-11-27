@@ -102,12 +102,14 @@ func (defaultClusterOps) ApplyMirrors(ctx context.Context, mirrors []orchestrati
 }
 
 func (defaultClusterOps) DeployIngress(ctx context.Context) error {
-	return withCluster(ctx, "", orchestration.ClusterProvider.DeployIngress)
+	return withCluster(ctx, "", func(provider orchestration.ClusterProvider) error {
+		return provider.DeployIngress(ctx)
+	})
 }
 
 func (defaultClusterOps) CreateRegistrySecret(ctx context.Context, registryHost string, port int, username, password string) error {
 	return withCluster(ctx, "", func(provider orchestration.ClusterProvider) error {
-		return provider.CreateRegistrySecret(registryHost, port, username, password)
+		return provider.CreateRegistrySecret(ctx, registryHost, port, username, password)
 	})
 }
 

@@ -49,7 +49,8 @@ type kindProvider struct {
 	// putting them on its command line. Injected for tests.
 	runnerIn func(command string, stdin []byte) (string, error)
 	// runnerCtx is runner bound to a context, used for the long-running
-	// cluster creation so a cancelled request kills it.
+	// cluster creation and the bounded waits so a cancelled request kills
+	// them and frees the cluster lock (CDS-029, CDS-076).
 	runnerCtx func(ctx context.Context, command string) (string, error)
 	// units supervises the kind node through a systemd user unit. Injected for
 	// tests; defaults to the agent's local host.
@@ -106,7 +107,7 @@ func (k *kindProvider) Build(ctx context.Context, configFile string, report Prog
 	if exists, err := k.clusterExists(); err != nil {
 		return err
 	} else if exists {
-		return bringUpExistingCluster(k.liveStatus(), k.Start, k.waitAPIServer, report)
+		return bringUpExistingCluster(k.liveStatus(), k.Start, func() error { return k.waitAPIServer(ctx) }, report)
 	}
 
 	if err := reportf(report, "cluster", fmt.Sprintf("Creating kind cluster %s", ClusterName)); err != nil {
@@ -123,16 +124,31 @@ func (k *kindProvider) Build(ctx context.Context, configFile string, report Prog
 // conmon does not land in cds.service: there a later agent stop waited 90 s on
 // it, then SIGKILLed it (CDS-058).
 func (k *kindProvider) createCluster(ctx context.Context, configFile string) error {
-	out, err := k.runnerCtx(ctx, kindCreateScopedCommand(configFile))
+	cmd, scoped := kindCreateScopedCommand(configFile)
+	out, err := k.runnerCtx(ctx, cmd)
 	if err == nil {
 		return nil
 	}
 	if ctx.Err() != nil {
+		if scoped {
+			// Cancelling kills only the kind process: bash and systemd-run
+			// exec through, so kind's podman children keep running in the
+			// scope and would race the delete below. Stop the scope (CDS-076).
+			k.stopCreateScope()
+		}
 		// a killed kind create leaves its node containers behind, and the
 		// next Build would take them for a ready cluster: remove them.
 		k.deletePartialCluster()
 	}
 	return cerr.AppendErrorFmt("failed to create kind cluster %s: %s", err, ClusterName, out)
+}
+
+// stopCreateScope stops the kind create scope, killing every process left in
+// it. Best-effort: the scope is already gone when kind's children exited.
+func (k *kindProvider) stopCreateScope() {
+	if out, err := k.runner("systemctl --user stop " + kindCreateScope); err != nil {
+		clog.Debug(fmt.Sprintf("failed to stop scope %s: %s", kindCreateScope, out), err)
+	}
 }
 
 // deletePartialCluster removes what a cancelled `kind create cluster` left
@@ -159,11 +175,15 @@ func kindCreateCommand(configFile string) string {
 
 // kindCreateScopedCommand is kindCreateCommand in a transient systemd scope
 // with Delegate=yes (the kind node needs its own cgroup tree), as designed in
-// orchestration-port.md; unchanged when the agent is not under systemd.
-func kindCreateScopedCommand(configFile string) string {
-	cmd, _ := systemd.TransientScope(kindCreateCommand(configFile), "Delegate=yes")
-	return cmd
+// orchestration-port.md; unchanged (scoped=false) when the agent is not under
+// systemd. The scope is named kindCreateScope so a cancel can stop it.
+func kindCreateScopedCommand(configFile string) (cmd string, scoped bool) {
+	return systemd.NamedTransientScope(kindCreateScope, kindCreateCommand(configFile), "Delegate=yes")
 }
+
+// kindCreateScope is the transient scope unit `kind create cluster` runs in.
+// A fixed name is safe: creates are serialized by the agent's cluster lock.
+const kindCreateScope = "cds-kind-create.scope"
 
 // clusterExists reports whether the kind cluster is already known to kind.
 func (k *kindProvider) clusterExists() (bool, error) {
@@ -308,7 +328,7 @@ const kRegistryPullSecret = "cdsregistrycred"
 // in the default namespace and patches the default service account to
 // reference it, so Deployments can pull from the local secure registry without
 // per-pod imagePullSecrets.
-func (k *kindProvider) CreateRegistrySecret(registryHost string, port int, username, password string) error {
+func (k *kindProvider) CreateRegistrySecret(ctx context.Context, registryHost string, port int, username, password string) error {
 	server := fmt.Sprintf("%s:%d", registryHost, port)
 	kc := "kubectl --kubeconfig /etc/kubernetes/admin.conf"
 
@@ -333,7 +353,7 @@ func (k *kindProvider) CreateRegistrySecret(registryHost string, port int, usern
 		ControlPlaneNode,
 		shellQuote(fmt.Sprintf("for i in $(seq 1 30); do %s -n default get serviceaccount default >/dev/null 2>&1 && exit 0; sleep 1; done; exit 1", kc)),
 	)
-	if out, err := k.runner(waitSA); err != nil {
+	if out, err := k.runnerCtx(ctx, waitSA); err != nil {
 		return cerr.AppendErrorFmt("default service account did not appear: %s", err, out)
 	}
 
@@ -358,7 +378,7 @@ var ingressManifest []byte
 // applying the vendored kind manifest via kubectl on the control-plane node,
 // on stdin, then waits (bounded) until its admission webhook answers. It is
 // best-effort idempotent (kubectl apply).
-func (k *kindProvider) DeployIngress() error {
+func (k *kindProvider) DeployIngress(ctx context.Context) error {
 	// The admission Jobs are one-shot and their pod template is immutable, so
 	// applying a newer manifest over a cluster set up by an older one fails
 	// with "field is immutable" (CDS-028 upgrade). Delete them first: apply
@@ -388,7 +408,7 @@ func (k *kindProvider) DeployIngress() error {
 	// patch) and then for its image, so right after apply creating an Ingress
 	// fails with "failed calling webhook ... connection refused" for ~40 s
 	// (CDS-062). Return only once the webhook answers.
-	if out, err := k.runner(ingressWaitCommand(ingressTries, ingressInterval)); err != nil {
+	if out, err := k.runnerCtx(ctx, ingressWaitCommand(ingressTries, ingressInterval)); err != nil {
 		return cerr.AppendErrorFmt("ingress controller is not ready (its admission webhook does not answer): %s", err, out)
 	}
 	return nil
@@ -666,8 +686,8 @@ const (
 // waitAPIServer polls the API server's /readyz from the host until it answers,
 // bounded. The loop runs on the host, not in the node, because right after a
 // start the node container may not accept `podman exec` yet (CDS-050).
-func (k *kindProvider) waitAPIServer() error {
-	if out, err := k.runner(apiServerWaitCommand(apiServerTries, apiServerInterval)); err != nil {
+func (k *kindProvider) waitAPIServer(ctx context.Context) error {
+	if out, err := k.runnerCtx(ctx, apiServerWaitCommand(apiServerTries, apiServerInterval)); err != nil {
 		return cerr.AppendErrorFmt("no answer from /readyz: %s", err, out)
 	}
 	return nil

@@ -96,6 +96,52 @@ func TestKindCreateClusterCancelledRemovesPartialCluster(t *testing.T) {
 		"a killed create must not leave nodes the next Build takes for a cluster")
 }
 
+// TestKindCreateClusterCancelledStopsScope: under systemd a cancelled create
+// stops its whole scope (kind's podman children too) before the delete, so
+// they do not race it (CDS-076).
+func TestKindCreateClusterCancelledStopsScope(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("needs a POSIX systemd-run stub")
+	}
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "systemd-run"), []byte("#!/bin/sh\nexit 0\n"), 0755))
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("INVOCATION_ID", "test")
+	r := newFakeRunner()
+	k := kindProviderWithRunner(r)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	require.Error(t, k.createCluster(ctx, ""))
+
+	require.Len(t, r.ran, 3)
+	assert.Contains(t, r.ran[0], "--unit=cds-kind-create.scope")
+	assert.Equal(t, "systemctl --user stop cds-kind-create.scope", r.ran[1])
+	assert.Contains(t, r.ran[2], "kind delete cluster --name=cds-kind")
+}
+
+// TestKindBoundedWaitsHonourCancel: the API server, ingress webhook and
+// service-account waits run under the request ctx, so a cancelled request
+// does not hold the cluster lock for up to 3 min (CDS-076).
+func TestKindBoundedWaitsHonourCancel(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	err := kindProviderWithRunner(newFakeRunner()).waitAPIServer(ctx)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "context canceled")
+
+	err = kindProviderWithRunner(newFakeRunner()).DeployIngress(ctx)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "context canceled")
+
+	r := newFakeRunner()
+	err = kindProviderWithRunner(r).CreateRegistrySecret(ctx, "registry.cds.internal", 5000, "u", "p")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "context canceled")
+	assert.False(t, r.ranContaining("patch serviceaccount"), "nothing runs after a cancelled wait")
+}
+
 // TestKindCreateClusterRunsInDelegatedScope: under systemd, kind create runs in
 // its own transient scope with Delegate=yes, so the node's conmon does not land
 // in cds.service and an agent stop does not hang 90 s on it (CDS-058).
@@ -114,7 +160,7 @@ func TestKindCreateClusterRunsInDelegatedScope(t *testing.T) {
 
 	require.Len(t, r.ran, 1)
 	assert.Equal(t,
-		"systemd-run --user --scope --collect --quiet -p Delegate=yes -- bash -c 'KIND_EXPERIMENTAL_PROVIDER=podman kind create cluster --name=cds-kind'",
+		"systemd-run --user --scope --collect --quiet --unit=cds-kind-create.scope -p Delegate=yes -- bash -c 'KIND_EXPERIMENTAL_PROVIDER=podman kind create cluster --name=cds-kind'",
 		r.ran[0])
 }
 
@@ -290,7 +336,7 @@ func TestKindDeployIngressAppliesVendoredManifestOnStdin(t *testing.T) {
 	r := newFakeRunner()
 	k := kindProviderWithRunner(r)
 
-	require.NoError(t, k.DeployIngress())
+	require.NoError(t, k.DeployIngress(context.Background()))
 
 	// the immutable one-shot admission Jobs are removed before the apply, so an
 	// older install upgrades in place (CDS-028)
@@ -319,7 +365,7 @@ func TestKindDeployIngressWaitsForAdmissionWebhook(t *testing.T) {
 	r := newFakeRunner()
 	k := kindProviderWithRunner(r)
 
-	require.NoError(t, k.DeployIngress())
+	require.NoError(t, k.DeployIngress(context.Background()))
 
 	last := r.ran[len(r.ran)-1]
 	assert.Contains(t, last, "podman exec cds-kind-control-plane sh -c")
@@ -334,7 +380,7 @@ func TestKindDeployIngressFailsWhenWebhookNeverAnswers(t *testing.T) {
 	r.fail["create ingress cds-ready-probe"] = true
 	k := kindProviderWithRunner(r)
 
-	err := k.DeployIngress()
+	err := k.DeployIngress(context.Background())
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "ingress controller is not ready")
 }
@@ -471,7 +517,7 @@ func TestKindCreateRegistrySecretKeepsPasswordOffCommandLine(t *testing.T) {
 	k := kindProviderWithRunner(r)
 	const password = "s3cr3t-Pw"
 
-	require.NoError(t, k.CreateRegistrySecret("registry.cds.internal", 5000, "cdsu", password))
+	require.NoError(t, k.CreateRegistrySecret(context.Background(), "registry.cds.internal", 5000, "cdsu", password))
 
 	// the password must not appear in any command line (ps, /proc, error text)
 	for _, c := range r.ran {

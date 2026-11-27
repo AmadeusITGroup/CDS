@@ -71,11 +71,11 @@ type ClusterProvider interface {
 	// DeployIngress installs an nginx ingress controller on the cluster and
 	// returns once it accepts Ingresses. It is best-effort idempotent
 	// (kubectl apply).
-	DeployIngress() error
+	DeployIngress(ctx context.Context) error
 	// CreateRegistrySecret creates the docker-registry pull secret in the
 	// cluster and patches the default service account to use it, so pods can
 	// pull images from the local secure registry. Idempotent.
-	CreateRegistrySecret(registryHost string, port int, username, password string) error
+	CreateRegistrySecret(ctx context.Context, registryHost string, port int, username, password string) error
 	// TrustRegistryOnNodes installs the registry CA certificate into each kind
 	// node's containerd trust dir so pods can pull from the secure registry over
 	// TLS. Idempotent.
