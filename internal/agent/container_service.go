@@ -347,6 +347,9 @@ func validateConfigTypes(config *containerconf.Config) error {
 			}
 		}
 	}
+	if err := config.ValidateOrchestrationSections(); err != nil {
+		return status.Errorf(codes.InvalidArgument, "%v", err)
+	}
 	return nil
 }
 

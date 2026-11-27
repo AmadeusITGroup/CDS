@@ -687,6 +687,8 @@ func TestDeployContainerRejectsMalformedConfigTypes(t *testing.T) {
 		"array postCreate":    `{"image":"ubuntu:24.04","postCreateCommand":["echo","hi"]}`,
 		"array initializeCmd": `{"image":"ubuntu:24.04","initializeCommand":["echo","hi"]}`,
 		"non-string image":    `{"image":123}`,
+		"false orchestration": `{"image":"ubuntu:24.04","orchestration":false}`,
+		"false registry":      `{"image":"ubuntu:24.04","orchestration":{"engine":"kind","registry":false}}`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			ops := &mockContainerOps{}

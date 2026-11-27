@@ -1,5 +1,12 @@
 package containerconf
 
+import (
+	"fmt"
+
+	"github.com/amadeusitgroup/cds/internal/cerr"
+	cg "github.com/amadeusitgroup/cds/internal/global"
+)
+
 // KindOrchestrationConfig is the orchestration configuration the agent collects
 // from a devcontainer configuration to deploy (and decorate a container with) a
 // kind cluster and its optional secure registry.
@@ -11,7 +18,8 @@ package containerconf
 // the container as a plain devcontainer.
 type KindOrchestrationConfig struct {
 	// Requested reports whether the devcontainer asked for an orchestration
-	// engine at all (the `orchestration` section is present).
+	// engine at all (the `orchestration` section is a JSON object; false or
+	// null requests nothing, CDS-073).
 	Requested bool
 	// Engine is the requested orchestration engine name, e.g. "kind". Empty
 	// when the section is present but no engine is named.
@@ -44,7 +52,7 @@ type Mirror struct {
 // RegistryConfig is the registry part of an orchestration configuration.
 type RegistryConfig struct {
 	// Requested reports whether a registry was requested
-	// (orchestration.registry is present).
+	// (orchestration.registry is a JSON object, CDS-073).
 	Requested bool
 	// InsecureRequested reports whether orchestration.registry.secure is set
 	// to anything but true. The registry is always secured, so such a request
@@ -70,7 +78,7 @@ func (c *Config) RegistryPortIgnored() bool {
 // values everywhere else.
 func (c *Config) OrchestrationConfig() KindOrchestrationConfig {
 	cfg := KindOrchestrationConfig{
-		Requested:        c.IsSet(KOrchestration),
+		Requested:        c.isObject(KOrchestration),
 		ConfigFile:       c.GetOrchestrationConfigFilePath(),
 		PersistentVolume: c.boolAt(KOrchestration, KPersistentVolumeClaim),
 		Ingress:          c.boolAt(KOrchestration, KOrchestrationIngress),
@@ -81,6 +89,20 @@ func (c *Config) OrchestrationConfig() KindOrchestrationConfig {
 		cfg.Engine = engine
 	}
 	return cfg
+}
+
+// ValidateOrchestrationSections rejects an orchestration or
+// orchestration.registry section that is set but not a JSON object (e.g.
+// false): such a section requests nothing, so the user is told to remove it
+// rather than having it silently ignored. null counts as absent (CDS-073).
+func (c *Config) ValidateOrchestrationSections() error {
+	for _, key := range [][]string{{KOrchestration}, {KOrchestration, KOrchestrationRegistry}} {
+		if v := c.Get(key...); v != nil && !c.isObject(key...) {
+			name := cg.VariadicJoin(".", key...)
+			return cerr.NewError(fmt.Sprintf("%s must be an object, got %T (%v); remove it to turn it off", name, v, v))
+		}
+	}
+	return nil
 }
 
 // registryConfig collects the registry part of the orchestration configuration.

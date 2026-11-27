@@ -103,8 +103,16 @@ func (c *Config) IsNasRequested() bool {
 	return mountNas && ok
 }
 
+// IsRegistryRequested reports whether orchestration.registry is a JSON object:
+// false, null or another type does not request a registry (CDS-073).
 func (c *Config) IsRegistryRequested() bool {
-	return c.IsSet(KOrchestration, KOrchestrationRegistry)
+	return c.isObject(KOrchestration, KOrchestrationRegistry)
+}
+
+// isObject reports whether the value at the key path is a JSON object.
+func (c *Config) isObject(key ...string) bool {
+	_, ok := c.Get(key...).(map[string]interface{})
+	return ok
 }
 
 func (c *Config) GetOrchestrationConfigFilePath() string {

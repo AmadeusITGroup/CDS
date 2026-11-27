@@ -90,3 +90,23 @@ func TestOrchestrationConfigRegistrySecureFalseIsInsecureRequest(t *testing.T) {
 	assert.True(t, oc.Registry.Requested)
 	assert.True(t, oc.Registry.InsecureRequested, "an explicit secure: false is flagged so the deploy rejects it (CDS-034)")
 }
+
+// TestOrchestrationConfigNonObjectSectionsNotRequested checks that only a JSON
+// object requests a section: false, null or another type does not, and a
+// non-object other than null (absent) is rejected (CDS-073).
+func TestOrchestrationConfigNonObjectSectionsNotRequested(t *testing.T) {
+	for _, v := range []string{`false`, `null`, `true`, `"kind"`, `[]`} {
+		config, err := ParseBytes(strings.NewReader(`{"image":"alpine:3.19","orchestration":` + v + `}`))
+		require.NoError(t, err)
+		assert.False(t, config.OrchestrationConfig().Requested, "orchestration: %s", v)
+		assert.Equal(t, v != `null`, config.ValidateOrchestrationSections() != nil, "orchestration: %s", v)
+
+		config, err = ParseBytes(strings.NewReader(`{"image":"alpine:3.19","orchestration":{"engine":"kind","registry":` + v + `}}`))
+		require.NoError(t, err)
+		oc := config.OrchestrationConfig()
+		assert.True(t, oc.Requested)
+		assert.False(t, oc.Registry.Requested, "registry: %s", v)
+		assert.False(t, config.IsRegistryRequested(), "registry: %s", v)
+		assert.Equal(t, v != `null`, config.ValidateOrchestrationSections() != nil, "registry: %s", v)
+	}
+}
