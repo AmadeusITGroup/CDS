@@ -104,6 +104,7 @@ func (p *podmanProvider) Build(report ProgressReporter) error {
 		return err
 	}
 	// Quadlet-generated services are transient from systemd's view; a daemon
+	// reload makes the generated unit visible, then start it.
 	// A changed unit (e.g. the new NetworkAlias after the CDS-016 rename) or
 	// changed material (a reissued certificate, CDS-081) is restarted, since a
 	// plain start keeps the old container serving the old files.
