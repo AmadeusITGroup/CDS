@@ -161,3 +161,72 @@ func TestWriteKubeconfigNewFileMode(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, os.FileMode(0600), fi.Mode().Perm())
 }
+
+// TestWriteKubeconfigTwoHosts checks that kind kubeconfigs from two hosts,
+// which both name everything kind-cds-kind, are kept side by side once renamed
+// for their host, and that writing one host again replaces only its own
+// entries (CDS-071).
+func TestWriteKubeconfigTwoHosts(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config")
+	kind := func(server, cert string) []byte {
+		return []byte("apiVersion: v1\nkind: Config\ncurrent-context: kind-cds-kind\nclusters:\n- name: kind-cds-kind\n  cluster: {server: '" + server + "'}\nusers:\n- name: kind-cds-kind\n  user: {client-certificate-data: " + cert + "}\ncontexts:\n- name: kind-cds-kind\n  context: {cluster: kind-cds-kind, user: kind-cds-kind}\n")
+	}
+	write := func(host, server, cert string) {
+		data, err := renameKubeconfigEntries(kind(server, cert), hostKubeconfigName(host))
+		require.NoError(t, err)
+		require.NoError(t, writeKubeconfig(path, data))
+	}
+	write("host-a", "https://127.0.0.1:1", "QQ==")
+	write("host-b", "https://127.0.0.1:2", "Qg==")
+	write("host-b", "https://127.0.0.1:3", "Qw==") // again, e.g. another -l
+
+	b, err := os.ReadFile(path)
+	require.NoError(t, err)
+	var doc struct {
+		Current  string `yaml:"current-context"`
+		Clusters []struct {
+			Name    string
+			Cluster struct{ Server string }
+		}
+		Users []struct {
+			Name string
+			User struct {
+				Cert string `yaml:"client-certificate-data"`
+			}
+		}
+		Contexts []struct {
+			Name    string
+			Context struct{ Cluster, User string }
+		}
+	}
+	require.NoError(t, yaml.Unmarshal(b, &doc))
+	assert.Equal(t, "cds-host-a", doc.Current, "current-context kept")
+	require.Len(t, doc.Clusters, 2, string(b))
+	require.Len(t, doc.Users, 2, string(b))
+	require.Len(t, doc.Contexts, 2, string(b))
+	for i, want := range []struct{ name, server, cert string }{
+		{"cds-host-a", "https://127.0.0.1:1", "QQ=="},
+		{"cds-host-b", "https://127.0.0.1:3", "Qw=="},
+	} {
+		assert.Equal(t, want.name, doc.Clusters[i].Name)
+		assert.Equal(t, want.server, doc.Clusters[i].Cluster.Server)
+		assert.Equal(t, want.name, doc.Users[i].Name)
+		assert.Equal(t, want.cert, doc.Users[i].User.Cert)
+		assert.Equal(t, want.name, doc.Contexts[i].Name)
+		assert.Equal(t, want.name, doc.Contexts[i].Context.Cluster)
+		assert.Equal(t, want.name, doc.Contexts[i].Context.User)
+	}
+	assert.NotContains(t, string(b), "kind-cds-kind")
+}
+
+// TestRenameKubeconfigEntriesSuffixesExtraEntries checks that a second entry of
+// a kind gets its own name and that references follow it.
+func TestRenameKubeconfigEntriesSuffixesExtraEntries(t *testing.T) {
+	in := "current-context: b\nclusters:\n- name: a\n- name: b\ncontexts:\n- name: a\n  context: {cluster: a}\n- name: b\n  context: {cluster: b, user: other}\n"
+	out, err := renameKubeconfigEntries([]byte(in), "cds-h")
+	require.NoError(t, err)
+	got := string(out)
+	for _, want := range []string{"current-context: cds-h-2", "cluster: cds-h-2", "user: other"} {
+		assert.Contains(t, got, want)
+	}
+}

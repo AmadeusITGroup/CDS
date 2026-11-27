@@ -1,6 +1,7 @@
 package command
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -137,6 +138,65 @@ func mergeKubeconfig(existing, add []byte) ([]byte, error) {
 		}
 	}
 	out, err := yaml.Marshal(base)
+	if err != nil {
+		return nil, cerr.AppendError("failed to serialize kubeconfig", err)
+	}
+	return out, nil
+}
+
+// hostKubeconfigName is the cluster, user and context name of a host's cluster
+// in the local kubeconfig. kind names every cluster kind-cds-kind, so the name
+// is made host-specific before merging; otherwise one host's entries would
+// replace another's (CDS-071).
+func hostKubeconfigName(hostName string) string {
+	return "cds-" + hostName
+}
+
+// renameKubeconfigEntries renames every cluster, user and context of the
+// kubeconfig to name (a second entry of a kind gets "-2", ...), rewrites the
+// contexts' cluster/user references and the current-context to match, and
+// returns the YAML.
+func renameKubeconfigEntries(kubeconfig []byte, name string) ([]byte, error) {
+	var doc map[string]interface{}
+	if err := yaml.Unmarshal(kubeconfig, &doc); err != nil {
+		return nil, cerr.AppendError("failed to parse kubeconfig", err)
+	}
+	renamed := map[string]map[string]string{}
+	for _, key := range []string{"clusters", "users", "contexts"} {
+		renamed[key] = map[string]string{}
+		list, _ := doc[key].([]interface{})
+		for i, e := range list {
+			m, ok := e.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			newName := name
+			if i > 0 {
+				newName = fmt.Sprintf("%s-%d", name, i+1)
+			}
+			if old := kubeEntryName(m); old != cg.EmptyStr {
+				renamed[key][old] = newName
+			}
+			m["name"] = newName
+		}
+	}
+	contexts, _ := doc["contexts"].([]interface{})
+	for _, c := range contexts {
+		m, _ := c.(map[string]interface{})
+		spec, ok := m["context"].(map[string]interface{})
+		if !ok {
+			continue
+		}
+		for field, key := range map[string]string{"cluster": "clusters", "user": "users"} {
+			if ref, _ := spec[field].(string); renamed[key][ref] != cg.EmptyStr {
+				spec[field] = renamed[key][ref]
+			}
+		}
+	}
+	if cur, _ := doc["current-context"].(string); renamed["contexts"][cur] != cg.EmptyStr {
+		doc["current-context"] = renamed["contexts"][cur]
+	}
+	out, err := yaml.Marshal(doc)
 	if err != nil {
 		return nil, cerr.AppendError("failed to serialize kubeconfig", err)
 	}

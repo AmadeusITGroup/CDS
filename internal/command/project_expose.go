@@ -143,6 +143,10 @@ func (pexpose *projectExpose) exposeKind(projectName string) (string, error) {
 	if err != nil {
 		return cg.EmptyStr, err
 	}
+	patched, err = renameKubeconfigEntries(patched, hostKubeconfigName(projectAgentHost(projectName)))
+	if err != nil {
+		return cg.EmptyStr, err
+	}
 	path := localKubeconfigPath()
 	if err := writeKubeconfig(path, patched); err != nil {
 		return cg.EmptyStr, err

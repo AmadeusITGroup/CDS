@@ -36,9 +36,10 @@ func (s *spcOrcKubeconfig) command() *cobra.Command {
 			Long: `Fetch the kind cluster kubeconfig from the agent on the target host.
 
 By default the kubeconfig is printed. With --write its cluster, user and
-context entries are merged into the local kubeconfig (~/.kube/config or
-$KUBECONFIG): other contexts are kept, and so is the current-context (it is
-set to the cluster's context only when none is set). Use --server to
+context entries are renamed cds-<host> and merged into the local kubeconfig
+(~/.kube/config or $KUBECONFIG): other contexts, including other hosts', are
+kept, and so is the current-context (it is set to the cluster's context only
+when none is set). Use --server to
 rewrite the API server address to one reachable from this machine (for example
 a local port forwarded to the agent host with 'ssh -L <port>:127.0.0.1:<kind-api-port>').`,
 			Args:          cobra.NoArgs,
@@ -95,8 +96,12 @@ func (s *spcOrcKubeconfig) runE(cmd *cobra.Command, _ []string) error {
 
 		o := output.FromContext(cmd.Context())
 		if s.write {
+			named, nErr := renameKubeconfigEntries(data, hostKubeconfigName(hostName))
+			if nErr != nil {
+				return nErr
+			}
 			path := localKubeconfigPath()
-			if err := writeKubeconfig(path, data); err != nil {
+			if err := writeKubeconfig(path, named); err != nil {
 				return err
 			}
 			clog.Warn(fmt.Sprintf("Local kubeconfig %s was updated with the cluster kubeconfig (other contexts kept)", path))
