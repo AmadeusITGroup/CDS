@@ -64,10 +64,8 @@ const (
 	K_EXEC_CMD_GET_KIND_CLUSTER_STATUS
 	K_EXEC_CMD_RSH
 	K_EXEC_CMD_GIT_CONFIG
-	K_EXEC_CMD_SECURE_REGISTRY // TODO BK remove
 	K_EXEC_CMD_CHECK_PATH_EXISTS
 	K_EXEC_CMD_CHECK_SECRET_EXISTS
-	K_EXEC_CMD_CREATE_SECRET
 	K_EXEC_CMD_CHECK_SERVICE_ACCOUNT_EXISTS
 	K_EXEC_CMD_PATCH_SERVICE_ACCOUNT
 	K_EXEC_CMD_ENV
@@ -167,10 +165,6 @@ var (
 			cmd:       `/bin/sh -c 'git config --global user.name "%v" && git config --global user.email "%v"'`,
 			eventInfo: "Setting the global git configuration file in the container",
 		},
-		K_EXEC_CMD_SECURE_REGISTRY: {
-			cmd:       `/bin/sh -c 'kubectl get secret/cdsregistrycred || kubectl create secret docker-registry cdsregistrycred --docker-server=registry.cds.internal --docker-username=user --docker-password=password;sleep 10;kubectl patch serviceaccount default -p \\'{"imagePullSecrets": [{"name": "cdsregistrycred"}]}\\''`,
-			eventInfo: "Create cdsregistrycred secret in K8s cluster",
-		},
 		K_EXEC_CMD_CHECK_PATH_EXISTS: {
 			cmd:       `/bin/sh -c 'ls %v || echo "%v"'`,
 			eventInfo: "Check if path exists",
@@ -178,10 +172,6 @@ var (
 		K_EXEC_CMD_CHECK_SECRET_EXISTS: {
 			cmd:       `/bin/sh -c 'kubectl get secret/cdsregistrycred --no-headers || true'`,
 			eventInfo: "Check if secret (cdsregistrycred) exists",
-		},
-		K_EXEC_CMD_CREATE_SECRET: {
-			cmd:       `/bin/sh -c 'kubectl create secret docker-registry cdsregistrycred --docker-server=registry.cds.internal --docker-username=user --docker-password=password'`,
-			eventInfo: "Create secret (cdsregistrycred)",
 		},
 		K_EXEC_CMD_CHECK_SERVICE_ACCOUNT_EXISTS: {
 			cmd:       `/bin/sh -c 'kubectl get serviceaccount default --no-headers || true'`,

@@ -471,14 +471,10 @@ func (ce *ContainersEngine) execute() error {
 		rEvent, err = ce.attachContainerHandler()
 	case K_EXEC_CMD_GIT_CONFIG:
 		rEvent, err = ce.gitConfigHandler()
-	case K_EXEC_CMD_SECURE_REGISTRY:
-		rEvent, err = ce.kubeRegistrySecretHandler()
 	case K_EXEC_CMD_CHECK_PATH_EXISTS:
 		rEvent, err = ce.checkPathExistsHandler()
 	case K_EXEC_CMD_CHECK_SECRET_EXISTS:
 		rEvent, err = ce.checkSecretExistsHandler()
-	case K_EXEC_CMD_CREATE_SECRET:
-		rEvent, err = ce.createSecretHandler()
 	case K_EXEC_CMD_CHECK_SERVICE_ACCOUNT_EXISTS:
 		rEvent, err = ce.checkServiceAccountExistsHandler()
 	case K_EXEC_CMD_PATCH_SERVICE_ACCOUNT:
@@ -650,23 +646,6 @@ func (ce *ContainersEngine) gitConfigHandler() (*RunEvent, error) {
 	return nil, nil
 }
 
-func (ce *ContainersEngine) kubeRegistrySecretHandler() (*RunEvent, error) {
-	rEvent := executeMap[K_EXEC_CMD_SECURE_REGISTRY]
-	cmd := fmt.Sprintf(
-		`%v %v -u %v -i %v %v`,
-		engineName(ce.name),
-		formatActionName(engineAction(K_ACTION_EXE)),
-		ce.getRemoteUser(),
-		ce.getContainerName(),
-		rEvent.cmd,
-	)
-	clog.Debug(fmt.Sprintf(kExecutingDebugMsg, cmd))
-
-	rEvent.cmd = cmd
-	rEvent.continueProcess = true
-	return &rEvent, nil
-}
-
 func (ce *ContainersEngine) checkPathExistsHandler() (*RunEvent, error) {
 	rEvent := executeMap[K_EXEC_CMD_CHECK_PATH_EXISTS]
 	pathToCheck := ce.getPathToCheck()
@@ -687,11 +666,6 @@ func (ce *ContainersEngine) checkPathExistsHandler() (*RunEvent, error) {
 
 func (ce *ContainersEngine) checkSecretExistsHandler() (*RunEvent, error) {
 	rEvent := executeMap[K_EXEC_CMD_CHECK_SECRET_EXISTS]
-	return ce.executeRaw(&rEvent)
-}
-
-func (ce *ContainersEngine) createSecretHandler() (*RunEvent, error) {
-	rEvent := executeMap[K_EXEC_CMD_CREATE_SECRET]
 	return ce.executeRaw(&rEvent)
 }
 
