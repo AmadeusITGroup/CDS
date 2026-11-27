@@ -683,6 +683,12 @@ func (k *kindProvider) supervisionUnit() ([]byte, error) {
 		{Section: "Service", Name: "ExecStop", Value: fmt.Sprintf("%s stop %s", podman, ControlPlaneNode)},
 		{Section: "Service", Name: "Delegate", Value: "yes"},
 		{Section: "Service", Name: "Restart", Value: "no"},
+		// a stop SIGKILLs the node after its StopSignal timeout, so the
+		// attached podman start exits 137 (or 143): a clean stop or delete
+		// must leave the unit inactive, not failed.
+		// shortcut: a real crash killed by SIGKILL is also hidden; Restart= is
+		// not set, so upgrade if auto-restart is added.
+		{Section: "Service", Name: "SuccessExitStatus", Value: "137 143"},
 		// installed but intentionally without an [Install] section, so it can
 		// never be enabled at boot/login: the cluster is started on demand
 		// (kind restart IP issues, kind#2272/#3071).

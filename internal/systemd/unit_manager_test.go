@@ -85,6 +85,18 @@ func TestManagerRemoveDeletesFilesAndToleratesDisableFailure(t *testing.T) {
 	assert.Contains(t, h.executed, "systemctl --user daemon-reload")
 }
 
+// TestManagerRemoveResetsFailedState: a unit that ended failed keeps a
+// "not-found failed" entry after its file is gone, so remove clears it, and a
+// reset-failed error (nothing to reset) does not fail teardown.
+func TestManagerRemoveResetsFailedState(t *testing.T) {
+	h := newFakeHost()
+	const dir = "/home/remote-user/.config/systemd/user"
+	h.failures["systemctl --user reset-failed cds-kind.service"] = true
+
+	require.NoError(t, newUnitManager(h).remove(dir, "cds-kind.service"))
+	assert.Equal(t, "systemctl --user reset-failed cds-kind.service", h.executed[len(h.executed)-1])
+}
+
 func TestManagerRestart(t *testing.T) {
 	h := newFakeHost()
 	require.NoError(t, newUnitManager(h).restart("cds.service"))

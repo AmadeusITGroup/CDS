@@ -615,6 +615,9 @@ func TestKindSupervisionUnitHasNoInstallSection(t *testing.T) {
 	assert.Contains(t, unitText, "ExecStart=/usr/bin/podman start --attach "+ControlPlaneNode)
 	assert.NotContains(t, unitText, "[Install]")
 	assert.NotContains(t, unitText, "WantedBy")
+	// a stop SIGKILLs the node, so podman start --attach exits 137: that must
+	// leave the unit inactive, not failed
+	assert.Contains(t, unitText, "SuccessExitStatus=137 143")
 }
 
 // failingHostOps fails the systemd commands whose "name args" line starts with

@@ -194,7 +194,9 @@ func (m *unitManager) stop(unitNames ...string) error {
 // remove disables the given units and deletes their files from unitDir,
 // reloading the daemon afterwards. Disable failures are tolerated (a unit that
 // was never enabled, or is already gone, must not fail teardown); file removal
-// and the reload are the operations that must succeed.
+// and the reload are the operations that must succeed. A unit that ended
+// failed would stay listed as "not-found failed", so its failed state is reset
+// last (best effort: there is often nothing to reset).
 func (m *unitManager) remove(unitDir string, unitNames ...string) error {
 	disableArgs := append([]string{"--user", "disable", "--now"}, unitNames...)
 	if _, err := m.h.Execute("systemctl", disableArgs...); err != nil {
@@ -206,7 +208,15 @@ func (m *unitManager) remove(unitDir string, unitNames ...string) error {
 			return cerr.AppendErrorFmt("failed to remove unit file %s", err, name)
 		}
 	}
-	return m.daemonReload()
+	if err := m.daemonReload(); err != nil {
+		return err
+	}
+	resetArgs := append([]string{"--user", "reset-failed"}, unitNames...)
+	if _, err := m.h.Execute("systemctl", resetArgs...); err != nil {
+		// best effort: the unit may not be in a failed state
+		_ = err
+	}
+	return nil
 }
 
 // HostOps is the public shape of a target host: it runs commands and copies
