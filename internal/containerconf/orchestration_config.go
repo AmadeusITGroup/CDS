@@ -19,7 +19,7 @@ import (
 type KindOrchestrationConfig struct {
 	// Requested reports whether the devcontainer asked for an orchestration
 	// engine at all (the `orchestration` section is a JSON object; false or
-	// null requests nothing, CDS-073).
+	// null requests nothing).
 	Requested bool
 	// Engine is the requested orchestration engine name, e.g. "kind". Empty
 	// when the section is present but no engine is named.
@@ -52,22 +52,22 @@ type Mirror struct {
 // RegistryConfig is the registry part of an orchestration configuration.
 type RegistryConfig struct {
 	// Requested reports whether a registry was requested
-	// (orchestration.registry is a JSON object, CDS-073).
+	// (orchestration.registry is a JSON object).
 	Requested bool
 	// InsecureRequested reports whether orchestration.registry.secure is set
 	// to anything but true. The registry is always secured, so such a request
-	// is rejected; an absent key is fine (CDS-034).
+	// is rejected; an absent key is fine.
 	InsecureRequested bool
 }
 
 // kOrchestrationRegistryIgnoredPort is the former orchestration.registry.port
 // key. The registry always listens on registry.DefaultPort (one registry per
 // host, reached in-network on its container port), so the key is ignored and
-// only detected to warn about it (CDS-033).
+// only detected to warn about it.
 const kOrchestrationRegistryIgnoredPort = "port"
 
 // RegistryPortIgnored reports whether the configuration still sets the removed
-// orchestration.registry.port key, which has no effect (CDS-033).
+// orchestration.registry.port key, which has no effect.
 func (c *Config) RegistryPortIgnored() bool {
 	return c.IsSet(KOrchestration, KOrchestrationRegistry, kOrchestrationRegistryIgnoredPort)
 }
@@ -94,7 +94,7 @@ func (c *Config) OrchestrationConfig() KindOrchestrationConfig {
 // ValidateOrchestrationSections rejects an orchestration or
 // orchestration.registry section that is set but not a JSON object (e.g.
 // false): such a section requests nothing, so the user is told to remove it
-// rather than having it silently ignored. null counts as absent (CDS-073).
+// rather than having it silently ignored. null counts as absent.
 func (c *Config) ValidateOrchestrationSections() error {
 	for _, key := range [][]string{{KOrchestration}, {KOrchestration, KOrchestrationRegistry}} {
 		if v := c.Get(key...); v != nil && !c.isObject(key...) {

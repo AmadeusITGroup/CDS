@@ -147,7 +147,7 @@ func mergeKubeconfig(existing, add []byte) ([]byte, error) {
 // hostKubeconfigName is the cluster, user and context name of a host's cluster
 // in the local kubeconfig. kind names every cluster kind-cds-kind, so the name
 // is made host-specific before merging; otherwise one host's entries would
-// replace another's (CDS-071).
+// replace another's.
 func hostKubeconfigName(hostName string) string {
 	return "cds-" + hostName
 }
@@ -231,7 +231,7 @@ func writeKubeconfig(path string, data []byte) error {
 // replaceFileAtomically writes data to a temp file next to path's real target
 // (symlinks resolved, so a linked kubeconfig stays linked), keeps the target's
 // mode (cg.KPermFile for a new file), fsyncs it and renames it over the target,
-// so a failure mid-write never leaves a truncated kubeconfig (CDS-070).
+// so a failure mid-write never leaves a truncated kubeconfig.
 func replaceFileAtomically(path string, data []byte) error {
 	target, perm := path, cg.KPermFile
 	if resolved, err := filepath.EvalSymlinks(path); err == nil {

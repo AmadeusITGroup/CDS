@@ -77,7 +77,7 @@ func KeyPairPaths(suffix string) KeyPair {
 // already on disk is reused as is; otherwise a new pair is generated. An existing
 // key file is never overwritten (a half pair is refused), even through a symlink.
 // A suffix that is empty or holds a path separator or ".." is refused, so the
-// pair cannot land outside $HOME/.ssh (CDS-086).
+// pair cannot land outside $HOME/.ssh.
 func EnsureKeyPair(suffix string) (KeyPair, error) {
 	if suffix == "" || strings.ContainsAny(suffix, `/\`) || strings.Contains(suffix, "..") {
 		return KeyPair{}, cerr.NewError(fmt.Sprintf("Invalid key pair name %q: it must not be empty or hold '/', '\\' or '..'", suffix))

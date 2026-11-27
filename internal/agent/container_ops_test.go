@@ -623,8 +623,7 @@ func TestBuildDecorationCommandsKeepSecretsOffCommandLine(t *testing.T) {
 }
 
 // TestBuildDecorationCommandsWritesUserHomeAsRemoteUser: with a remoteUser,
-// the steps that write into its home run as that user, the others as root
-// (CDS-067).
+// the steps that write into its home run as that user, the others as root.
 func TestBuildDecorationCommandsWritesUserHomeAsRemoteUser(t *testing.T) {
 	spec := deploySpecForTest(t, "dev-1", `{"image":"ubuntu:24.04","remoteUser":"dev"}`)
 	spec.orchestration = containerconf.KindOrchestrationConfig{Requested: true}
@@ -644,7 +643,7 @@ func TestBuildDecorationCommandsWritesUserHomeAsRemoteUser(t *testing.T) {
 
 // a decoration step that cannot be built fails the deploy instead of being
 // skipped: the container would otherwise lack its kubeconfig/CA/registry env
-// while the deploy reports success (CDS-036).
+// while the deploy reports success.
 func TestDecorationEventsFailsWhenAStepCannotBeBuilt(t *testing.T) {
 	spec := deploySpecForTest(t, "dev-1", `{"image":"ubuntu:24.04"}`)
 	spec.orchestration = containerconf.KindOrchestrationConfig{Requested: true}

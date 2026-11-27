@@ -61,7 +61,7 @@ jobs:
         with:
           version: ${{ env.PROTOC_VERSION }}
           # authenticated release lookup: the anonymous GitHub API limit
-          # (60 req/h per runner IP) fails shared runners (CDS-052)
+          # (60 req/h per runner IP) fails shared runners
           repo-token: ${{ secrets.GITHUB_TOKEN }}
 
       # Install Go dependencies
@@ -140,7 +140,7 @@ jobs:
         with:
           version: ${{ env.PROTOC_VERSION }}
           # authenticated release lookup: the anonymous GitHub API limit
-          # (60 req/h per runner IP) fails shared runners (CDS-052)
+          # (60 req/h per runner IP) fails shared runners
           repo-token: ${{ secrets.GITHUB_TOKEN }}
 
       # Tidy Go module dependencies

@@ -116,7 +116,7 @@ func setStdin(exeCmd *exec.Cmd, cmd ExecuteEvent) {
 }
 
 // StdinOf returns the input cmd must be fed on its stdin, if it has one: any
-// event with a Stdin method, not only a bare *StdinShEvent (CDS-080).
+// event with a Stdin method, not only a bare *StdinShEvent.
 func StdinOf(cmd ExecuteEvent) ([]byte, bool) {
 	in, ok := cmd.(interface{ Stdin() []byte })
 	if !ok {
@@ -126,7 +126,7 @@ func StdinOf(cmd ExecuteEvent) ([]byte, bool) {
 }
 
 // KeepStdin returns to fed the stdin input of from, if from has one. Use it
-// in a wrapper that rebuilds a command, so the input is not lost (CDS-080).
+// in a wrapper that rebuilds a command, so the input is not lost.
 func KeepStdin(from, to ExecuteEvent) ExecuteEvent {
 	if in, ok := StdinOf(from); ok {
 		return &StdinShEvent{ExecuteEvent: to, Input: in}
@@ -136,7 +136,7 @@ func KeepStdin(from, to ExecuteEvent) ExecuteEvent {
 
 // errStdinUnsupported is returned by a runner that cannot feed stdin, so a
 // stdin command fails instead of running with no input. It names the
-// command, never the input, which may be a secret (CDS-080).
+// command, never the input, which may be a secret.
 func errStdinUnsupported(cmd ExecuteEvent) error {
 	return cerr.NewError(fmt.Sprintf("command (%s) needs stdin input, but this runner cannot feed stdin", cmd.Cmd()))
 }
@@ -281,7 +281,7 @@ func getTermSize() (int, int, error) {
 // attach the terminal to a ssh session, the assumption here is that
 // cds is started with a TTY !
 func AttachProcessUsingKey(h target, cmd ExecuteEvent) error {
-	// the attached session's stdin is the terminal (CDS-080)
+	// the attached session's stdin is the terminal
 	if _, ok := StdinOf(cmd); ok {
 		return errStdinUnsupported(cmd)
 	}
@@ -405,7 +405,7 @@ func (se *DefaultShEvent) Fallback() error {
 
 // ProbeShEvent is a command whose non-zero exit is a normal answer (a probe):
 // it shows no spinner and its failure is logged at debug, not as a warning.
-// The error is still returned to the caller (CDS-056).
+// The error is still returned to the caller.
 type ProbeShEvent struct {
 	DefaultShEvent
 }

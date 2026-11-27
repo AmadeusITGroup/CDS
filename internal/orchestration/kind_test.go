@@ -83,7 +83,7 @@ func (f *fakeRunner) runCtx(ctx context.Context, command string) (string, error)
 }
 
 func TestKindCreateClusterCancelledRemovesPartialCluster(t *testing.T) {
-	t.Setenv("INVOCATION_ID", "") // not under systemd -> unscoped create (CDS-090)
+	t.Setenv("INVOCATION_ID", "") // not under systemd -> unscoped create
 	r := newFakeRunner()
 	k := kindProviderWithRunner(r)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -100,7 +100,7 @@ func TestKindCreateClusterCancelledRemovesPartialCluster(t *testing.T) {
 
 // TestKindCreateClusterCancelledStopsScope: under systemd a cancelled create
 // stops its whole scope (kind's podman children too) before the delete, so
-// they do not race it (CDS-076).
+// they do not race it.
 func TestKindCreateClusterCancelledStopsScope(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("needs a POSIX systemd-run stub")
@@ -124,7 +124,7 @@ func TestKindCreateClusterCancelledStopsScope(t *testing.T) {
 
 // TestKindBoundedWaitsHonourCancel: the API server, ingress webhook and
 // service-account waits run under the request ctx, so a cancelled request
-// does not hold the cluster lock for up to 3 min (CDS-076).
+// does not hold the cluster lock for up to 3 min.
 func TestKindBoundedWaitsHonourCancel(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -146,7 +146,7 @@ func TestKindBoundedWaitsHonourCancel(t *testing.T) {
 
 // TestKindCreateClusterRunsInDelegatedScope: under systemd, kind create runs in
 // its own transient scope with Delegate=yes, so the node's conmon does not land
-// in cds.service and an agent stop does not hang 90 s on it (CDS-058).
+// in cds.service and an agent stop does not hang 90 s on it.
 func TestKindCreateClusterRunsInDelegatedScope(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("needs a POSIX systemd-run stub")
@@ -224,8 +224,8 @@ func TestStatusActionTable(t *testing.T) {
 }
 
 // a Build on an existing but stopped cluster starts it instead of only
-// reporting "already exists" (CDS-041); a started or running one is waited on
-// until its API server is ready (CDS-050); an unreadable one is left alone.
+// reporting "already exists"; a started or running one is waited on
+// until its API server is ready; an unreadable one is left alone.
 func TestBringUpExistingClusterStartsAStoppedCluster(t *testing.T) {
 	cases := []struct {
 		status  bo.ContainerStatus
@@ -265,7 +265,7 @@ func TestBringUpExistingClusterReportsStartFailure(t *testing.T) {
 }
 
 // an API server that never gets ready fails the Build instead of letting the
-// re-apply run against it (CDS-050)
+// re-apply run against it
 func TestBringUpExistingClusterReportsAPIServerNotReady(t *testing.T) {
 	err := bringUpExistingCluster(bo.KContainerStatusExited,
 		func() error { return nil }, func() error { return cmdErr("no answer from /readyz") }, nil)
@@ -274,7 +274,7 @@ func TestBringUpExistingClusterReportsAPIServerNotReady(t *testing.T) {
 }
 
 // the wait loop polls /readyz through the control-plane node until it answers,
-// run by a real shell against a stub podman that fails twice (CDS-050)
+// run by a real shell against a stub podman that fails twice
 func TestAPIServerWaitCommandRetriesInARealShell(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("needs /bin/sh")
@@ -341,12 +341,12 @@ func TestKindDeployIngressAppliesVendoredManifestOnStdin(t *testing.T) {
 	require.NoError(t, k.DeployIngress(context.Background()))
 
 	// the immutable one-shot admission Jobs are removed before the apply, so an
-	// older install upgrades in place (CDS-028)
+	// older install upgrades in place
 	require.GreaterOrEqual(t, len(r.ran), 2)
 	assert.Contains(t, r.ran[0], "-n ingress-nginx delete job ingress-nginx-admission-create ingress-nginx-admission-patch --ignore-not-found")
 	assert.Contains(t, r.ran[1], "apply -f -")
 
-	// the vendored manifest goes on stdin; nothing is downloaded (CDS-028)
+	// the vendored manifest goes on stdin; nothing is downloaded
 	require.Len(t, r.stdins, 1)
 	assert.Equal(t, string(ingressManifest), r.stdins[0])
 	assert.True(t, r.ranContaining("podman exec -i cds-kind-control-plane kubectl --kubeconfig /etc/kubernetes/admin.conf apply -f -"))
@@ -360,7 +360,7 @@ func TestKindDeployIngressAppliesVendoredManifestOnStdin(t *testing.T) {
 		"the node is still prepared after apply")
 }
 
-// CDS-062: DeployIngress returns only once the admission webhook answers, so
+// DeployIngress returns only once the admission webhook answers, so
 // the next documented step (create an Ingress) does not fail with
 // "failed calling webhook ... connection refused".
 func TestKindDeployIngressWaitsForAdmissionWebhook(t *testing.T) {
@@ -446,7 +446,7 @@ func TestKindApplyMirrorsWritesHostsToml(t *testing.T) {
 	assert.True(t, r.ranContaining("podman exec cds-kind-control-plane"))
 }
 
-// CDS-030: override_path makes containerd skip the /v2 prefix, so it must only
+// override_path makes containerd skip the /v2 prefix, so it must only
 // be set when the endpoint carries its own API path; docker.io's server is
 // registry-1.docker.io, not docker.io.
 func TestMirrorHostsToml(t *testing.T) {
@@ -577,7 +577,7 @@ func TestKindCreateCommandQuotesConfigFile(t *testing.T) {
 }
 
 // TestKindCheckConfigFile: configFile is read on the agent host, so a relative
-// or missing path fails before anything runs (CDS-079). Real shell runner.
+// or missing path fails before anything runs. Real shell runner.
 func TestKindCheckConfigFile(t *testing.T) {
 	dir := t.TempDir()
 	present := filepath.Join(dir, "kind it's.yaml")
@@ -605,7 +605,7 @@ func TestKindBuildRejectsRelativeConfigFileBeforeRunning(t *testing.T) {
 }
 
 // the supervision unit must not be enable-able at boot: an [Install] section
-// would let `systemctl --user enable` start the cluster at login (CDS-035).
+// would let `systemctl --user enable` start the cluster at login.
 func TestKindSupervisionUnitHasNoInstallSection(t *testing.T) {
 	data, err := kindProviderWithRunner(newFakeRunner()).supervisionUnit()
 	require.NoError(t, err)
@@ -634,7 +634,7 @@ func (f failingHostOps) Execute(name string, args ...string) (string, error) {
 func (failingHostOps) Copy(string, string) error { return nil }
 
 // TestKindDeleteReturnsTeardownFailures: a unit dir or unit removal failure is
-// returned, and the cluster delete is still attempted (CDS-077, like CDS-026).
+// returned, and the cluster delete is still attempted (like the registry delete).
 func TestKindDeleteReturnsTeardownFailures(t *testing.T) {
 	cases := map[string]struct {
 		failPrefixes []string
@@ -675,7 +675,7 @@ func TestKindDeleteSucceedsWhenTeardownSucceeds(t *testing.T) {
 }
 
 // TestKindPruneMirrorsRunsOnEveryNode: the keep set reaches each node's prune
-// script, and a hostile keep entry runs nothing (CDS-078).
+// script, and a hostile keep entry runs nothing.
 func TestKindPruneMirrorsRunsOnEveryNode(t *testing.T) {
 	r := newFakeRunner()
 	r.replies["kind get nodes"] = "n1\nn2\n"
@@ -693,7 +693,7 @@ func TestKindPruneMirrorsRunsOnEveryNode(t *testing.T) {
 
 // TestPruneMirrorsScriptRealShell runs the prune script with /bin/sh: a CDS
 // hosts.toml not kept is removed with its dir, a kept one and one CDS did not
-// write stay (CDS-078).
+// write stay.
 func TestPruneMirrorsScriptRealShell(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("needs /bin/sh")

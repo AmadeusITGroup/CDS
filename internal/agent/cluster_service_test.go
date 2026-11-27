@@ -165,7 +165,7 @@ func TestStartClusterMapsErrorToInternal(t *testing.T) {
 }
 
 // a delete refused because containers use the cluster is the caller's
-// precondition, not an agent fault (CDS-032); other failures stay Internal.
+// precondition, not an agent fault; other failures stay Internal.
 func TestDeleteClusterMapsInUseToFailedPrecondition(t *testing.T) {
 	inUse := guardDelete("cluster", false, func() ([]string, error) { return []string{"dev-a"}, nil })
 	svc := newTestClusterService(t, &mockClusterOps{deleteErr: inUse})
@@ -228,7 +228,7 @@ const kOrchestratedConfig = `{"image":"ubuntu:24.04","orchestration":{"engine":"
 	"mirrors":[{"registry":"docker.io","endpoint":"https://registry-1.docker.io"}],
 	"registry":{"secure":true}}}`
 
-// TestBuildClusterReappliesRecordedOrchestration covers CDS-031: a rebuilt
+// TestBuildClusterReappliesRecordedOrchestration: a rebuilt
 // cluster gets back the mirrors, ingress, registry CA and pull secret the
 // recorded deployments asked for, not only the kubeconfig.
 func TestBuildClusterReappliesRecordedOrchestration(t *testing.T) {

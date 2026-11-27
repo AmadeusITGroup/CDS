@@ -70,7 +70,7 @@ type deployProgress struct {
 type deployProgressReporter func(deployProgress) error
 
 // kProgressPhaseWarning marks a progress message the client shows as a
-// warning (CDS-061).
+// warning.
 const kProgressPhaseWarning = "warning"
 
 type deployContainerResult struct {
@@ -363,7 +363,7 @@ func (defaultContainerOps) DeployContainer(ctx context.Context, spec deployConta
 	}
 	cmds = append(cmds, sshKeyCommands...)
 	// the commands from here on are decoration scripts, whose skip warnings
-	// are sent to the client (CDS-061)
+	// are sent to the client
 	firstDecoration := len(cmds)
 
 	// decorate the devcontainer with cluster/registry access when orchestration
@@ -653,14 +653,14 @@ func compensateOrphanedCreate(containerName, preexistingID string) {
 // devcontainer with cluster/registry access: the cluster kubeconfig and the
 // registry CA are installed inside the container. Each decoration step runs in
 // the container via a custom command, as root or, for writes into the
-// container user's home, as that user (CDS-067).
+// container user's home, as that user.
 func buildDecorationCommands(spec deployContainerSpec) ([]shexec.ExecuteEvent, error) {
 	return decorationEvents(spec, (*engine.ContainersEngine).BuildCommands)
 }
 
 // decorationEvents builds the decoration steps with build. A step that cannot
 // be built fails the whole build: skipping it would deploy a container missing
-// its kubeconfig, CA or registry env while reporting success (CDS-036).
+// its kubeconfig, CA or registry env while reporting success.
 func decorationEvents(spec deployContainerSpec, build func(*engine.ContainersEngine) ([]shexec.ExecuteEvent, error)) ([]shexec.ExecuteEvent, error) {
 	var events []shexec.ExecuteEvent
 	reg := registryEnv{}

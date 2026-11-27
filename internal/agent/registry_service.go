@@ -21,7 +21,7 @@ func (s *registryServiceServer) BuildRegistry(req *cdspb.BuildRegistryRequest, s
 	})
 	if buildErr == nil {
 		// a rebuilt registry may present a fresh CA and credentials: refresh the
-		// cluster's trust and pull secret (CDS-031), then re-decorate running
+		// cluster's trust and pull secret, then re-decorate running
 		// orchestration containers so their trust store stays valid.
 		report := func(p deployProgress) error {
 			return sendRegistryProgress(stream, p.phase, p.message)

@@ -36,7 +36,7 @@ func ensureOrchestration(
 		return nil
 	}
 	if oc.Registry.Requested && oc.Registry.InsecureRequested {
-		// fail before building anything: only a secured registry exists (CDS-034)
+		// fail before building anything: only a secured registry exists
 		return cerr.NewError("insecure registry is not supported; remove orchestration.registry.secure or set it to true")
 	}
 
@@ -122,7 +122,7 @@ func deployIngress(ctx context.Context, cluster clusterOps, report deployProgres
 // connectRegistryToCluster installs the registry CA on the cluster nodes and
 // creates the in-cluster pull secret (the documented cdsregistrycred secret +
 // default service account patch), so pods can pull from the local registry.
-// The registry always listens on registry.DefaultPort (CDS-033).
+// The registry always listens on registry.DefaultPort.
 func connectRegistryToCluster(ctx context.Context, cluster clusterOps, reg registryOps, report deployProgressReporter) error {
 	user, pass, err := reg.RegistryCredentials()
 	if err != nil {
@@ -157,7 +157,7 @@ type registryEnv struct {
 	user     string
 	password string
 	// owner is the container user (remoteUser) the env file is written for;
-	// only that user can read it (CDS-024).
+	// only that user can read it.
 	owner string
 }
 
@@ -165,7 +165,7 @@ func (r registryEnv) set() bool { return r.name != "" && r.user != "" }
 
 // newRegistryEnv is the registry env for a deployment, written for the
 // container user owner (empty means root). The registry always listens on
-// registry.DefaultPort (CDS-033). It is unset when user is empty.
+// registry.DefaultPort. It is unset when user is empty.
 func newRegistryEnv(user, password, owner string) registryEnv {
 	if user == cg.EmptyStr {
 		return registryEnv{}
@@ -192,7 +192,7 @@ func newRegistryEnv(user, password, owner string) registryEnv {
 // Root writes only root-owned paths (/root/.kube, /etc/containers/certs.d,
 // /etc/profile.d). Every write into the container user's home runs AS that
 // user: root following a link the user planted in a dir the user owns would
-// let the user take any root file (CDS-067).
+// let the user take any root file.
 //
 // kubeconfig is the cluster kubeconfig, caCert the registry CA PEM and owner
 // the container user (remoteUser, empty means root); each step is skipped when
@@ -245,7 +245,7 @@ func userOrRoot(owner string) string {
 }
 
 // kRemoveLegacyRegistryEnvScript removes the world-readable /etc/profile.d
-// script that earlier versions wrote the registry password to (CDS-024).
+// script that earlier versions wrote the registry password to.
 const kRemoveLegacyRegistryEnvScript = `rm -f /etc/profile.d/cds-registry.sh`
 
 // registryEnvFile is the env file, relative to the container user's home, that
@@ -255,14 +255,14 @@ const registryEnvFile = ".config/cds/registry.env"
 // installRegistryEnvScript writes the CDS_REGISTRY_* variables to a 0600 env
 // file in the container user's home and sources it from the user's shell rc
 // files, so the user's shells can podman login and push to the local registry
-// while other container users cannot read the password (CDS-024).
+// while other container users cannot read the password.
 //
-// The script runs AS the container user (CDS-067), so a link or a file the
+// The script runs AS the container user, so a link or a file the
 // user does not own in the home can only make a write fail, never redirect
 // it: a dir or env file it cannot write is skipped with a warning, and so is
 // an rc file it cannot append to. The "cds: " warnings go to stdout: a
 // successful first-deploy step keeps only stdout, and the agent sends those
-// lines to the client (CDS-061).
+// lines to the client.
 func installRegistryEnvScript(reg registryEnv) string {
 	return fmt.Sprintf(`set -eu
 %s
@@ -332,8 +332,8 @@ chmod 600 /root/.kube/config`, kubeconfig)
 
 // installUserKubeconfigScript writes the cluster kubeconfig to the ~/.kube/config
 // (600) of the non-root container user owner (remoteUser), so the shell
-// `cds project ssh` opens can run kubectl and helm (CDS-065). It runs AS that
-// user (CDS-067): a temp file renamed over the target, so a reader never sees
+// `cds project ssh` opens can run kubectl and helm. It runs AS that
+// user: a temp file renamed over the target, so a reader never sees
 // a partial file; a ~/.kube it cannot write is skipped with a warning.
 func installUserKubeconfigScript(kubeconfig, owner string) string {
 	return "set -eu\n" + containerUserPrelude(owner) + fmt.Sprintf(`
@@ -367,7 +367,7 @@ func (s *containerServiceServer) ensureAndResolveDecoration(
 	report deployProgressReporter,
 ) (deployContainerSpec, error) {
 	// apply the mirrors of every recorded deployment, not only this one, so the
-	// prune below keeps theirs (CDS-078)
+	// prune below keeps theirs
 	oc := spec.orchestration
 	others, known := s.core.otherDeployments(spec.containerName)
 	mirrorSets := [][]containerconf.Mirror{oc.Mirrors}
@@ -456,7 +456,7 @@ func (s *grpcServer) redecorateContainers(ctx context.Context, report deployProg
 			}
 		}
 
-		// a rebuilt registry has new credentials: refresh CDS_REGISTRY_* too (CDS-042)
+		// a rebuilt registry has new credentials: refresh CDS_REGISTRY_* too
 		if registryUser == "" && oc.Registry.Requested {
 			if user, pass, err := s.registryOps().RegistryCredentials(); err == nil {
 				registryUser, registryPassword = user, pass
@@ -523,7 +523,7 @@ func (s *grpcServer) clusterAbsent() bool {
 }
 
 // restoreOtherDeployments gives a cluster a deploy just created what the other
-// recorded deployments need, as BuildCluster does (CDS-082): their ingress and
+// recorded deployments need, as BuildCluster does: their ingress and
 // registry access, then a re-decoration of their running containers, which
 // hold the old cluster's kubeconfig. Their mirrors are already merged into
 // oc.Mirrors. Best effort: a failed step is reported, the deploy goes on.
@@ -556,7 +556,7 @@ func warnReapply(report deployProgressReporter, err error) {
 
 // mergeMirrors merges mirror sets into one mirror per registry. When two sets
 // map a registry to different endpoints, the first one wins and a conflict
-// message is returned for the other (CDS-078).
+// message is returned for the other.
 func mergeMirrors(sets ...[]containerconf.Mirror) (merged []containerconf.Mirror, conflicts []string) {
 	endpoint := map[string]string{}
 	for _, set := range sets {
@@ -574,7 +574,7 @@ func mergeMirrors(sets ...[]containerconf.Mirror) (merged []containerconf.Mirror
 }
 
 // reapplyOrchestration re-runs the post-build steps of ensureOrchestration for
-// every orchestration setting found in the recorded deployments (CDS-031): a
+// every orchestration setting found in the recorded deployments: a
 // deleted and rebuilt cluster has lost them, and a rebuilt registry has a new
 // CA and credentials the nodes and pull secret must get.
 //
@@ -618,7 +618,7 @@ func (s *grpcServer) reapplyOrchestration(ctx context.Context, clusterRebuilt bo
 }
 
 // redecorateOne runs the decoration install scripts inside a single container,
-// each as its user (root or the container user, CDS-067) and fed on stdin (they carry the kubeconfig and registry secrets).
+// each as its user (root or the container user) and fed on stdin (they carry the kubeconfig and registry secrets).
 func (s *grpcServer) redecorateOne(ctx context.Context, name string, cmds []decorationCommand, report deployProgressReporter) {
 	for _, dc := range cmds {
 		if report != nil {
@@ -628,7 +628,7 @@ func (s *grpcServer) redecorateOne(ctx context.Context, name string, cmds []deco
 		if err != nil {
 			clog.Warn(fmt.Sprintf("failed to re-decorate container %s (%s)", name, dc.info), err)
 		} else if code != 0 {
-			// a non-zero exit (set -eu) is not an error from exec: log and report it (CDS-068)
+			// a non-zero exit (set -eu) is not an error from exec: log and report it
 			msg := fmt.Sprintf("%s: %s failed (exit %d)", name, dc.info, code)
 			if tail := decorationFailureTail(out); tail != "" {
 				msg += ": " + tail
@@ -662,7 +662,7 @@ const kDecorationWarningPrefix = "cds: "
 
 // reportDecorationWarnings logs each skip warning in a decoration script's
 // output and sends it to the client as a warning, so the user knows what was
-// not written and why (CDS-061). A failed report is returned.
+// not written and why. A failed report is returned.
 func reportDecorationWarnings(report deployProgressReporter, container, out string) error {
 	for _, line := range strings.Split(out, "\n") {
 		line = strings.TrimSpace(line)

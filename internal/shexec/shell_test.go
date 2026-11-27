@@ -68,7 +68,7 @@ func TestRunLocalCmdWithStdinFeedsSecretOffCommandLine(t *testing.T) {
 }
 
 // TestRunLocalCmdsFeedsStdin: RunLocalCmds feeds the input of a stdin event
-// too, so `sh -s` never runs an empty script (CDS-080). Real bash.
+// too, so `sh -s` never runs an empty script. Real bash.
 func TestRunLocalCmdsFeedsStdin(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("uses a POSIX shell")
@@ -85,7 +85,7 @@ func TestRunLocalCmdsFeedsStdin(t *testing.T) {
 }
 
 // TestKeepStdin: a wrapper that rebuilds the command keeps the input, and
-// only an event that has input gets one (CDS-080).
+// only an event that has input gets one.
 func TestKeepStdin(t *testing.T) {
 	to := &DefaultShEvent{ExeCmd: "wrapped"}
 	in, ok := StdinOf(KeepStdin(&StdinShEvent{ExecuteEvent: &DefaultShEvent{}, Input: []byte("x")}, to))
@@ -96,7 +96,7 @@ func TestKeepStdin(t *testing.T) {
 
 // TestRemoteExecutorsRejectStdin: the ssh executors cannot feed stdin, so a
 // stdin event fails before any connection instead of running an empty script
-// and reporting success (CDS-080).
+// and reporting success.
 func TestRemoteExecutorsRejectStdin(t *testing.T) {
 	cmd := &StdinShEvent{ExecuteEvent: &DefaultShEvent{ExeCmd: "sh -s"}, Input: []byte("echo hi")}
 	noConnect := func() (target, error) {
@@ -119,7 +119,7 @@ func TestRemoteExecutorsRejectStdin(t *testing.T) {
 }
 
 // TestIsProbe: only a ProbeShEvent is a probe, so only its failure is quiet
-// (no spinner, debug log); every other command still warns (CDS-056).
+// (no spinner, debug log); every other command still warns.
 func TestIsProbe(t *testing.T) {
 	assert.True(t, isProbe(&ProbeShEvent{DefaultShEvent: DefaultShEvent{ExeCmd: "systemctl --user is-active cds.service"}}))
 	assert.False(t, isProbe(&DefaultShEvent{ExeCmd: "systemctl --user daemon-reload"}))

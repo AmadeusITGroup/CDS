@@ -33,7 +33,7 @@ func TestEnsureMaterialGeneratesCertAndCredentials(t *testing.T) {
 	assert.Equal(t, Hostname, cert.Subject.CommonName)
 	assert.Contains(t, cert.DNSNames, Hostname)
 
-	// a plain self-signed server certificate, not a CA (CDS-038)
+	// a plain self-signed server certificate, not a CA
 	assert.False(t, cert.IsCA, "registry certificate is not a CA")
 	assert.Zero(t, cert.KeyUsage&x509.KeyUsageCertSign, "registry certificate cannot sign certificates")
 	assert.Contains(t, cert.ExtKeyUsage, x509.ExtKeyUsageServerAuth)
@@ -88,7 +88,7 @@ func TestEnsureMaterialPersistsPlaintextCredentials(t *testing.T) {
 }
 
 func TestEnsureMaterialReissuesCertForOldHostname(t *testing.T) {
-	// a host provisioned before the rename (CDS-016) holds a certificate for
+	// a host provisioned before the rename to registry.cds.internal holds a certificate for
 	// the old name; the next build must reissue it for Hostname and keep the
 	// credentials clients already use.
 	root := t.TempDir()
@@ -131,15 +131,15 @@ func writeTestCert(t *testing.T, m material, notAfter time.Time, isCA bool) {
 
 // TestEnsureMaterialReissuesUnusableCert: an expired, soon-expiring or
 // CA-flagged certificate is reissued as a plain leaf, the credentials are kept,
-// and the change is reported so the registry restarts (CDS-081).
+// and the change is reported so the registry restarts.
 func TestEnsureMaterialReissuesUnusableCert(t *testing.T) {
 	for name, tc := range map[string]struct {
 		notAfter time.Time
 		isCA     bool
 	}{
-		"expired":          {notAfter: time.Now().Add(-time.Hour)},
-		"expires soon":     {notAfter: time.Now().Add(certRenewBefore / 2)},
-		"CA (pre CDS-038)": {notAfter: time.Now().Add(certValidity), isCA: true},
+		"expired":             {notAfter: time.Now().Add(-time.Hour)},
+		"expires soon":        {notAfter: time.Now().Add(certRenewBefore / 2)},
+		"CA (older versions)": {notAfter: time.Now().Add(certValidity), isCA: true},
 	} {
 		t.Run(name, func(t *testing.T) {
 			root := t.TempDir()

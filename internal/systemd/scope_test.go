@@ -11,7 +11,7 @@ import (
 )
 
 // TestTransientScope: outside systemd the command is unchanged; under it, the
-// command runs in a quoted transient scope with the given properties (CDS-058).
+// command runs in a quoted transient scope with the given properties.
 func TestTransientScope(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("needs a POSIX systemd-run stub")

@@ -12,7 +12,7 @@ import (
 )
 
 // TestOpLockSerializes runs many ops at once on one lock: at most one may be
-// inside at any time (two kind creates must never overlap, CDS-029).
+// inside at any time (two kind creates must never overlap).
 func TestOpLockSerializes(t *testing.T) {
 	l := newOpLock()
 	var inside, maxInside int32

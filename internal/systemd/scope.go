@@ -24,8 +24,7 @@ func TransientScope(command string, props ...string) (string, bool) {
 
 // NamedTransientScope is TransientScope with a fixed scope unit name (e.g.
 // "cds-kind-create.scope"; empty lets systemd pick one), so the caller can stop
-// the whole scope, every process in it, rather than only the command
-// (CDS-076).
+// the whole scope, every process in it, rather than only the command.
 func NamedTransientScope(unit, command string, props ...string) (string, bool) {
 	if !runningUnderSystemd() || !systemdRunAvailable() {
 		return command, false

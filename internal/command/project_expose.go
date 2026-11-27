@@ -121,7 +121,7 @@ func (pexpose *projectExpose) resolveServiceRemote(projectName string) (string, 
 // devcontainer on the kind network), and returns a step that writes a local
 // kubeconfig whose server points at the local forward address. The step is run
 // only once the tunnel is up, so a failed forward leaves no context pointing at
-// a dead local port (CDS-072).
+// a dead local port.
 func (pexpose *projectExpose) exposeKind(projectName string) (string, func() error, error) {
 	var kubeconfig string
 	if err := onProjectAgent(projectName, func(services agentServices, ctx context.Context) error {

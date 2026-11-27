@@ -9,7 +9,7 @@ import (
 // opLock serializes the operations that change one host resource (the kind
 // cluster, or the registry), so two requests (two `project run`s, or an
 // `orc run` racing a deploy) never run two `kind create cluster` or two
-// registry unit installs at once (CDS-029). Waiting honours the request
+// registry unit installs at once. Waiting honours the request
 // context, so a cancelled client stops queueing.
 //
 // shortcut: in-process only; the agent is the single writer on a host (one

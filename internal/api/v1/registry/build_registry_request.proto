@@ -6,7 +6,7 @@ option go_package = "github.com/amadeusitgroup/cds/cdspb";
 // BuildRegistryRequest requests creation of the secure registry. The registry
 // is always secured (TLS + auth): an insecure registry is not supported.
 message BuildRegistryRequest {
-  // field 1 was `bool secure`, which had to be true (CDS-034).
+  // field 1 was `bool secure`, which had to be true.
   reserved 1;
   reserved "secure";
 }

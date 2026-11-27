@@ -170,7 +170,7 @@ func TestRemoteBootstrapReplacesDifferentBinary(t *testing.T) {
 	assert.Len(t, stagedBinaries(h), 1)
 }
 
-// CDS-063: two clients installing the same version at once must not share a
+// two clients installing the same version at once must not share a
 // staging file, or one's rename removes the file the other is about to chmod.
 func TestRemoteBootstrapConcurrentInstallsUseDistinctStagingFiles(t *testing.T) {
 	h := newFakeRemoteHost()
@@ -200,7 +200,7 @@ func TestRemoteBootstrapRemovesStagingFileOnFailedInstall(t *testing.T) {
 		"no sweep when the install failed")
 }
 
-// CDS-085: after a successful install, stale staging files of interrupted
+// after a successful install, stale staging files of interrupted
 // runs are swept.
 func TestRemoteBootstrapSweepsStaleStagingAfterInstall(t *testing.T) {
 	h := newFakeRemoteHost()
@@ -216,8 +216,8 @@ func TestRemoteBootstrapSweepsStaleStagingAfterInstall(t *testing.T) {
 	assert.Greater(t, sweep, mv, "the sweep runs after the rename")
 }
 
-// CDS-085: the sweep, run by a real sh, deletes only old staging files of the
-// binary: a young one may be a concurrent upload in flight (CDS-063).
+// the sweep, run by a real sh, deletes only old staging files of the
+// binary: a young one may be a concurrent upload in flight.
 func TestStaleStagingScriptRealShell(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("needs sh and find")

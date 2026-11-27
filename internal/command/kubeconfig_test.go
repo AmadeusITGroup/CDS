@@ -92,7 +92,7 @@ func TestWriteKubeconfigKeepsOtherContexts(t *testing.T) {
 }
 
 // TestLocalKubeconfigPathMultiPath checks that a KUBECONFIG list resolves to
-// its first entry, where kubectl writes new entries (CDS-069).
+// its first entry, where kubectl writes new entries.
 func TestLocalKubeconfigPathMultiPath(t *testing.T) {
 	d := t.TempDir()
 	first, second := filepath.Join(d, "config"), filepath.Join(d, "other")
@@ -115,7 +115,7 @@ func TestLocalKubeconfigPathMultiPath(t *testing.T) {
 // TestWriteKubeconfigReplacesAtomically checks that the merged kubeconfig
 // replaces the user's file with a rename, never by truncating it in place: a
 // reader holding the old file still sees it whole, the mode is kept, a
-// symlinked kubeconfig stays a symlink, and no temp file is left (CDS-070).
+// symlinked kubeconfig stays a symlink, and no temp file is left.
 func TestWriteKubeconfigReplacesAtomically(t *testing.T) {
 	d := t.TempDir()
 	target := filepath.Join(d, "real-config")
@@ -165,7 +165,7 @@ func TestWriteKubeconfigNewFileMode(t *testing.T) {
 // TestWriteKubeconfigTwoHosts checks that kind kubeconfigs from two hosts,
 // which both name everything kind-cds-kind, are kept side by side once renamed
 // for their host, and that writing one host again replaces only its own
-// entries (CDS-071).
+// entries.
 func TestWriteKubeconfigTwoHosts(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config")
 	kind := func(server, cert string) []byte {
@@ -233,7 +233,7 @@ func TestRenameKubeconfigEntriesSuffixesExtraEntries(t *testing.T) {
 
 // TestKindKubeconfigWriterWritesOnlyWhenRun checks project expose's kubeconfig
 // step writes nothing until it runs (after the tunnel is up), then adds the
-// named context and keeps the user's current-context (CDS-072).
+// named context and keeps the user's current-context.
 func TestKindKubeconfigWriterWritesOnlyWhenRun(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config")
 	t.Setenv("KUBECONFIG", path)

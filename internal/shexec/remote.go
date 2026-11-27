@@ -152,7 +152,7 @@ type passwordExecuteCallback func() (target, error)
 
 // rejectStdin fails, before any connection or command runs, when a command
 // needs stdin input: the ssh session handler only takes the command line, so
-// the input would be dropped and `sh -s` would succeed doing nothing (CDS-080).
+// the input would be dropped and `sh -s` would succeed doing nothing.
 // shortcut: no stdin over ssh; set session.Stdin in runSession if a remote
 // stdin command is ever needed.
 func rejectStdin(cmds []any) error {
@@ -258,7 +258,7 @@ func (kec keyExecuteCallback) execute(cmds []any, sh sessionHandler) ([]string, 
 		// event.NotifyChan <- cmdEvent.Notify(fmt.Sprintf(`Executing '%v' - command: '%v'`, cmdEvent.Description(), cmdEvent.Cmd()),
 		// 	event.KNotifTypeInfo)
 		// we don't defer tpExitCallback() since it fail when there are multiple cmds
-		// a probe shows no spinner: its "no" must not print "Action failed" (CDS-056)
+		// a probe shows no spinner: its "no" must not print "Action failed"
 		tpExitCallback := func() {}
 		if !isProbe(cmdEvent) {
 			tpExitCallback = tp.Printer(cmdEvent.Description())

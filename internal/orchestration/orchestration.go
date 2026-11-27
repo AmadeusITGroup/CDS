@@ -70,7 +70,7 @@ type ClusterProvider interface {
 	ApplyMirrors(mirrors []Mirror) error
 	// PruneMirrors removes, on every cluster node, the mirror configuration
 	// ApplyMirrors wrote for any registry not in keep. Configuration CDS did
-	// not write is left alone (CDS-078).
+	// not write is left alone.
 	PruneMirrors(keep []Mirror) error
 	// DeployIngress installs an nginx ingress controller on the cluster and
 	// returns once it accepts Ingresses. It is best-effort idempotent

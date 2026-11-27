@@ -15,12 +15,12 @@ const (
 	Name = "cds-sec-registry"
 	// Hostname is the TLS server name the registry certificate is issued for
 	// and the name containers use to reach it. It is under the reserved
-	// .internal TLD so public DNS can never answer for it (CDS-016).
+	// .internal TLD so public DNS can never answer for it.
 	Hostname = "registry.cds.internal"
 	// DefaultPort is the host port the registry publishes.
 	DefaultPort = 5000
 	// Image is the registry server image, pinned by version and digest
-	// (CDS-039) so every build pulls the same bytes. The digest is the
+	// so every build pulls the same bytes. The digest is the
 	// multi-arch index of registry:2.8.3, the image registry:2 points to.
 	Image = "docker.io/library/registry:2.8.3@sha256:a3d8aaa63ed8681a604f1dea0aa03f100d5895b6a58ace528858a7b332415373"
 )

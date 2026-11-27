@@ -17,7 +17,7 @@ type registryProgressReporter func(registryProgress) error
 
 // registryOps abstracts the registry engine so the gRPC layer can be tested
 // without running podman. It mirrors clusterOps: the operations that change the
-// registry take the request context and are serialized on one lock (CDS-029).
+// registry take the request context and are serialized on one lock.
 type registryOps interface {
 	BuildRegistry(ctx context.Context, report registryProgressReporter) error
 	StartRegistry(ctx context.Context) error

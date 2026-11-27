@@ -47,7 +47,7 @@ func newUnitManager(h hostOps) *unitManager {
 
 // prober is an optional hostOps capability: run a command whose non-zero exit
 // is a normal answer (unit inactive, file missing), without warning the user.
-// The remote host has it; local hosts do not need it (CDS-056).
+// The remote host has it; local hosts do not need it.
 type prober interface {
 	Probe(name string, args ...string) (string, error)
 }

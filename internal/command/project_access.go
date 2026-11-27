@@ -84,7 +84,7 @@ const kSSHAuthFailure = "unable to authenticate"
 
 // withRedeployTip adds a redeploy tip to err when the container rejected the
 // project key. Containers deployed before the per-host key (id_rsa_<host>) only
-// trust the old default key; by owner ruling (CDS-021) the client offers no
+// trust the old default key; by design the client offers no
 // fallback key, so the fix is to redeploy the container once.
 func withRedeployTip(projectName string, err error) error {
 	if err == nil || !isSSHAuthFailure(err) {

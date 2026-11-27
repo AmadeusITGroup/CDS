@@ -20,7 +20,7 @@ type clusterProgressReporter func(clusterProgress) error
 // without running kind/podman. It mirrors containerOps.
 //
 // The operations that change the cluster take the request context and are
-// serialized on one lock (CDS-029); the read-only ones are not.
+// serialized on one lock; the read-only ones are not.
 type clusterOps interface {
 	BuildCluster(ctx context.Context, engineName, configFile string, report clusterProgressReporter) error
 	StartCluster(ctx context.Context) error

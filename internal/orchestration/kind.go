@@ -51,7 +51,7 @@ type kindProvider struct {
 	runnerIn func(command string, stdin []byte) (string, error)
 	// runnerCtx is runner bound to a context, used for the long-running
 	// cluster creation and the bounded waits so a cancelled request kills
-	// them and frees the cluster lock (CDS-029, CDS-076).
+	// them and frees the cluster lock.
 	runnerCtx func(ctx context.Context, command string) (string, error)
 	// units supervises the kind node through a systemd user unit. Injected for
 	// tests; defaults to the agent's local host.
@@ -95,8 +95,8 @@ func (k *kindProvider) Name() string { return kindEngineName }
 // IPv6-enabled one that fails on IPv6-disabled hosts), then runs
 // `kind create cluster`. kind create is idempotent-ish: it errors if the
 // cluster already exists, so Build treats an existing cluster as success and
-// starts it when it is stopped (CDS-041).
-// Cancelling ctx kills `kind create cluster` (CDS-029).
+// starts it when it is stopped.
+// Cancelling ctx kills `kind create cluster`.
 func (k *kindProvider) Build(ctx context.Context, configFile string, report ProgressReporter) error {
 	if err := k.checkConfigFile(configFile); err != nil {
 		return err
@@ -126,7 +126,7 @@ func (k *kindProvider) Build(ctx context.Context, configFile string, report Prog
 // createCluster runs `kind create cluster`, killed when ctx is cancelled.
 // Under systemd it runs in its own delegated transient scope, so the node's
 // conmon does not land in cds.service: there a later agent stop waited 90 s on
-// it, then SIGKILLed it (CDS-058).
+// it, then SIGKILLed it.
 func (k *kindProvider) createCluster(ctx context.Context, configFile string) error {
 	cmd, scoped := kindCreateScopedCommand(configFile)
 	out, err := k.runnerCtx(ctx, cmd)
@@ -137,7 +137,7 @@ func (k *kindProvider) createCluster(ctx context.Context, configFile string) err
 		if scoped {
 			// Cancelling kills only the kind process: bash and systemd-run
 			// exec through, so kind's podman children keep running in the
-			// scope and would race the delete below. Stop the scope (CDS-076).
+			// scope and would race the delete below. Stop the scope.
 			k.stopCreateScope()
 		}
 		// a killed kind create leaves its node containers behind, and the
@@ -149,7 +149,7 @@ func (k *kindProvider) createCluster(ctx context.Context, configFile string) err
 
 // checkConfigFile fails early, with a clear error, on a configFile kind could
 // not read: the path is read on the agent host and never sent from the client,
-// so it must be absolute and exist there (CDS-079).
+// so it must be absolute and exist there.
 // shortcut: no staging; stage the file like the other client artifacts if a
 // client-side configFile is ever needed.
 func (k *kindProvider) checkConfigFile(configFile string) error {
@@ -282,8 +282,8 @@ func (k *kindProvider) Stop() error {
 // "in use"); kind delete is unconditional and returns zero even if the cluster
 // is absent.
 //
-// Every step is attempted and any failure is returned (CDS-077, as CDS-026 did
-// for the registry), so delete never reports success while cds-kind.service
+// Every step is attempted and any failure is returned (as the registry
+// delete does), so delete never reports success while cds-kind.service
 // is still installed.
 func (k *kindProvider) Delete(force bool) error {
 	var errs []error
@@ -404,7 +404,7 @@ func (k *kindProvider) CreateRegistrySecret(ctx context.Context, registryHost st
 // ingressManifest is the upstream ingress-nginx kind manifest
 // (deploy/static/provider/kind/deploy.yaml at tag controller-v1.15.1, the
 // last release, patched for CVE-2025-1974), vendored so nothing is fetched at
-// runtime (CDS-028). Its images are pinned by digest upstream.
+// runtime. Its images are pinned by digest upstream.
 // shortcut: bumped by hand; ingress-nginx is retired, the move off it is A5.
 //
 //go:embed manifests/ingress-nginx-kind.yaml
@@ -417,7 +417,7 @@ var ingressManifest []byte
 func (k *kindProvider) DeployIngress(ctx context.Context) error {
 	// The admission Jobs are one-shot and their pod template is immutable, so
 	// applying a newer manifest over a cluster set up by an older one fails
-	// with "field is immutable" (CDS-028 upgrade). Delete them first: apply
+	// with "field is immutable" (on upgrade). Delete them first: apply
 	// re-creates them, and they are a no-op when the webhook secret exists.
 	delJobs := fmt.Sprintf(
 		"podman exec %s kubectl --kubeconfig /etc/kubernetes/admin.conf -n ingress-nginx delete job ingress-nginx-admission-create ingress-nginx-admission-patch --ignore-not-found",
@@ -442,8 +442,8 @@ func (k *kindProvider) DeployIngress(ctx context.Context) error {
 	}
 	// The controller pod waits for the admission Jobs (webhook cert + CA
 	// patch) and then for its image, so right after apply creating an Ingress
-	// fails with "failed calling webhook ... connection refused" for ~40 s
-	// (CDS-062). Return only once the webhook answers.
+	// fails with "failed calling webhook ... connection refused" for ~40 s.
+	// Return only once the webhook answers.
 	if out, err := k.runnerCtx(ctx, ingressWaitCommand(ingressTries, ingressInterval)); err != nil {
 		return cerr.AppendErrorFmt("ingress controller is not ready (its admission webhook does not answer): %s", err, out)
 	}
@@ -528,7 +528,7 @@ func (k *kindProvider) ApplyMirrors(mirrors []Mirror) error {
 
 // PruneMirrors removes, on every kind node, the CDS-managed hosts.toml (first
 // line kMirrorMarker) of each registry not in keep, so a mirror dropped from
-// devcontainer.json stops applying (CDS-078).
+// devcontainer.json stops applying.
 func (k *kindProvider) PruneMirrors(keep []Mirror) error {
 	registries := make([]string, 0, len(keep))
 	for _, m := range keep {
@@ -624,10 +624,10 @@ const kDockerHubServer = "https://registry-1.docker.io"
 const kContainerdCertsDir = "/etc/containerd/certs.d"
 
 // kMirrorMarker is the first line of every hosts.toml CDS writes: PruneMirrors
-// only removes files that carry it (CDS-078).
+// only removes files that carry it.
 const kMirrorMarker = "# managed by cds"
 
-// mirrorHostsToml renders the containerd hosts.toml for one mirror (CDS-030).
+// mirrorHostsToml renders the containerd hosts.toml for one mirror.
 // override_path tells containerd the endpoint already holds the API root, so
 // it stops adding /v2: set it only when the endpoint has a path of its own.
 func mirrorHostsToml(m Mirror) string {
@@ -680,7 +680,7 @@ func (k *kindProvider) supervisionUnit() ([]byte, error) {
 		{Section: "Service", Name: "Restart", Value: "no"},
 		// installed but intentionally without an [Install] section, so it can
 		// never be enabled at boot/login: the cluster is started on demand
-		// (kind restart IP issues, kind#2272/#3071; CDS-035).
+		// (kind restart IP issues, kind#2272/#3071).
 	}
 	data, err := io.ReadAll(unit.Serialize(options))
 	if err != nil {
@@ -722,10 +722,10 @@ func (k *kindProvider) liveStatus() bo.ContainerStatus {
 }
 
 // bringUpExistingCluster finishes a Build on a cluster kind already knows: a
-// stopped one is started, so `orc run` (and a deploy) never leaves it down
-// (CDS-041). A started or running one is then waited on until its API server
-// is ready, so the settings re-applied right after (CDS-031) do not hit a
-// server still booting (CDS-050). An unreadable status keeps the cluster as
+// stopped one is started, so `orc run` (and a deploy) never leaves it down.
+// A started or running one is then waited on until its API server
+// is ready, so the settings re-applied right after do not hit a
+// server still booting. An unreadable status keeps the cluster as
 // it is.
 func bringUpExistingCluster(status bo.ContainerStatus, start, ready func() error, report ProgressReporter) error {
 	switch statusAction(status) {
@@ -768,7 +768,7 @@ const (
 
 // waitAPIServer polls the API server's /readyz from the host until it answers,
 // bounded. The loop runs on the host, not in the node, because right after a
-// start the node container may not accept `podman exec` yet (CDS-050).
+// start the node container may not accept `podman exec` yet.
 func (k *kindProvider) waitAPIServer(ctx context.Context) error {
 	if out, err := k.runnerCtx(ctx, apiServerWaitCommand(apiServerTries, apiServerInterval)); err != nil {
 		return cerr.AppendErrorFmt("no answer from /readyz: %s", err, out)

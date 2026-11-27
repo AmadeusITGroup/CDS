@@ -105,7 +105,7 @@ func warnOnVersionMismatch(ctx context.Context, c agentServices, hostname string
 
 // versionMismatchHint tells how to update an agent of hostname that runs
 // version: `orc run` re-bootstraps a remote agent, but only warns for a local
-// one, which must be restarted (BD-09, CDS-066).
+// one, which must be restarted.
 func versionMismatchHint(hostname, version string) string {
 	if hostname == cg.KLocalhost {
 		return fmt.Sprintf("Local agent runs version %s instead of %s, restart it to update it", version, cg.Version)

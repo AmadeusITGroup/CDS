@@ -105,8 +105,8 @@ func (p *podmanProvider) Build(report ProgressReporter) error {
 	}
 	// Quadlet-generated services are transient from systemd's view; a daemon
 	// reload makes the generated unit visible, then start it.
-	// A changed unit (e.g. the new NetworkAlias after the CDS-016 rename) or
-	// changed material (a reissued certificate, CDS-081) is restarted, since a
+	// A changed unit (e.g. the new NetworkAlias after the registry rename) or
+	// changed material (a reissued certificate) is restarted, since a
 	// plain start keeps the old container serving the old files.
 	start := p.units.Start
 	if changed || materialChanged {
@@ -123,7 +123,7 @@ func (p *podmanProvider) Build(report ProgressReporter) error {
 // the container on each start).
 func (p *podmanProvider) quadletUnit(m material) []byte {
 	// Quadlet .container is an INI-like file read by podman's systemd generator.
-	// The host port is bound to loopback only (CDS-027): kind nodes and
+	// The host port is bound to loopback only: kind nodes and
 	// devcontainers reach the registry on the kind network through its alias, so
 	// nothing needs it on the host's external interfaces.
 	return []byte(fmt.Sprintf(`[Unit]
@@ -146,7 +146,7 @@ Environment=REGISTRY_AUTH_HTPASSWD_PATH=/auth/htpasswd
 
 [Service]
 # A requested stop kills the container, so the main process exits 2 (or 137/143).
-# Treat those as success so a clean 'registry stop' leaves the unit inactive, not failed (CDS-007).
+# Treat those as success so a clean 'registry stop' leaves the unit inactive, not failed.
 # shortcut: a real crash with exit 2 is also hidden; Restart= is not set, so upgrade if auto-restart is added.
 SuccessExitStatus=2 137 143
 
@@ -208,7 +208,7 @@ func (p *podmanProvider) Stop() error {
 		return nil
 	}
 	// the Quadlet container runs with --rm, so after a clean stop it is gone:
-	// a missing container is already stopped (CDS-060), as in Delete.
+	// a missing container is already stopped, as in Delete.
 	if out, err := p.runner(fmt.Sprintf("podman stop %s", Name)); err != nil && !isNoSuchContainer(out) {
 		return cerr.AppendErrorFmt("failed to stop registry %s: %s", err, Name, out)
 	}
@@ -221,14 +221,14 @@ func (p *podmanProvider) Stop() error {
 // them (material generation is idempotent). Deleting the registry thus removes
 // the service, not the stored images. force is accepted for interface parity.
 //
-// Every step is attempted, and any failure is returned (CDS-026), so delete
+// Every step is attempted, and any failure is returned, so delete
 // never reports success while the unit or container is still there. What is
 // already gone is not a failure: Stop only runs on an active unit, Remove
 // tolerates a unit that is not loaded, and a missing container is ignored.
 func (p *podmanProvider) Delete(force bool) error {
 	var errs []error
 	// stop the service before its unit file goes away: a running unit that
-	// loses its file ends up failed (CDS-011).
+	// loses its file ends up failed.
 	if p.units.IsActive(quadletService) {
 		if err := p.units.Stop(quadletService); err != nil {
 			errs = append(errs, cerr.AppendError("failed to stop registry service", err))

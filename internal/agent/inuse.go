@@ -57,7 +57,7 @@ func cdsContainerNames() ([]string, error) {
 }
 
 // inUseError marks a delete refused because containers still depend on the
-// resource: a refusal of the request, not an agent fault (CDS-032).
+// resource: a refusal of the request, not an agent fault.
 type inUseError struct{ error }
 
 // errInUse is returned when a cluster/registry delete is refused because

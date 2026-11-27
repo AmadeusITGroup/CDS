@@ -9,7 +9,7 @@ import (
 )
 
 // TestVersionMismatchHint: a local agent is told to restart (orc run does not
-// update it, BD-09); a remote agent keeps the orc run hint (CDS-066).
+// update it); a remote agent keeps the orc run hint.
 func TestVersionMismatchHint(t *testing.T) {
 	local := versionMismatchHint(cg.KLocalhost, "v0")
 	assert.Contains(t, local, "restart it to update it")

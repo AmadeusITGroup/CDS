@@ -104,7 +104,7 @@ func (c *Config) IsNasRequested() bool {
 }
 
 // IsRegistryRequested reports whether orchestration.registry is a JSON object:
-// false, null or another type does not request a registry (CDS-073).
+// false, null or another type does not request a registry.
 func (c *Config) IsRegistryRequested() bool {
 	return c.isObject(KOrchestration, KOrchestrationRegistry)
 }

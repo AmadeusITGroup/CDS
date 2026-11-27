@@ -116,7 +116,7 @@ func (p *probingHost) Probe(name string, args ...string) (string, error) {
 // TestManagerProbesExpectedNoAnswersQuietly: `is-active` (exit 3 when
 // inactive) and the unit-file `cat` (exit 1 when missing) are probes whose
 // "no" is a normal answer, so they go through Probe, never Execute, which
-// warns the user on a non-zero exit (CDS-056). Real changes still use Execute.
+// warns the user on a non-zero exit. Real changes still use Execute.
 func TestManagerProbesExpectedNoAnswersQuietly(t *testing.T) {
 	h := &probingHost{fakeHost: newFakeHost()}
 	const dir = "/home/remote-user/.config/systemd/user"

@@ -95,7 +95,7 @@ func resolveAgentBinary(p platform) (string, error) {
 
 // missingAgentHint tells the user what to do when no agent binary was found.
 // When CDS_AGENT_BINARY is set it names the path it resolved to, rather than
-// asking to set a variable that is already set (CDS-059).
+// asking to set a variable that is already set.
 func missingAgentHint(p platform, configured string) string {
 	if configured == cg.EmptyStr {
 		return "set CDS_AGENT_BINARY or CDS_AGENT_DOWNLOAD_URL"

@@ -192,7 +192,7 @@ func (rb remoteBootstrap) ensureBinary(p platform, binDir string) (string, error
 	}
 	// upload aside then rename, the binary may be in use by a running agent.
 	// The staging name is unique per run: concurrent clients installing the
-	// same version must not chmod/rename each other's staging file (CDS-063);
+	// same version must not chmod/rename each other's staging file;
 	// the rename is atomic, so the last one wins with a complete binary.
 	staging, err := uploadStagingPath(remote)
 	if err != nil {
@@ -211,9 +211,9 @@ func (rb remoteBootstrap) ensureBinary(p platform, binDir string) (string, error
 }
 
 // removeStaleStaging deletes, best effort, the staging files an interrupted
-// run left next to remote (CDS-085). Only files older than
+// run left next to remote. Only files older than
 // kStaleUploadMinutes go: a younger one may be a concurrent client's upload
-// still in flight (CDS-063).
+// still in flight.
 func (rb remoteBootstrap) removeStaleStaging(remote string) {
 	if _, err := rb.h.Execute("sh", "-c", cg.ShellSingleQuote(staleStagingScript(remote))); err != nil {
 		clog.Debug(fmt.Sprintf("Failed to remove stale uploads next to %s on %s: %v", remote, rb.hostname, err))

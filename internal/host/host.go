@@ -219,7 +219,7 @@ func (h *host) Execute(name string, args ...string) (string, error) {
 
 // Probe runs a command whose non-zero exit is an expected answer (e.g.
 // `systemctl is-active` on an inactive unit): like Execute, but a failure is
-// logged at debug, not shown to the user as a warning (CDS-056).
+// logged at debug, not shown to the user as a warning.
 func (h *host) Probe(name string, args ...string) (string, error) {
 	if shexec.IsLocalHost(h.name) {
 		return h.Execute(name, args...)

@@ -59,14 +59,14 @@ func TestQuadletUnitHasExpectedShape(t *testing.T) {
 	assert.Contains(t, unit, "[Container]")
 	assert.Contains(t, unit, "ContainerName="+Name)
 	assert.Contains(t, unit, "Image="+Image)
-	// pinned version and digest, not a moving tag (CDS-039)
+	// pinned version and digest, not a moving tag
 	assert.Regexp(t, `(?m)^Image=docker\.io/library/registry:2\.\d+\.\d+@sha256:[0-9a-f]{64}$`, unit)
-	// loopback only: kind nodes and devcontainers reach it on the kind network (CDS-027)
+	// loopback only: kind nodes and devcontainers reach it on the kind network
 	assert.Contains(t, unit, "PublishPort=127.0.0.1:5000:5000")
 	assert.Contains(t, unit, "REGISTRY_AUTH=htpasswd")
 	assert.Contains(t, unit, "REGISTRY_HTTP_TLS_CERTIFICATE=/certs/domain.crt")
 	assert.Contains(t, unit, "Network=kind")
-	assert.Contains(t, unit, "SuccessExitStatus=2 137 143", "clean stop must not leave the unit failed (CDS-007)")
+	assert.Contains(t, unit, "SuccessExitStatus=2 137 143", "clean stop must not leave the unit failed")
 	assert.Contains(t, unit, "NetworkAlias="+Hostname)
 	assert.Contains(t, unit, m.certsDir()+":/certs:Z")
 	assert.Contains(t, unit, m.authDir()+":/auth:Z")
@@ -96,7 +96,7 @@ func TestStopFallsBackToPodmanWhenUnitInactive(t *testing.T) {
 
 // TestStopIsIdempotent: the Quadlet container is removed on stop, so a second
 // stop finds no container; that is "already stopped", not a failure. Any
-// other podman failure is still returned (CDS-060).
+// other podman failure is still returned.
 func TestStopIsIdempotent(t *testing.T) {
 	p, _ := testProvider(t)
 	p.units = systemd.NewUnitManager(fakeHostOps{})
@@ -140,7 +140,7 @@ func TestDeleteStopsRunningUnitBeforeRemovingIt(t *testing.T) {
 		}
 	}
 	require.GreaterOrEqual(t, stop, 0, "running unit must be stopped")
-	assert.Less(t, stop, rm, "stop before the unit file is removed (CDS-011)")
+	assert.Less(t, stop, rm, "stop before the unit file is removed")
 }
 
 func TestUnitAwareStatusDistinguishesStopFromDelete(t *testing.T) {

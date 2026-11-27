@@ -136,7 +136,7 @@ func TestResolveAgentBinaryDownloadFailures(t *testing.T) {
 // TestResolveAgentBinaryNamesMissingConfiguredPath: when CDS_AGENT_BINARY is
 // set but resolves to a missing file, the error names that path instead of
 // telling the user to set the variable they already set; for the local
-// platform it also says how to build the local agent (CDS-059).
+// platform it also says how to build the local agent.
 func TestResolveAgentBinaryNamesMissingConfiguredPath(t *testing.T) {
 	t.Setenv("CDS_CONFIG_PATH", t.TempDir())
 	t.Setenv("PATH", t.TempDir()) // no stale cds-api-agent on PATH

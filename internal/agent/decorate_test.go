@@ -91,7 +91,7 @@ func TestContainerDecorationCommandsSkipEmpty(t *testing.T) {
 }
 
 // stubGetent puts a getent on PATH that gives user dev the home home; the
-// scripts run as the test user, as they run as the container user (CDS-067).
+// scripts run as the test user, as they run as the container user.
 func stubGetent(t *testing.T, home string) []string {
 	t.Helper()
 	stubs := t.TempDir()
@@ -102,7 +102,7 @@ func stubGetent(t *testing.T, home string) []string {
 
 // runScript runs script with a real /bin/sh as the test user and returns its
 // stdout: warnings must be there, a successful first-deploy step keeps only
-// stdout (CDS-061).
+// stdout.
 func runScript(t *testing.T, home, script string) string {
 	t.Helper()
 	cmd := exec.Command("/bin/sh", "-s")
@@ -115,7 +115,7 @@ func runScript(t *testing.T, home, script string) string {
 
 // TestInstallUserKubeconfigScript: with a remoteUser the kubeconfig lands in
 // that user's ~/.kube/config (600), and a link planted at the target is
-// replaced, not followed (CDS-065).
+// replaced, not followed.
 func TestInstallUserKubeconfigScript(t *testing.T) {
 	home := t.TempDir()
 	require.NoError(t, os.MkdirAll(filepath.Join(home, ".kube"), 0o700))
@@ -162,7 +162,7 @@ func TestInstallUserKubeconfigScriptUnwritableKubeDir(t *testing.T) {
 
 // TestDecorationRootNeverWritesUserHome: root writes only root-owned paths;
 // every write into the container user's home runs as that user, so a link
-// the user swaps in can never redirect a root write (CDS-067).
+// the user swaps in can never redirect a root write.
 func TestDecorationRootNeverWritesUserHome(t *testing.T) {
 	for _, owner := range []string{"", "root", "dev"} {
 		cmds := containerDecorationCommands("KC", "CA", owner, newRegistryEnv("cdsabc", "secret", owner))
@@ -241,7 +241,7 @@ func TestContainerDecorationIncludesRegistryEnv(t *testing.T) {
 	cmds := containerDecorationCommands("KC", "CA", "dev", reg)
 	// kubeconfig (root + user) + trust + legacy cleanup + registry env
 	require.Len(t, cmds, 5)
-	// the old world-readable profile script is removed, as root (CDS-024)
+	// the old world-readable profile script is removed, as root
 	assert.Equal(t, kRemoveLegacyRegistryEnvScript, cmds[3].script)
 	assert.Equal(t, "root", cmds[3].runAs())
 	last := cmds[4]
@@ -261,7 +261,7 @@ func TestNewRegistryEnvDefaultsOwnerToRoot(t *testing.T) {
 
 // TestInstallRegistryEnvScriptRealShell runs the script with a real /bin/sh
 // against a temp home, as the test user (the script runs as the container
-// user, CDS-067); only getent is stubbed.
+// user); only getent is stubbed.
 func TestInstallRegistryEnvScriptRealShell(t *testing.T) {
 	home := t.TempDir()
 	// an existing .bashrc is appended to; a missing .zshrc is not created
@@ -301,7 +301,7 @@ func TestInstallRegistryEnvScriptRealShell(t *testing.T) {
 
 // TestInstallRegistryEnvScriptUnwritableConfigDir: a ~/.config the user cannot
 // write makes the script skip the env file and rc files with a warning, and
-// still succeed (CDS-055, CDS-061).
+// still succeed.
 func TestInstallRegistryEnvScriptUnwritableConfigDir(t *testing.T) {
 	home := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(home, ".config"), []byte("not a dir\n"), 0o644))
@@ -313,7 +313,7 @@ func TestInstallRegistryEnvScriptUnwritableConfigDir(t *testing.T) {
 
 // TestInstallRegistryEnvScriptUnwritableRcFile: an rc file the user cannot
 // append to (here a link to a read-only file) is skipped with a warning; the
-// other rc files still get the line (CDS-054).
+// other rc files still get the line.
 func TestInstallRegistryEnvScriptUnwritableRcFile(t *testing.T) {
 	if os.Getuid() == 0 {
 		t.Skip("root can write a read-only file")
@@ -355,7 +355,7 @@ func TestEnsureOrchestrationCreatesPullSecret(t *testing.T) {
 
 // TestRegistryPortSettingIsIgnored: a leftover orchestration.registry.port
 // no longer moves node trust, the pull secret or the container env off the
-// port the registry really listens on (CDS-033).
+// port the registry really listens on.
 func TestRegistryPortSettingIsIgnored(t *testing.T) {
 	config, err := containerconf.ParseBytes(strings.NewReader(`{
 		"image": "alpine:3.19",
@@ -376,7 +376,7 @@ func TestRegistryPortSettingIsIgnored(t *testing.T) {
 
 // TestEnsureOrchestrationRegistrySecureKey: the registry is always secured, so
 // an absent or true `secure` key deploys and anything else fails before any
-// build starts (CDS-034).
+// build starts.
 func TestEnsureOrchestrationRegistrySecureKey(t *testing.T) {
 	for _, tc := range []struct {
 		name, registry string
@@ -442,7 +442,7 @@ func TestEnsureOrchestrationSerializesReports(t *testing.T) {
 
 // TestRedecorateOneReportsSkipWarnings: a decoration script that skips a write
 // prints a "cds: " line and exits 0; that line must reach the client as a
-// warning, not be dropped with the output (CDS-061).
+// warning, not be dropped with the output.
 func TestRedecorateOneReportsSkipWarnings(t *testing.T) {
 	ops := &mockContainerOps{execOutput: "cds: /home/u/.config is a link or not a directory owned by u, /home/u/.config/cds/registry.env not written\nother output\n"}
 	s := newTestServer(t, ops)
@@ -465,7 +465,7 @@ func TestRedecorateOneReportsSkipWarnings(t *testing.T) {
 
 // TestRedecorateOneReportsFailedScript: a script that exits non-zero (set -eu,
 // e.g. no home directory) is not an error from ExecuteScriptInContainer; it
-// must still reach the client as a warning with the output tail (CDS-068).
+// must still reach the client as a warning with the output tail.
 func TestRedecorateOneReportsFailedScript(t *testing.T) {
 	ops := &mockContainerOps{execOutput: "container user dev has no home directory\n", execCode: 1}
 	s := newTestServer(t, ops)
@@ -516,7 +516,7 @@ func TestReportDecorationWarnings(t *testing.T) {
 // TestEnsureAndResolveDecorationMergesAndPrunesMirrors: a deploy applies its own
 // mirrors plus those of the other recorded deployments (its own wins on a
 // conflict, with a warning), and prunes every other CDS mirror, such as one
-// this container's previous config had (CDS-078).
+// this container's previous config had.
 func TestEnsureAndResolveDecorationMergesAndPrunesMirrors(t *testing.T) {
 	cluster := &mockClusterOps{}
 	srv := newTestOrchestrationServer(t, cluster, &mockRegistryOps{},
@@ -547,7 +547,7 @@ func TestEnsureAndResolveDecorationMergesAndPrunesMirrors(t *testing.T) {
 // TestEnsureAndResolveDecorationRestoresOthersOnCreatedCluster: a deploy that
 // creates the cluster (it was deleted) restores the other recorded
 // deployments' ingress and registry access and re-decorates their running
-// containers; a deploy onto an existing cluster does not (CDS-082).
+// containers; a deploy onto an existing cluster does not.
 func TestEnsureAndResolveDecorationRestoresOthersOnCreatedCluster(t *testing.T) {
 	for name, tc := range map[string]struct {
 		status  bo.ContainerStatus

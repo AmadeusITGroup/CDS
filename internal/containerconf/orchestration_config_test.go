@@ -46,7 +46,7 @@ func TestOrchestrationConfigKindWithSecureRegistry(t *testing.T) {
 	assert.True(t, oc.PersistentVolume)
 	assert.True(t, oc.Registry.Requested)
 	assert.False(t, oc.Registry.InsecureRequested, "secure: true is accepted")
-	assert.True(t, config.RegistryPortIgnored(), "the removed port key is detected so the client can warn (CDS-033)")
+	assert.True(t, config.RegistryPortIgnored(), "the removed port key is detected so the client can warn")
 }
 
 func TestOrchestrationConfigEngineWithoutRegistry(t *testing.T) {
@@ -74,7 +74,7 @@ func TestOrchestrationConfigEmptyRegistry(t *testing.T) {
 	oc := config.OrchestrationConfig()
 
 	assert.True(t, oc.Registry.Requested, "an empty registry object still requests a registry")
-	assert.False(t, oc.Registry.InsecureRequested, "an absent secure key means secured (CDS-034)")
+	assert.False(t, oc.Registry.InsecureRequested, "an absent secure key means secured")
 	assert.False(t, config.RegistryPortIgnored())
 }
 
@@ -88,12 +88,12 @@ func TestOrchestrationConfigRegistrySecureFalseIsInsecureRequest(t *testing.T) {
 	oc := config.OrchestrationConfig()
 
 	assert.True(t, oc.Registry.Requested)
-	assert.True(t, oc.Registry.InsecureRequested, "an explicit secure: false is flagged so the deploy rejects it (CDS-034)")
+	assert.True(t, oc.Registry.InsecureRequested, "an explicit secure: false is flagged so the deploy rejects it")
 }
 
 // TestOrchestrationConfigNonObjectSectionsNotRequested checks that only a JSON
 // object requests a section: false, null or another type does not, and a
-// non-object other than null (absent) is rejected (CDS-073).
+// non-object other than null (absent) is rejected.
 func TestOrchestrationConfigNonObjectSectionsNotRequested(t *testing.T) {
 	for _, v := range []string{`false`, `null`, `true`, `"kind"`, `[]`} {
 		config, err := ParseBytes(strings.NewReader(`{"image":"alpine:3.19","orchestration":` + v + `}`))

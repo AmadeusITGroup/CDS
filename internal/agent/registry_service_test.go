@@ -85,7 +85,7 @@ func TestBuildRegistryStreamsProgressThenResponse(t *testing.T) {
 	err := svc.BuildRegistry(&cdspb.BuildRegistryRequest{}, stream)
 	require.NoError(t, err)
 	require.Len(t, stream.events, 4) // init + 2 progress + response
-	assert.True(t, ops.built, "an empty request builds the (always secured) registry (CDS-034)")
+	assert.True(t, ops.built, "an empty request builds the (always secured) registry")
 	resp := stream.events[3].GetResponse()
 	require.NotNil(t, resp)
 	assert.Equal(t, registry.Name, resp.GetName())
@@ -154,7 +154,7 @@ func TestGetRegistryReturnsProtoWithHost(t *testing.T) {
 	assert.NotEmpty(t, resp.GetRegistry().GetHost())
 }
 
-// TestBuildRegistryRefreshesClusterTrust covers CDS-031: a rebuilt registry
+// TestBuildRegistryRefreshesClusterTrust: a rebuilt registry
 // re-installs its CA on the cluster nodes and recreates the pull secret, and
 // leaves mirrors and ingress alone.
 func TestBuildRegistryRefreshesClusterTrust(t *testing.T) {
@@ -180,7 +180,7 @@ func TestBuildRegistrySkipsClusterTrustWithoutRunningCluster(t *testing.T) {
 }
 
 // a rebuilt registry has new credentials: re-decoration must refresh the
-// CDS_REGISTRY_* env in running containers, not only the CA (CDS-042).
+// CDS_REGISTRY_* env in running containers, not only the CA.
 func TestBuildRegistryRedecorationRefreshesRegistryEnv(t *testing.T) {
 	containers := &mockContainerOps{containers: bo.Containers{{Name: "dev-0", Status: bo.KContainerStatusRunning}}}
 	srv, err := newgrpcServer(NewConfig(

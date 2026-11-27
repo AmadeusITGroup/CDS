@@ -55,7 +55,7 @@ func (m material) credsFile() string { return filepath.Join(m.authDir(), "creds"
 // certificate (regenerating credentials would lock out already-trusting
 // clients, so when the material exists it is left as is and the existing
 // credentials are reused). changed reports that material was written, so a
-// running registry must restart to serve it (CDS-081).
+// running registry must restart to serve it.
 func ensureMaterial(root string) (m material, changed bool, err error) {
 	m = material{root: root}
 	for _, dir := range []string{m.certsDir(), m.authDir(), m.dataDir()} {
@@ -72,9 +72,9 @@ func ensureMaterial(root string) (m material, changed bool, err error) {
 			return material{}, false, err
 		}
 		m.username, m.password = user, pass
-		// a certificate for an older registry name (cds.sec.io before CDS-016),
-		// expired or close to it, or CA-flagged (before CDS-038) is reissued
-		// for Hostname; the credentials are kept (CDS-081).
+		// a certificate for an older registry name (cds.sec.io before the rename),
+		// expired or close to it, or CA-flagged (older versions) is reissued
+		// for Hostname; the credentials are kept.
 		if m.certReusable(Hostname, time.Now()) {
 			return m, false, nil
 		}
@@ -133,7 +133,7 @@ func (m *material) generateCertificate(hostname string) error {
 		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 		BasicConstraintsValid: true,
 		// a plain self-signed server certificate: clients trust it directly
-		// as the anchor under certs.d, so it needs no CA power (CDS-038)
+		// as the anchor under certs.d, so it needs no CA power
 		IsCA: false,
 	}
 	der, err := x509.CreateCertificate(rand.Reader, &template, &template, &key.PublicKey, key)
