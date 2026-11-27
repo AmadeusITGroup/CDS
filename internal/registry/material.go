@@ -26,6 +26,8 @@ const (
 	credentialBytes = 24
 	// certValidity is how long the self-signed registry certificate is valid.
 	certValidity = 10 * 365 * 24 * time.Hour
+	// certRenewBefore is how long before NotAfter the certificate is reissued.
+	certRenewBefore = 30 * 24 * time.Hour
 )
 
 // material holds the on-host paths and the generated credentials for the
@@ -52,12 +54,13 @@ func (m material) credsFile() string { return filepath.Join(m.authDir(), "creds"
 // with freshly generated random credentials. It is idempotent on the
 // certificate (regenerating credentials would lock out already-trusting
 // clients, so when the material exists it is left as is and the existing
-// credentials are reused).
-func ensureMaterial(root string) (material, error) {
-	m := material{root: root}
+// credentials are reused). changed reports that material was written, so a
+// running registry must restart to serve it (CDS-081).
+func ensureMaterial(root string) (m material, changed bool, err error) {
+	m = material{root: root}
 	for _, dir := range []string{m.certsDir(), m.authDir(), m.dataDir()} {
 		if err := os.MkdirAll(dir, 0700); err != nil {
-			return material{}, cerr.AppendErrorFmt("failed to create registry dir %s", err, dir)
+			return material{}, false, cerr.AppendErrorFmt("failed to create registry dir %s", err, dir)
 		}
 	}
 
@@ -66,31 +69,34 @@ func ensureMaterial(root string) (material, error) {
 	if fileExists(m.certFile()) && fileExists(m.keyFile()) && fileExists(m.htpasswd()) && fileExists(m.credsFile()) {
 		user, pass, err := readPersistedCredentials(m.credsFile())
 		if err != nil {
-			return material{}, err
+			return material{}, false, err
 		}
 		m.username, m.password = user, pass
-		// a certificate issued for an older registry name (cds.sec.io before
-		// CDS-016) is reissued for Hostname; the credentials are kept.
-		if !m.certCovers(Hostname) {
-			if err := m.generateCertificate(Hostname); err != nil {
-				return material{}, err
-			}
+		// a certificate for an older registry name (cds.sec.io before CDS-016),
+		// expired or close to it, or CA-flagged (before CDS-038) is reissued
+		// for Hostname; the credentials are kept (CDS-081).
+		if m.certReusable(Hostname, time.Now()) {
+			return m, false, nil
 		}
-		return m, nil
+		if err := m.generateCertificate(Hostname); err != nil {
+			return material{}, false, err
+		}
+		return m, true, nil
 	}
 
 	if err := m.generateCertificate(Hostname); err != nil {
-		return material{}, err
+		return material{}, false, err
 	}
 	if err := m.generateCredentials(); err != nil {
-		return material{}, err
+		return material{}, false, err
 	}
-	return m, nil
+	return m, true, nil
 }
 
-// certCovers reports whether the stored certificate is issued for hostname.
-// An unreadable certificate does not cover it, so it gets reissued.
-func (m material) certCovers(hostname string) bool {
+// certReusable reports whether the stored certificate is a plain leaf issued
+// for hostname that stays valid past now+certRenewBefore. An unreadable
+// certificate is not reusable, so it gets reissued.
+func (m material) certReusable(hostname string, now time.Time) bool {
 	certPEM, err := os.ReadFile(m.certFile())
 	if err != nil {
 		return false
@@ -103,7 +109,7 @@ func (m material) certCovers(hostname string) bool {
 	if err != nil {
 		return false
 	}
-	return cert.VerifyHostname(hostname) == nil
+	return cert.VerifyHostname(hostname) == nil && !cert.IsCA && now.Add(certRenewBefore).Before(cert.NotAfter)
 }
 
 // generateCertificate writes a self-signed ECDSA certificate and key for

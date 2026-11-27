@@ -1,11 +1,17 @@
 package registry
 
 import (
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
 	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/pem"
+	"math/big"
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -14,7 +20,7 @@ import (
 
 func TestEnsureMaterialGeneratesCertAndCredentials(t *testing.T) {
 	root := t.TempDir()
-	m, err := ensureMaterial(root)
+	m, _, err := ensureMaterial(root)
 	require.NoError(t, err)
 
 	// certificate is valid and issued for Hostname
@@ -51,13 +57,13 @@ func TestEnsureMaterialGeneratesCertAndCredentials(t *testing.T) {
 
 func TestEnsureMaterialIsIdempotent(t *testing.T) {
 	root := t.TempDir()
-	first, err := ensureMaterial(root)
+	first, _, err := ensureMaterial(root)
 	require.NoError(t, err)
 	firstCert, err := os.ReadFile(first.certFile())
 	require.NoError(t, err)
 
 	// second call must not rotate the certificate or the username
-	second, err := ensureMaterial(root)
+	second, _, err := ensureMaterial(root)
 	require.NoError(t, err)
 	secondCert, err := os.ReadFile(second.certFile())
 	require.NoError(t, err)
@@ -68,14 +74,14 @@ func TestEnsureMaterialIsIdempotent(t *testing.T) {
 
 func TestEnsureMaterialPersistsPlaintextCredentials(t *testing.T) {
 	root := t.TempDir()
-	first, err := ensureMaterial(root)
+	first, _, err := ensureMaterial(root)
 	require.NoError(t, err)
 	require.NotEmpty(t, first.username)
 	require.NotEmpty(t, first.password)
 
 	// a second call reuses the SAME plaintext credentials (recovered from the
 	// persisted creds file, not the unrecoverable bcrypt hash).
-	second, err := ensureMaterial(root)
+	second, _, err := ensureMaterial(root)
 	require.NoError(t, err)
 	assert.Equal(t, first.username, second.username)
 	assert.Equal(t, first.password, second.password, "password survives reuse via the persisted creds file")
@@ -86,11 +92,11 @@ func TestEnsureMaterialReissuesCertForOldHostname(t *testing.T) {
 	// the old name; the next build must reissue it for Hostname and keep the
 	// credentials clients already use.
 	root := t.TempDir()
-	first, err := ensureMaterial(root)
+	first, _, err := ensureMaterial(root)
 	require.NoError(t, err)
 	require.NoError(t, first.generateCertificate("cds.sec.io"))
 
-	second, err := ensureMaterial(root)
+	second, _, err := ensureMaterial(root)
 	require.NoError(t, err)
 	certPEM, err := os.ReadFile(second.certFile())
 	require.NoError(t, err)
@@ -101,4 +107,75 @@ func TestEnsureMaterialReissuesCertForOldHostname(t *testing.T) {
 	assert.Equal(t, []string{Hostname}, cert.DNSNames)
 	assert.Equal(t, first.username, second.username)
 	assert.Equal(t, first.password, second.password)
+}
+
+// writeTestCert overwrites the stored certificate with a self-signed one for
+// Hostname, with the given expiry and CA flag.
+func writeTestCert(t *testing.T, m material, notAfter time.Time, isCA bool) {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+	tmpl := x509.Certificate{
+		SerialNumber:          big.NewInt(1),
+		Subject:               pkix.Name{CommonName: Hostname},
+		DNSNames:              []string{Hostname},
+		NotBefore:             notAfter.Add(-2 * certValidity),
+		NotAfter:              notAfter,
+		BasicConstraintsValid: true,
+		IsCA:                  isCA,
+	}
+	der, err := x509.CreateCertificate(rand.Reader, &tmpl, &tmpl, &key.PublicKey, key)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(m.certFile(), pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), 0644))
+}
+
+// TestEnsureMaterialReissuesUnusableCert: an expired, soon-expiring or
+// CA-flagged certificate is reissued as a plain leaf, the credentials are kept,
+// and the change is reported so the registry restarts (CDS-081).
+func TestEnsureMaterialReissuesUnusableCert(t *testing.T) {
+	for name, tc := range map[string]struct {
+		notAfter time.Time
+		isCA     bool
+	}{
+		"expired":          {notAfter: time.Now().Add(-time.Hour)},
+		"expires soon":     {notAfter: time.Now().Add(certRenewBefore / 2)},
+		"CA (pre CDS-038)": {notAfter: time.Now().Add(certValidity), isCA: true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			root := t.TempDir()
+			first, changed, err := ensureMaterial(root)
+			require.NoError(t, err)
+			require.True(t, changed, "new material is a change")
+			writeTestCert(t, first, tc.notAfter, tc.isCA)
+
+			second, changed, err := ensureMaterial(root)
+			require.NoError(t, err)
+			assert.True(t, changed, "reissue is reported")
+			cert := readTestCert(t, second)
+			assert.False(t, cert.IsCA)
+			assert.True(t, cert.NotAfter.After(time.Now().Add(certRenewBefore)))
+			assert.Equal(t, first.username, second.username)
+			assert.Equal(t, first.password, second.password)
+		})
+	}
+}
+
+func TestEnsureMaterialReportsNoChangeOnReuse(t *testing.T) {
+	root := t.TempDir()
+	_, _, err := ensureMaterial(root)
+	require.NoError(t, err)
+	_, changed, err := ensureMaterial(root)
+	require.NoError(t, err)
+	assert.False(t, changed)
+}
+
+func readTestCert(t *testing.T, m material) *x509.Certificate {
+	t.Helper()
+	certPEM, err := os.ReadFile(m.certFile())
+	require.NoError(t, err)
+	block, _ := pem.Decode(certPEM)
+	require.NotNil(t, block)
+	cert, err := x509.ParseCertificate(block.Bytes)
+	require.NoError(t, err)
+	return cert
 }

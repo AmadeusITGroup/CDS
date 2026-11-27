@@ -52,7 +52,7 @@ func testProvider(t *testing.T) (*podmanProvider, *fakeRunner) {
 
 func TestQuadletUnitHasExpectedShape(t *testing.T) {
 	p, _ := testProvider(t)
-	m, err := ensureMaterial(p.materialRoot)
+	m, _, err := ensureMaterial(p.materialRoot)
 	require.NoError(t, err)
 
 	unit := string(p.quadletUnit(m))
@@ -75,7 +75,7 @@ func TestQuadletUnitHasExpectedShape(t *testing.T) {
 
 func TestInstallHostTrustWritesCert(t *testing.T) {
 	p, _ := testProvider(t)
-	m, err := ensureMaterial(p.materialRoot)
+	m, _, err := ensureMaterial(p.materialRoot)
 	require.NoError(t, err)
 
 	require.NoError(t, p.installHostTrust(m))
