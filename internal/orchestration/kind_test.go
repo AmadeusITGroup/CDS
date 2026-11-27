@@ -83,6 +83,7 @@ func (f *fakeRunner) runCtx(ctx context.Context, command string) (string, error)
 }
 
 func TestKindCreateClusterCancelledRemovesPartialCluster(t *testing.T) {
+	t.Setenv("INVOCATION_ID", "") // not under systemd -> unscoped create (CDS-090)
 	r := newFakeRunner()
 	k := kindProviderWithRunner(r)
 	ctx, cancel := context.WithCancel(context.Background())
