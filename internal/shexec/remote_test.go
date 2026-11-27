@@ -1,12 +1,15 @@
 package shexec
 
 import (
+	"net"
 	"path/filepath"
 	"runtime"
 	"testing"
+	"time"
 
 	"github.com/amadeusitgroup/cds/internal/cos"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestDestination(t *testing.T) {
@@ -117,4 +120,18 @@ func TestGeneratePubKeyEd25519(t *testing.T) {
 
 	refBytes, _ = addCdsWatermarkToPublicKey(refBytes)
 	assert.Equal(t, string(refBytes), string(dstBytes))
+}
+
+// TestForwardPortNotReadyWhenListenFails checks the ready step does not run
+// when the local listener cannot be opened (CDS-072).
+func TestForwardPortNotReadyWhenListenFails(t *testing.T) {
+	busy, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	defer func() { _ = busy.Close() }()
+
+	ran := false
+	err = ForwardPort(mockedTarget{name: "unused"}, busy.Addr().String(), "127.0.0.1:1", time.Second,
+		WithOnReady(func() error { ran = true; return nil }))
+	assert.Error(t, err)
+	assert.False(t, ran, "ready step must not run before the listener is up")
 }

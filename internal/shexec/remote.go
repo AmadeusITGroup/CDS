@@ -579,15 +579,25 @@ func DownloadFile(method RemoteExecute, src, dst string) error {
 	return nil
 }
 
-func ForwardPort(host target, local string, remote string, timeout time.Duration) error {
+func ForwardPort(host target, local string, remote string, timeout time.Duration, opts ...ForwardOption) error {
+	var o forwardOptions
+	for _, opt := range opts {
+		opt(&o)
+	}
 	localListener, err := net.Listen("tcp", local)
 	if err != nil {
 		return err
 	}
+	defer func() { _ = localListener.Close() }()
 	client, connectErr := connectSSHKey(host)
 
 	if connectErr != nil {
 		return connectErr
+	}
+	if o.onReady != nil {
+		if err := o.onReady(); err != nil {
+			return err
+		}
 	}
 	localConn := make(chan ListenerResult, 1)
 	keepAlive := true
@@ -612,6 +622,21 @@ func ForwardPort(host target, local string, remote string, timeout time.Duration
 		}
 	}
 	return nil
+}
+
+// ForwardOption configures ForwardPort.
+type ForwardOption func(*forwardOptions)
+
+type forwardOptions struct {
+	onReady func() error
+}
+
+// WithOnReady runs fn once the local listener is up and the ssh connection is
+// made, before any connection is served. An error from fn stops the forward.
+func WithOnReady(fn func() error) ForwardOption {
+	return func(o *forwardOptions) {
+		o.onReady = fn
+	}
 }
 
 // TODO:Analyse: this is started from a goroutine -> should use an error channel instead of returning an error that is never going to be used

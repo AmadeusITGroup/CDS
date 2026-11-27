@@ -230,3 +230,35 @@ func TestRenameKubeconfigEntriesSuffixesExtraEntries(t *testing.T) {
 		assert.Contains(t, got, want)
 	}
 }
+
+// TestKindKubeconfigWriterWritesOnlyWhenRun checks project expose's kubeconfig
+// step writes nothing until it runs (after the tunnel is up), then adds the
+// named context and keeps the user's current-context (CDS-072).
+func TestKindKubeconfigWriterWritesOnlyWhenRun(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config")
+	t.Setenv("KUBECONFIG", path)
+	require.NoError(t, os.WriteFile(path, []byte("apiVersion: v1\nkind: Config\ncurrent-context: prod\ncontexts:\n- name: prod\n  context: {cluster: prod, user: prod}\n"), 0600))
+	kind := []byte("apiVersion: v1\nkind: Config\ncurrent-context: kind-cds-kind\nclusters:\n- name: kind-cds-kind\n  cluster: {server: 'https://localhost:1337'}\nusers:\n- name: kind-cds-kind\n  user: {}\ncontexts:\n- name: kind-cds-kind\n  context: {cluster: kind-cds-kind, user: kind-cds-kind}\n")
+	named, err := renameKubeconfigEntries(kind, hostKubeconfigName("h"))
+	require.NoError(t, err)
+
+	step := kindKubeconfigWriter(named, hostKubeconfigName("h"), "localhost:1337")
+	before, err := os.ReadFile(path)
+	require.NoError(t, err)
+	assert.NotContains(t, string(before), "cds-h", "nothing written before the step runs")
+
+	require.NoError(t, step())
+	var doc struct {
+		Current  string `yaml:"current-context"`
+		Contexts []struct{ Name string }
+	}
+	after, err := os.ReadFile(path)
+	require.NoError(t, err)
+	require.NoError(t, yaml.Unmarshal(after, &doc))
+	assert.Equal(t, "prod", doc.Current)
+	var names []string
+	for _, c := range doc.Contexts {
+		names = append(names, c.Name)
+	}
+	assert.ElementsMatch(t, []string{"prod", "cds-h"}, names)
+}

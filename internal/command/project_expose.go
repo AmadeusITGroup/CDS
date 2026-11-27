@@ -65,14 +65,16 @@ func (pexpose *projectExpose) execute(cmd *cobra.Command, args []string) error {
 
 	// Resolve the remote address to forward to. For --service kind the remote is
 	// the cluster API server (and the local kubeconfig is patched to target the
-	// local forward); otherwise --remote is used directly.
+	// local forward once the tunnel is up); otherwise --remote is used directly.
 	remote := pexpose.service.remote
+	var forwardOpts []shexec.ForwardOption
 	if pexpose.service.serviceName != cg.EmptyStr {
-		resolved, err := pexpose.resolveServiceRemote(projectName)
+		resolved, onReady, err := pexpose.resolveServiceRemote(projectName)
 		if err != nil {
 			return err
 		}
 		remote = resolved
+		forwardOpts = append(forwardOpts, shexec.WithOnReady(onReady))
 	}
 	if err := validateHostPort("remote", remote); err != nil {
 		return err
@@ -88,7 +90,7 @@ func (pexpose *projectExpose) execute(cmd *cobra.Command, args []string) error {
 	}
 
 	clog.Info(fmt.Sprintf("Forwarding %s to %s through container %s.", pexpose.service.local, remote, containerName))
-	return withRedeployTip(projectName, shexec.ForwardPort(target, pexpose.service.local, remote, pexpose.timeout))
+	return withRedeployTip(projectName, shexec.ForwardPort(target, pexpose.service.local, remote, pexpose.timeout, forwardOpts...))
 }
 
 // validateHostPort checks addr is a HOST:PORT.
@@ -100,24 +102,27 @@ func validateHostPort(flag, addr string) error {
 }
 
 // resolveServiceRemote resolves the remote HOST:PORT to forward to for a named
-// service. The only supported service today is "kind": the remote is the kind
-// cluster API server (read from the cluster kubeconfig), and the local
-// kubeconfig is patched to target the local forward address so kubectl on this
-// machine reaches the cluster through the tunnel.
-func (pexpose *projectExpose) resolveServiceRemote(projectName string) (string, error) {
+// service, and the step to run once the tunnel is up. The only supported
+// service today is "kind": the remote is the kind cluster API server (read from
+// the cluster kubeconfig), and the step writes a local kubeconfig context that
+// targets the local forward address so kubectl on this machine reaches the
+// cluster through the tunnel.
+func (pexpose *projectExpose) resolveServiceRemote(projectName string) (string, func() error, error) {
 	switch pexpose.service.serviceName {
 	case "kind":
 		return pexpose.exposeKind(projectName)
 	default:
-		return cg.EmptyStr, cerr.NewError(fmt.Sprintf("unknown service %q; supported: kind", pexpose.service.serviceName))
+		return cg.EmptyStr, nil, cerr.NewError(fmt.Sprintf("unknown service %q; supported: kind", pexpose.service.serviceName))
 	}
 }
 
 // exposeKind fetches the cluster kubeconfig from the project's agent, extracts
 // the API server address (the remote to forward to, reachable through the
-// devcontainer on the kind network), and writes a local kubeconfig whose server
-// points at the local forward address.
-func (pexpose *projectExpose) exposeKind(projectName string) (string, error) {
+// devcontainer on the kind network), and returns a step that writes a local
+// kubeconfig whose server points at the local forward address. The step is run
+// only once the tunnel is up, so a failed forward leaves no context pointing at
+// a dead local port (CDS-072).
+func (pexpose *projectExpose) exposeKind(projectName string) (string, func() error, error) {
 	var kubeconfig string
 	if err := onProjectAgent(projectName, func(services agentServices, ctx context.Context) error {
 		resp, err := services.cluster.GetKubeconfig(ctx, &cdspb.GetKubeconfigRequest{})
@@ -127,30 +132,41 @@ func (pexpose *projectExpose) exposeKind(projectName string) (string, error) {
 		kubeconfig = resp.GetKubeconfig()
 		return nil
 	}); err != nil {
-		return cg.EmptyStr, cerr.AppendError("Failed to fetch cluster kubeconfig", err)
+		return cg.EmptyStr, nil, cerr.AppendError("Failed to fetch cluster kubeconfig", err)
 	}
 	if kubeconfig == cg.EmptyStr {
-		return cg.EmptyStr, cerr.NewError("cluster returned an empty kubeconfig; is the cluster built?")
+		return cg.EmptyStr, nil, cerr.NewError("cluster returned an empty kubeconfig; is the cluster built?")
 	}
 
 	remote, err := kubeconfigServerHostPort(kubeconfig)
 	if err != nil {
-		return cg.EmptyStr, err
+		return cg.EmptyStr, nil, err
 	}
 
 	// patch a local kubeconfig so kubectl targets the local forward address.
 	patched, err := rewriteKubeconfigServer(kubeconfig, pexpose.service.local)
 	if err != nil {
-		return cg.EmptyStr, err
+		return cg.EmptyStr, nil, err
 	}
-	patched, err = renameKubeconfigEntries(patched, hostKubeconfigName(projectAgentHost(projectName)))
+	name := hostKubeconfigName(projectAgentHost(projectName))
+	patched, err = renameKubeconfigEntries(patched, name)
 	if err != nil {
-		return cg.EmptyStr, err
+		return cg.EmptyStr, nil, err
 	}
-	path := localKubeconfigPath()
-	if err := writeKubeconfig(path, patched); err != nil {
-		return cg.EmptyStr, err
+	return remote, kindKubeconfigWriter(patched, name, pexpose.service.local), nil
+}
+
+// kindKubeconfigWriter returns a step that merges the patched kubeconfig into
+// the local one and names its context. The merge keeps an existing
+// current-context, so plain kubectl may still target another cluster: the
+// message gives the context to use.
+func kindKubeconfigWriter(patched []byte, name, local string) func() error {
+	return func() error {
+		path := localKubeconfigPath()
+		if err := writeKubeconfig(path, patched); err != nil {
+			return err
+		}
+		clog.Info(fmt.Sprintf("Local kubeconfig %s has context %s for the cluster via %s: use kubectl --context %s (or kubectl config use-context %s)", path, name, local, name, name))
+		return nil
 	}
-	clog.Info(fmt.Sprintf("Local kubeconfig %s now targets the cluster via %s", path, pexpose.service.local))
-	return remote, nil
 }
