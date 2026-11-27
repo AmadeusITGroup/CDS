@@ -132,6 +132,9 @@ func TestKillByEnvTokenScriptMatchesEnvironNotCmdlineAndSkipsSelf(t *testing.T) 
 	assert.Contains(t, s, "kill -STOP")
 	assert.Contains(t, s, "kill -KILL")
 	assert.Less(t, strings.Index(s, "kill -STOP"), strings.Index(s, "kill -KILL"), "STOP comes before KILL")
+	// each match is STOPped inside the scan, not after it: a full /proc scan
+	// can take seconds on a loaded host, and the tree must not run meanwhile
+	assert.Less(t, strings.Index(s, "kill -STOP"), strings.Index(s, `echo "$pid"`), "a match is STOPped as the scan finds it")
 }
 
 // TestKillByEnvTokenScriptAgainstRealProcesses runs the kill script against real
@@ -152,9 +155,10 @@ func TestKillByEnvTokenScriptAgainstRealProcesses(t *testing.T) {
 		token := fmt.Sprintf("cds-exec-real-%d", i)
 
 		// a tagged workload: a shell that re-exec's into a child which, after a
-		// short sleep, would touch the marker — i.e. its next command runs only
-		// if the kill fails to freeze it in time
-		tagged := exec.Command("/bin/sh", "-c", "exec sh -c 'sleep 1; touch "+marker+"'")
+		// sleep, would touch the marker — i.e. its next command runs only if the
+		// kill fails to freeze it. The 3 s sleep leaves slack for a slow /proc
+		// scan on a loaded CI runner, so this checks ordering, not scan speed.
+		tagged := exec.Command("/bin/sh", "-c", "exec sh -c 'sleep 3; touch "+marker+"'")
 		tagged.Env = append(os.Environ(), "CDS_EXEC_TOKEN="+token)
 		require.NoError(t, tagged.Start())
 		taggedProc := tagged.Process

@@ -306,8 +306,10 @@ func killInContainer(containerName, token string) {
 // before its parent's the child is signalled first and the (still-alive) parent
 // shell sees it exit and runs its next command before its own signal arrives.
 // A stopped process cannot exit, so no parent can advance while the tree is
-// frozen. The STOP scan repeats until it finds no new pids (children spawned
-// between scans), then every match is KILLed.
+// frozen. Each match is STOPped the moment the scan finds it, not after the
+// whole scan: a full /proc scan forks per pid and can take seconds on a loaded
+// host, and the tree must not run meanwhile. The STOP scan repeats until it
+// finds no new pids (children spawned between scans), then every match is KILLed.
 func killByEnvTokenScript(token string) string {
 	return fmt.Sprintf(`self=$$
 match() {
@@ -315,17 +317,18 @@ match() {
 		pid=${d#/proc/}
 		[ "$pid" = "$self" ] && continue
 		if tr '\0' '\n' < "$d/environ" 2>/dev/null | grep -qx 'CDS_EXEC_TOKEN=%s'; then
+			kill -STOP "$pid" 2>/dev/null || true
 			echo "$pid"
 		fi
 	done
 }
-# freeze the tree: STOP every match, repeating until no new pid appears, so a
-# child cannot exit and let its parent run the next command while we work
+# freeze the tree: every scan STOPs each match as it finds it, repeating until
+# no new pid appears, so a child cannot exit and let its parent run the next
+# command while we work
 prev=""
 i=0
 while [ "$i" -lt 100 ]; do
 	cur=$(match)
-	for p in $cur; do kill -STOP "$p" 2>/dev/null || true; done
 	[ "$cur" = "$prev" ] && break
 	prev="$cur"
 	i=$((i + 1))
