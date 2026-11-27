@@ -3,6 +3,7 @@ package command
 import (
 	"testing"
 
+	"github.com/pterm/pterm"
 	"github.com/stretchr/testify/assert"
 
 	"github.com/amadeusitgroup/cds/internal/bo"
@@ -99,4 +100,18 @@ func TestFormatProjectInfoInOutput_Default(t *testing.T) {
 			Host: "host1",
 		})
 	})
+}
+
+// TestGetProjectStyleMatchesLegend: every status GetProjStatus returns gets the
+// colour the `project ls` legend promises (CDS-101: "empty" was magenta).
+func TestGetProjectStyleMatchesLegend(t *testing.T) {
+	cases := map[string]pterm.Color{
+		bo.GetProjStatus(nil): pterm.FgRed,
+		bo.GetProjStatus([]bo.ContainerInfo{{Status: "running"}}): pterm.FgGreen,
+		bo.GetProjStatus([]bo.ContainerInfo{{Status: "exited"}}):  pterm.FgYellow,
+		bo.GetProjStatus([]bo.ContainerInfo{{Status: "created"}}): pterm.FgMagenta,
+	}
+	for status, want := range cases {
+		assert.Equal(t, pterm.NewStyle(want), getProjectStyle(status), status)
+	}
 }

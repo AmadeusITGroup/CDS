@@ -74,7 +74,7 @@ func getProjectStyle(state string) *pterm.Style {
 	switch state {
 	case "running":
 		return pterm.NewStyle(pterm.FgGreen)
-	case "deleted":
+	case "empty":
 		return pterm.NewStyle(pterm.FgRed)
 	case "stopped":
 		return pterm.NewStyle(pterm.FgYellow)
