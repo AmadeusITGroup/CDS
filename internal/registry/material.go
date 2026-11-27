@@ -39,12 +39,12 @@ type material struct {
 	password string
 }
 
-func (m material) certsDir() string { return filepath.Join(m.root, "certs") }
-func (m material) authDir() string  { return filepath.Join(m.root, "auth") }
-func (m material) dataDir() string  { return filepath.Join(m.root, "data") }
-func (m material) certFile() string { return filepath.Join(m.certsDir(), "domain.crt") }
-func (m material) keyFile() string  { return filepath.Join(m.certsDir(), "domain.key") }
-func (m material) htpasswd() string { return filepath.Join(m.authDir(), "htpasswd") }
+func (m material) certsDir() string  { return filepath.Join(m.root, "certs") }
+func (m material) authDir() string   { return filepath.Join(m.root, "auth") }
+func (m material) dataDir() string   { return filepath.Join(m.root, "data") }
+func (m material) certFile() string  { return filepath.Join(m.certsDir(), "domain.crt") }
+func (m material) keyFile() string   { return filepath.Join(m.certsDir(), "domain.key") }
+func (m material) htpasswd() string  { return filepath.Join(m.authDir(), "htpasswd") }
 func (m material) credsFile() string { return filepath.Join(m.authDir(), "creds") }
 
 // ensure generates the registry material under root if it is not already

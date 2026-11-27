@@ -209,7 +209,6 @@ func (m *unitManager) remove(unitDir string, unitNames ...string) error {
 	return m.daemonReload()
 }
 
-
 // HostOps is the public shape of a target host: it runs commands and copies
 // files to the host. internal/host and internal/bootstrap remote hosts satisfy
 // it, as does a localhost host. Consumers outside this package (e.g. the kind
