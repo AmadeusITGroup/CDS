@@ -207,6 +207,21 @@ func TestKindClusterExistsDetectsCluster(t *testing.T) {
 	assert.True(t, r.ranContaining("KIND_EXPERIMENTAL_PROVIDER=podman kind get clusters"))
 }
 
+// TestKindStartFailsWithoutCluster: start on a missing cluster fails with a
+// clear message and installs/starts nothing (CDS-099). units is nil, so any
+// unit call would panic.
+func TestKindStartFailsWithoutCluster(t *testing.T) {
+	r := newFakeRunner()
+	r.replies["kind get clusters"] = "other\n"
+	k := kindProviderWithRunner(r)
+
+	err := k.Start()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "cluster cds-kind does not exist")
+	assert.Contains(t, err.Error(), "orc run")
+	assert.Equal(t, []string{"KIND_EXPERIMENTAL_PROVIDER=podman kind get clusters"}, r.ran)
+}
+
 func TestKindKubeconfigReadsFromControlPlane(t *testing.T) {
 	r := newFakeRunner()
 	r.replies["kubectl config view"] = "apiVersion: v1\nkind: Config\n"

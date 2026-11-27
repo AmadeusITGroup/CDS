@@ -230,6 +230,13 @@ func (k *kindProvider) clusterExists() (bool, error) {
 // unit. The node is stopped first so `podman start --attach` in the unit owns
 // it, then the unit is installed and started.
 func (k *kindProvider) Start() error {
+	// systemctl start returns 0 before ExecStart fails on a missing node, so
+	// check the cluster exists before installing anything (CDS-099).
+	if exists, err := k.clusterExists(); err != nil {
+		return err
+	} else if !exists {
+		return cerr.NewError(fmt.Sprintf("cluster %s does not exist: run `cds space orc run` to build it", ClusterName))
+	}
 	if !k.units.Available() {
 		return cerr.NewError("a systemd user session is required to start the cluster")
 	}
