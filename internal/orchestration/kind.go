@@ -228,7 +228,8 @@ func (k *kindProvider) clusterExists() (bool, error) {
 
 // Start supervises the (already created) cluster node through its systemd user
 // unit. The node is stopped first so `podman start --attach` in the unit owns
-// it, then the unit is installed and started.
+// it, then the unit is installed and started, and Start returns once the node
+// runs. A unit already active is left as it is.
 func (k *kindProvider) Start() error {
 	// systemctl start returns 0 before ExecStart fails on a missing node, so
 	// check the cluster exists before installing anything (CDS-099).
@@ -239,6 +240,11 @@ func (k *kindProvider) Start() error {
 	}
 	if !k.units.Available() {
 		return cerr.NewError("a systemd user session is required to start the cluster")
+	}
+	// the unit already owns a running node: stopping it again would bounce
+	// the cluster (CDS-103), so only confirm it is up.
+	if k.units.IsActive(kindSupervisionUnit) {
+		return k.waitNodeRunning()
 	}
 	// The kind node runs on the `kind` podman network; a `podman system reset`
 	// (host maintenance) wipes it. Re-ensure it so start/restart after a reset
@@ -265,7 +271,32 @@ func (k *kindProvider) Start() error {
 	if err := k.units.Start(kindSupervisionUnit); err != nil {
 		return cerr.AppendError("failed to start kind supervision unit", err)
 	}
+	// systemctl start returns as soon as ExecStart is spawned, before the
+	// node runs: wait for it so rc 0 means the cluster is up (CDS-103).
+	return k.waitNodeRunning()
+}
+
+// nodeRunningTries and nodeRunningInterval (seconds) bound the wait for the
+// control-plane node to run after a start to 30 seconds.
+const (
+	nodeRunningTries    = 30
+	nodeRunningInterval = 1
+)
+
+// waitNodeRunning polls the control-plane node until podman reports it
+// running, bounded.
+func (k *kindProvider) waitNodeRunning() error {
+	if out, err := k.runner(nodeRunningWaitCommand(nodeRunningTries, nodeRunningInterval)); err != nil {
+		return cerr.AppendErrorFmt("cluster node %s is not running after start: check `systemctl --user status %s`: %s", err, ControlPlaneNode, kindSupervisionUnit, out)
+	}
 	return nil
+}
+
+func nodeRunningWaitCommand(tries, interval int) string {
+	return fmt.Sprintf(
+		"for i in $(seq 1 %d); do [ \"$(podman container inspect -f '{{.State.Status}}' %s 2>/dev/null)\" = running ] && exit 0; sleep %d; done; exit 1",
+		tries, ControlPlaneNode, interval,
+	)
 }
 
 // Stop stops the cluster. When the supervision unit is active it is stopped

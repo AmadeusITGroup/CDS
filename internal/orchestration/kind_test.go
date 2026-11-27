@@ -340,6 +340,67 @@ func (fakeHostOps) Execute(name string, args ...string) (string, error) {
 }
 func (fakeHostOps) Copy(localPath, remotePath string) error { return nil }
 
+// activeHostOps reports every unit active, like a cluster the supervision
+// unit already runs.
+type activeHostOps struct{ fakeHostOps }
+
+func (activeHostOps) Execute(name string, args ...string) (string, error) { return "active", nil }
+
+// TestKindStartLeavesActiveUnitRunning: start on a cluster the unit already
+// runs does not stop (bounce) the node, and waits for it to run (CDS-103).
+func TestKindStartLeavesActiveUnitRunning(t *testing.T) {
+	r := newFakeRunner()
+	r.replies["kind get clusters"] = "cds-kind\n"
+	k := kindProviderWithRunner(r)
+	k.units = systemd.NewUnitManager(activeHostOps{})
+
+	require.NoError(t, k.Start())
+	assert.False(t, r.ranContaining("podman stop"), "a node the unit owns is not bounced")
+	assert.True(t, r.ranContaining(".State.Status"), "start waits for the node to run")
+}
+
+// TestKindStartFailsWhenNodeDoesNotRun: start fails with a clear message when
+// the node is not running within the wait (CDS-103: rc 0 on an exited node).
+func TestKindStartFailsWhenNodeDoesNotRun(t *testing.T) {
+	r := newFakeRunner()
+	r.replies["kind get clusters"] = "cds-kind\n"
+	r.replies[".State.Status"] = ""
+	r.fail[".State.Status"] = true
+	k := kindProviderWithRunner(r)
+	k.units = systemd.NewUnitManager(activeHostOps{})
+
+	err := k.Start()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "cluster node cds-kind-control-plane is not running after start")
+}
+
+// the node wait polls podman in a real shell until the node is running, and
+// gives up after the bounded tries
+func TestNodeRunningWaitCommandRetriesInARealShell(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("needs /bin/sh")
+	}
+	dir := t.TempDir()
+	stub := "#!/bin/sh\necho \"$@\" >> " + dir + "/calls\nn=$(wc -l < " + dir + "/calls)\nif [ \"$n\" -ge 3 ]; then echo running; else echo exited; fi\n"
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "podman"), []byte(stub), 0o755))
+
+	run := func(tries int) error {
+		cmd := exec.Command("/bin/sh", "-c", nodeRunningWaitCommand(tries, 0))
+		cmd.Env = append(os.Environ(), "PATH="+dir+":"+os.Getenv("PATH"))
+		return cmd.Run()
+	}
+
+	require.NoError(t, run(5))
+	calls, err := os.ReadFile(filepath.Join(dir, "calls"))
+	require.NoError(t, err)
+	lines := strings.Split(strings.TrimSpace(string(calls)), "\n")
+	assert.Len(t, lines, 3, "stops polling once the node runs")
+	assert.Equal(t, "container inspect -f {{.State.Status}} cds-kind-control-plane", lines[0])
+
+	require.NoError(t, os.Remove(filepath.Join(dir, "calls")))
+	assert.Error(t, run(2), "gives up after the bounded tries")
+}
+
 func TestKindStopFallsBackToPodmanWhenUnitInactive(t *testing.T) {
 	r := newFakeRunner()
 	k := kindProviderWithRunner(r)
