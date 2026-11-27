@@ -90,3 +90,24 @@ func TestWriteKubeconfigKeepsOtherContexts(t *testing.T) {
 		t.Errorf("kind entries duplicated:\n%s", got)
 	}
 }
+
+// TestLocalKubeconfigPathMultiPath checks that a KUBECONFIG list resolves to
+// its first entry, where kubectl writes new entries (CDS-069).
+func TestLocalKubeconfigPathMultiPath(t *testing.T) {
+	d := t.TempDir()
+	first, second := filepath.Join(d, "config"), filepath.Join(d, "other")
+	sep := string(os.PathListSeparator)
+	for _, tc := range []struct{ env, want string }{
+		{first, first},
+		{first + sep + second, first},
+		{sep + first + sep + second, first},
+		{"rel/config" + sep + second, "rel/config"},
+	} {
+		t.Setenv("KUBECONFIG", tc.env)
+		assert.Equal(t, tc.want, localKubeconfigPath(), "KUBECONFIG=%q", tc.env)
+	}
+	t.Setenv("KUBECONFIG", sep)
+	home, err := os.UserHomeDir()
+	require.NoError(t, err)
+	assert.Equal(t, filepath.Join(home, ".kube", "config"), localKubeconfigPath())
+}

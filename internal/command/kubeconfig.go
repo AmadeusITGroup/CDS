@@ -77,13 +77,14 @@ func rewriteKubeconfigServer(kubeconfig, addr string) ([]byte, error) {
 }
 
 // localKubeconfigPath returns the user's default kubeconfig path
-// (~/.kube/config), honoring KUBECONFIG when it names a single file.
+// (~/.kube/config), honoring KUBECONFIG. KUBECONFIG is a path list: its first
+// non-empty entry is used, which is where kubectl writes new entries (a
+// relative entry is resolved against the cwd, as kubectl does).
 func localKubeconfigPath() string {
-	if kc := os.Getenv("KUBECONFIG"); kc != cg.EmptyStr && !filepath.IsAbs(kc) {
-		// a relative KUBECONFIG is resolved against the cwd by kubectl; keep it.
-		return kc
-	} else if kc != cg.EmptyStr {
-		return kc
+	for _, kc := range filepath.SplitList(os.Getenv("KUBECONFIG")) {
+		if kc != cg.EmptyStr {
+			return kc
+		}
 	}
 	return filepath.Join(cenv.GetUserHomeDir(), ".kube", "config")
 }
