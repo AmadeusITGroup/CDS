@@ -451,6 +451,8 @@ func (s *grpcServer) redecorateContainers(ctx context.Context, report deployProg
 		if registryCA == "" && oc.Registry.Requested {
 			if ca, err := s.registryOps().RegistryCA(); err == nil {
 				registryCA = ca
+			} else {
+				clog.Warn("failed to resolve registry CA for re-decoration", err)
 			}
 		}
 
