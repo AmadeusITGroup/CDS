@@ -22,7 +22,7 @@ TS=$(date +%Y%m%d-%H%M%S); echo "backup: $TS"
 [ -d ~/.cds-agent ] && mv ~/.cds-agent ~/.cds-agent.backup.$TS
 ```
 
-To restore it later, pick the backup timestamp (`ls -d ~/.cds.backup.* ~/.cds-agent.backup.*`
+To restore it later, pick the backup timestamp (`ls -d ~/.cds*.backup.*`
 lists them) and put both directories back:
 
 ```sh
