@@ -579,7 +579,7 @@ func detachContainerHelpers(cmd shexec.ExecuteEvent) shexec.ExecuteEvent {
 	if !changed {
 		return cmd
 	}
-	return &shexec.DefaultShEvent{ExeCmd: wrapped, DescriptionCmd: cmd.Description()}
+	return shexec.KeepStdin(cmd, &shexec.DefaultShEvent{ExeCmd: wrapped, DescriptionCmd: cmd.Description()})
 }
 
 // scopeWrap returns cmd wrapped to run in a transient systemd scope, for any
@@ -590,7 +590,7 @@ func scopeWrap(cmd shexec.ExecuteEvent) shexec.ExecuteEvent {
 	if !changed {
 		return cmd
 	}
-	return &shexec.DefaultShEvent{ExeCmd: wrapped, DescriptionCmd: cmd.Description()}
+	return shexec.KeepStdin(cmd, &shexec.DefaultShEvent{ExeCmd: wrapped, DescriptionCmd: cmd.Description()})
 }
 
 // transientScopeCommand wraps command so it runs in its own transient systemd

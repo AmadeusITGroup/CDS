@@ -1,6 +1,8 @@
 package shexec
 
 import (
+	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
@@ -63,6 +65,57 @@ func TestRunLocalCmdWithStdinFeedsSecretOffCommandLine(t *testing.T) {
 	_, err = RunLocalCmdWithOutput([]ExecuteEvent{in("cat >/dev/null; exit 2")})
 	require.Error(t, err)
 	assert.NotContains(t, err.Error(), secret)
+}
+
+// TestRunLocalCmdsFeedsStdin: RunLocalCmds feeds the input of a stdin event
+// too, so `sh -s` never runs an empty script (CDS-080). Real bash.
+func TestRunLocalCmdsFeedsStdin(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses a POSIX shell")
+	}
+	out := filepath.Join(t.TempDir(), "out")
+	wrapped := KeepStdin(
+		&StdinShEvent{ExecuteEvent: &DefaultShEvent{ExeCmd: "unused"}, Input: []byte("echo fed > " + out)},
+		&DefaultShEvent{ExeCmd: "sh -s"},
+	)
+	require.NoError(t, RunLocalCmds([]ExecuteEvent{wrapped}))
+	got, err := os.ReadFile(out)
+	require.NoError(t, err)
+	assert.Equal(t, "fed\n", string(got))
+}
+
+// TestKeepStdin: a wrapper that rebuilds the command keeps the input, and
+// only an event that has input gets one (CDS-080).
+func TestKeepStdin(t *testing.T) {
+	to := &DefaultShEvent{ExeCmd: "wrapped"}
+	in, ok := StdinOf(KeepStdin(&StdinShEvent{ExecuteEvent: &DefaultShEvent{}, Input: []byte("x")}, to))
+	assert.True(t, ok)
+	assert.Equal(t, []byte("x"), in)
+	assert.Same(t, to, KeepStdin(&DefaultShEvent{}, to))
+}
+
+// TestRemoteExecutorsRejectStdin: the ssh executors cannot feed stdin, so a
+// stdin event fails before any connection instead of running an empty script
+// and reporting success (CDS-080).
+func TestRemoteExecutorsRejectStdin(t *testing.T) {
+	cmd := &StdinShEvent{ExecuteEvent: &DefaultShEvent{ExeCmd: "sh -s"}, Input: []byte("echo hi")}
+	noConnect := func() (target, error) {
+		t.Fatal("must fail before connecting")
+		return nil, nil
+	}
+	for name, method := range map[string]RemoteExecute{
+		"key":      keyExecuteCallback(noConnect),
+		"password": passwordExecuteCallback(noConnect),
+	} {
+		t.Run(name, func(t *testing.T) {
+			out, errs := method.execute([]any{&DefaultShEvent{ExeCmd: "true"}, cmd}, nil)
+			assert.Nil(t, out)
+			require.Len(t, errs, 1)
+			assert.Contains(t, errs[0].Error(), "cannot feed stdin")
+			assert.Contains(t, errs[0].Error(), "sh -s")
+			assert.NotContains(t, errs[0].Error(), "echo hi")
+		})
+	}
 }
 
 // TestIsProbe: only a ProbeShEvent is a probe, so only its failure is quiet

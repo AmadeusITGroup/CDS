@@ -24,6 +24,7 @@ func RunLocalCmds(cmds []ExecuteEvent) error {
 		stderr := bytes.Buffer{}
 
 		exeCmd := exec.Command(shellToUse, "-c", cmd.Cmd())
+		setStdin(exeCmd, cmd)
 		exeCmd.Stdout = &stdout
 		exeCmd.Stderr = &stderr
 
@@ -107,11 +108,37 @@ func RunLocalCmdWithExitCodeContext(ctx context.Context, cmd ExecuteEvent) (stri
 	}
 }
 
-// setStdin feeds the input of a StdinShEvent to the command.
+// setStdin feeds the input of a stdin event (StdinOf) to the command.
 func setStdin(exeCmd *exec.Cmd, cmd ExecuteEvent) {
-	if in, ok := cmd.(*StdinShEvent); ok {
-		exeCmd.Stdin = bytes.NewReader(in.Input)
+	if in, ok := StdinOf(cmd); ok {
+		exeCmd.Stdin = bytes.NewReader(in)
 	}
+}
+
+// StdinOf returns the input cmd must be fed on its stdin, if it has one: any
+// event with a Stdin method, not only a bare *StdinShEvent (CDS-080).
+func StdinOf(cmd ExecuteEvent) ([]byte, bool) {
+	in, ok := cmd.(interface{ Stdin() []byte })
+	if !ok {
+		return nil, false
+	}
+	return in.Stdin(), true
+}
+
+// KeepStdin returns to fed the stdin input of from, if from has one. Use it
+// in a wrapper that rebuilds a command, so the input is not lost (CDS-080).
+func KeepStdin(from, to ExecuteEvent) ExecuteEvent {
+	if in, ok := StdinOf(from); ok {
+		return &StdinShEvent{ExecuteEvent: to, Input: in}
+	}
+	return to
+}
+
+// errStdinUnsupported is returned by a runner that cannot feed stdin, so a
+// stdin command fails instead of running with no input. It names the
+// command, never the input, which may be a secret (CDS-080).
+func errStdinUnsupported(cmd ExecuteEvent) error {
+	return cerr.NewError(fmt.Sprintf("command (%s) needs stdin input, but this runner cannot feed stdin", cmd.Cmd()))
 }
 
 func localShellCmdContext(ctx context.Context, command string) *exec.Cmd {
@@ -254,6 +281,10 @@ func getTermSize() (int, int, error) {
 // attach the terminal to a ssh session, the assumption here is that
 // cds is started with a TTY !
 func AttachProcessUsingKey(h target, cmd ExecuteEvent) error {
+	// the attached session's stdin is the terminal (CDS-080)
+	if _, ok := StdinOf(cmd); ok {
+		return errStdinUnsupported(cmd)
+	}
 	client, connectErr := connectSSHKey(h)
 
 	if connectErr != nil {
@@ -407,6 +438,11 @@ func isProbe(cmd ExecuteEvent) bool {
 type StdinShEvent struct {
 	ExecuteEvent
 	Input []byte
+}
+
+// Stdin returns the input fed to the command's stdin.
+func (se *StdinShEvent) Stdin() []byte {
+	return se.Input
 }
 
 var _ ExecuteEvent = (*CopyFileEvent)(nil)

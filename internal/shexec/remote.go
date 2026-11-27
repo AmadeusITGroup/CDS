@@ -150,8 +150,27 @@ func UsingKey(h target) RemoteExecute {
 
 type passwordExecuteCallback func() (target, error)
 
+// rejectStdin fails, before any connection or command runs, when a command
+// needs stdin input: the ssh session handler only takes the command line, so
+// the input would be dropped and `sh -s` would succeed doing nothing (CDS-080).
+// shortcut: no stdin over ssh; set session.Stdin in runSession if a remote
+// stdin command is ever needed.
+func rejectStdin(cmds []any) error {
+	for _, cmd := range cmds {
+		if ev, ok := cmd.(ExecuteEvent); ok {
+			if _, has := StdinOf(ev); has {
+				return errStdinUnsupported(ev)
+			}
+		}
+	}
+	return nil
+}
+
 // TODO: Fix/refactor calls to event and com.Trace
 func (rec passwordExecuteCallback) execute(cmds []any, sh sessionHandler) ([]string, []error) {
+	if err := rejectStdin(cmds); err != nil {
+		return nil, []error{err}
+	}
 	host, _ := rec()
 	client, err := connectSSHPassword(host)
 	if err != nil {
@@ -213,6 +232,9 @@ func (rec passwordExecuteCallback) execute(cmds []any, sh sessionHandler) ([]str
 type keyExecuteCallback func() (target, error)
 
 func (kec keyExecuteCallback) execute(cmds []any, sh sessionHandler) ([]string, []error) {
+	if err := rejectStdin(cmds); err != nil {
+		return nil, []error{err}
+	}
 	host, _ := kec()
 
 	client, connectErr := connectSSHKey(host)
