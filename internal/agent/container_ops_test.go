@@ -156,9 +156,10 @@ func TestKillByEnvTokenScriptAgainstRealProcesses(t *testing.T) {
 
 		// a tagged workload: a shell that re-exec's into a child which, after a
 		// sleep, would touch the marker — i.e. its next command runs only if the
-		// kill fails to freeze it. The 3 s sleep leaves slack for a slow /proc
-		// scan on a loaded CI runner, so this checks ordering, not scan speed.
-		tagged := exec.Command("/bin/sh", "-c", "exec sh -c 'sleep 3; touch "+marker+"'")
+		// kill fails to freeze it. The 10 s sleep leaves slack for a slow /proc
+		// scan (~2.7 s on a busy real host), so this checks ordering, not scan
+		// speed; it costs no test time since the workload is killed.
+		tagged := exec.Command("/bin/sh", "-c", "exec sh -c 'sleep 10; touch "+marker+"'")
 		tagged.Env = append(os.Environ(), "CDS_EXEC_TOKEN="+token)
 		require.NoError(t, tagged.Start())
 		taggedProc := tagged.Process
