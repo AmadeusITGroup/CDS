@@ -104,7 +104,7 @@ func (s *spcOrcKubeconfig) runE(cmd *cobra.Command, _ []string) error {
 			if err := writeKubeconfig(path, named); err != nil {
 				return err
 			}
-			clog.Warn(fmt.Sprintf("Local kubeconfig %s was updated with the cluster kubeconfig (other contexts kept)", path))
+			clog.Info(fmt.Sprintf("Local kubeconfig %s was updated with the cluster kubeconfig (other contexts kept)", path))
 			return output.Render(o, spaceOrcKubeconfigResult{Path: path})
 		}
 		return output.Render(o, spaceOrcKubeconfigResult{Kubeconfig: string(data)})
