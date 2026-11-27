@@ -589,3 +589,22 @@ func TestEnsureAndResolveDecorationRestoresOthersOnCreatedCluster(t *testing.T) 
 		})
 	}
 }
+
+// TestWarnReapplyReportsWarning: a failed re-apply step reaches the client as
+// a warning (a WARN line), not as an info line with a "Warning: " prefix,
+// and a resolved mirror conflict is not labelled a failed re-apply.
+func TestWarnReapplyReportsWarning(t *testing.T) {
+	var got []deployProgress
+	report := func(p deployProgress) error {
+		got = append(got, p)
+		return nil
+	}
+	warnReapply(report, errors.New("ingress not ready"))
+	warnReapply(report, nil)
+	// a resolved mirror conflict is a warning too, not a failed re-apply
+	warnMirrorConflicts(report, []string{"registry mirror conflict for docker.io: using a, ignoring b set by another deployment"})
+	assert.Equal(t, []deployProgress{
+		{phase: kProgressPhaseWarning, message: "failed to re-apply orchestration setting: ingress not ready"},
+		{phase: kProgressPhaseWarning, message: "registry mirror conflict for docker.io: using a, ignoring b set by another deployment"},
+	}, got)
+}

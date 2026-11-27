@@ -376,10 +376,7 @@ func (s *containerServiceServer) ensureAndResolveDecoration(
 	}
 	var conflicts []string
 	oc.Mirrors, conflicts = mergeMirrors(mirrorSets...)
-	for _, c := range conflicts {
-		clog.Warn(c)
-		_ = report(deployProgress{phase: kProgressPhaseWarning, message: c})
-	}
+	warnMirrorConflicts(report, conflicts)
 	created := s.core.clusterAbsent()
 	if err := ensureOrchestration(ctx, s.core.clusterOps(), s.core.registryOps(), oc, report); err != nil {
 		return spec, err
@@ -545,13 +542,22 @@ func (s *grpcServer) restoreOtherDeployments(ctx context.Context, oc containerco
 	s.redecorateContainers(ctx, report)
 }
 
-// warnReapply logs and reports a failed re-apply step; nil is a no-op.
+// warnReapply logs and reports a failed re-apply step as a warning; nil is a no-op.
 func warnReapply(report deployProgressReporter, err error) {
 	if err == nil {
 		return
 	}
 	clog.Warn("failed to re-apply orchestration setting", err)
-	_ = report(deployProgress{phase: "cluster", message: fmt.Sprintf("Warning: %v", err)})
+	_ = report(deployProgress{phase: kProgressPhaseWarning, message: fmt.Sprintf("failed to re-apply orchestration setting: %v", err)})
+}
+
+// warnMirrorConflicts logs and reports each resolved mirror conflict as a
+// warning: the first mirror was applied, so nothing failed.
+func warnMirrorConflicts(report deployProgressReporter, conflicts []string) {
+	for _, c := range conflicts {
+		clog.Warn(c)
+		_ = report(deployProgress{phase: kProgressPhaseWarning, message: c})
+	}
 }
 
 // mergeMirrors merges mirror sets into one mirror per registry. When two sets
@@ -604,9 +610,7 @@ func (s *grpcServer) reapplyOrchestration(ctx context.Context, clusterRebuilt bo
 
 	warn := func(err error) { warnReapply(report, err) }
 	if clusterRebuilt {
-		for _, c := range conflicts {
-			warn(cerr.NewError(c))
-		}
+		warnMirrorConflicts(report, conflicts)
 		warn(applyMirrors(ctx, s.clusterOps(), mirrors, report))
 		if ingress {
 			warn(deployIngress(ctx, s.clusterOps(), report))
