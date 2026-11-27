@@ -18,18 +18,18 @@ import (
 
 // mockClusterOps records calls and returns scripted results.
 type mockClusterOps struct {
-	buildErr         error
-	buildProgress    []clusterProgress
-	startErr         error
-	stopErr          error
-	deleteErr        error
-	deleteForce      bool
-	cluster          orchestration.Cluster
-	clusterErr       error
-	kubeconfig       string
-	kubeconfigErr    error
-	appliedMirrors   []orchestration.Mirror
-	applyMirrorsErr  error
+	buildErr        error
+	buildProgress   []clusterProgress
+	startErr        error
+	stopErr         error
+	deleteErr       error
+	deleteForce     bool
+	cluster         orchestration.Cluster
+	clusterErr      error
+	kubeconfig      string
+	kubeconfigErr   error
+	appliedMirrors  []orchestration.Mirror
+	applyMirrorsErr error
 	// prunedKeep is the keep set of the last PruneMirrors call; pruned tells it ran.
 	prunedKeep       []orchestration.Mirror
 	pruned           bool
