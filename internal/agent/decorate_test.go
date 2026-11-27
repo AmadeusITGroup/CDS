@@ -11,6 +11,7 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/amadeusitgroup/cds/internal/containerconf"
 	"github.com/amadeusitgroup/cds/internal/registry"
@@ -457,6 +458,37 @@ func TestRedecorateOneReportsSkipWarnings(t *testing.T) {
 		}
 	}
 	assert.Equal(t, []string{"dev-1: /home/u/.config is a link or not a directory owned by u, /home/u/.config/cds/registry.env not written"}, warnings)
+}
+
+// TestRedecorateOneReportsFailedScript: a script that exits non-zero (set -eu,
+// e.g. no home directory) is not an error from ExecuteScriptInContainer; it
+// must still reach the client as a warning with the output tail (CDS-068).
+func TestRedecorateOneReportsFailedScript(t *testing.T) {
+	ops := &mockContainerOps{execOutput: "container user dev has no home directory\n", execCode: 1}
+	s := newTestServer(t, ops)
+
+	var warnings []string
+	s.redecorateOne(context.Background(), "dev-1", []decorationCommand{{info: "Exporting registry environment", script: "true"}},
+		func(p deployProgress) error {
+			if p.phase == kProgressPhaseWarning {
+				warnings = append(warnings, p.message)
+			}
+			return nil
+		})
+
+	assert.Equal(t, []string{"dev-1: Exporting registry environment failed (exit 1): container user dev has no home directory"}, warnings)
+}
+
+// TestDecorationFailureTail: only the last kMaxDecorationTail bytes are kept,
+// cut on a UTF-8 boundary.
+func TestDecorationFailureTail(t *testing.T) {
+	assert.Equal(t, "", decorationFailureTail("  \n"))
+	long := strings.Repeat("é", kMaxDecorationTail) + "end"
+	got := decorationFailureTail(long)
+	assert.True(t, strings.HasPrefix(got, "..."))
+	assert.True(t, strings.HasSuffix(got, "end"))
+	assert.LessOrEqual(t, len(got), kMaxDecorationTail+len("..."))
+	assert.True(t, utf8.ValidString(got))
 }
 
 // TestReportDecorationWarnings: only "cds: " lines are warnings, one each, and

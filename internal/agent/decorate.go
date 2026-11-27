@@ -533,12 +533,35 @@ func (s *grpcServer) redecorateOne(ctx context.Context, name string, cmds []deco
 		if report != nil {
 			_ = report(deployProgress{phase: "decorate", message: fmt.Sprintf("%s: %s", name, dc.info)})
 		}
-		out, _, err := s.containerOps().ExecuteScriptInContainer(ctx, name, dc.script, dc.runAs())
+		out, code, err := s.containerOps().ExecuteScriptInContainer(ctx, name, dc.script, dc.runAs())
 		if err != nil {
 			clog.Warn(fmt.Sprintf("failed to re-decorate container %s (%s)", name, dc.info), err)
+		} else if code != 0 {
+			// a non-zero exit (set -eu) is not an error from exec: log and report it (CDS-068)
+			msg := fmt.Sprintf("%s: %s failed (exit %d)", name, dc.info, code)
+			if tail := decorationFailureTail(out); tail != "" {
+				msg += ": " + tail
+			}
+			clog.Warn(msg)
+			if report != nil {
+				_ = report(deployProgress{phase: kProgressPhaseWarning, message: msg})
+			}
 		}
 		_ = reportDecorationWarnings(report, name, out)
 	}
+}
+
+// kMaxDecorationTail bounds the script output carried in a failure warning.
+const kMaxDecorationTail = 512
+
+// decorationFailureTail returns the trimmed last kMaxDecorationTail bytes of a
+// failed decoration script's output, cut on a UTF-8 boundary.
+func decorationFailureTail(out string) string {
+	out = strings.TrimSpace(out)
+	if len(out) <= kMaxDecorationTail {
+		return validUTF8(out)
+	}
+	return "..." + validUTF8(trimToValidUTF8Start(out[len(out)-kMaxDecorationTail:]))
 }
 
 // kDecorationWarningPrefix starts each line a decoration script prints when it
