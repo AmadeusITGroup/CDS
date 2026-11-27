@@ -186,6 +186,11 @@ func (p *podmanProvider) installHostTrust(m material) error {
 }
 
 func (p *podmanProvider) Start() error {
+	// without its Quadlet file the unit does not exist and systemctl fails
+	// with a bare "exit status 5": say what to run instead (CDS-100).
+	if !fileExists(filepath.Join(p.quadletDir, quadletUnitFile)) {
+		return cerr.NewError(fmt.Sprintf("registry %s does not exist: run `cds space registry run` to build it", Name))
+	}
 	// The Quadlet unit runs `podman run --network kind`, so the kind network
 	// must exist. A `podman system reset` (host maintenance) wipes it, which
 	// made a plain restart fail with the container unable to attach its network.

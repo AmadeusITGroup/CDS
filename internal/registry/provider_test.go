@@ -109,6 +109,20 @@ func TestStopIsIdempotent(t *testing.T) {
 	require.Error(t, p.Stop())
 }
 
+// TestStartFailsWithoutRegistry: start after delete (no Quadlet file) fails
+// with a clear message and runs nothing (CDS-100). units is nil, so any unit
+// call would panic.
+func TestStartFailsWithoutRegistry(t *testing.T) {
+	p, r := testProvider(t)
+	p.units = nil
+
+	err := p.Start()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "registry cds-sec-registry does not exist")
+	assert.Contains(t, err.Error(), "registry run")
+	assert.Empty(t, r.ran)
+}
+
 func TestDeleteRemovesContainer(t *testing.T) {
 	p, r := testProvider(t)
 	p.units = systemd.NewUnitManager(fakeHostOps{})
