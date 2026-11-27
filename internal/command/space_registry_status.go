@@ -55,7 +55,7 @@ func (s *spcRegistryStatus) runE(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 	var callback stubCallback = func(c agentServices, ctx context.Context) error {
-		warnOnVersionMismatch(ctx, c)
+		warnOnVersionMismatch(ctx, c, hostName)
 		resp, err := c.registry.GetRegistry(ctx, &cdspb.GetRegistryRequest{})
 		if err != nil {
 			return err
