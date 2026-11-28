@@ -62,7 +62,8 @@ func TestQuadletUnitHasExpectedShape(t *testing.T) {
 	// pinned version and digest, not a moving tag
 	assert.Regexp(t, `(?m)^Image=docker\.io/library/registry:2\.\d+\.\d+@sha256:[0-9a-f]{64}$`, unit)
 	// loopback only: kind nodes and devcontainers reach it on the kind network
-	assert.Contains(t, unit, "PublishPort=127.0.0.1:5000:5000")
+	// podman picks the host port, so users on a shared host do not clash (CDS-075)
+	assert.Contains(t, unit, "PublishPort=127.0.0.1::5000")
 	assert.Contains(t, unit, "REGISTRY_AUTH=htpasswd")
 	assert.Contains(t, unit, "REGISTRY_HTTP_TLS_CERTIFICATE=/certs/domain.crt")
 	assert.Contains(t, unit, "Network=kind")
@@ -73,18 +74,67 @@ func TestQuadletUnitHasExpectedShape(t *testing.T) {
 	assert.Contains(t, unit, m.dataDir()+":/var/lib/registry:Z")
 }
 
-func TestInstallHostTrustWritesCert(t *testing.T) {
+// portRunner answers `podman port` with a fixed published port.
+func portRunner(port string) func(string) (string, error) {
+	return func(cmd string) (string, error) {
+		if strings.HasPrefix(cmd, "podman port "+Name+" 5000/tcp") {
+			return "127.0.0.1:" + port + "\n", nil
+		}
+		return "", nil
+	}
+}
+
+func TestInstallHostTrustWritesCertForThePublishedPort(t *testing.T) {
 	p, _ := testProvider(t)
+	p.runner = portRunner("41234")
 	m, _, err := ensureMaterial(p.materialRoot)
 	require.NoError(t, err)
 
 	require.NoError(t, p.installHostTrust(m))
-	caPath := filepath.Join(p.certsDBase, Hostname+":5000", "ca.crt")
-	got, err := os.ReadFile(caPath)
-	require.NoError(t, err)
 	want, err := os.ReadFile(m.certFile())
 	require.NoError(t, err)
-	assert.Equal(t, want, got, "registry cert is installed as the certs.d CA")
+	for _, addr := range []string{"127.0.0.1:41234", "localhost:41234"} {
+		got, err := os.ReadFile(filepath.Join(p.certsDBase, addr, "ca.crt"))
+		require.NoError(t, err, addr)
+		assert.Equal(t, want, got, "registry cert is installed as the certs.d CA for %s", addr)
+	}
+}
+
+func TestInstallHostTrustMovesToTheNewPort(t *testing.T) {
+	p, _ := testProvider(t)
+	m, _, err := ensureMaterial(p.materialRoot)
+	require.NoError(t, err)
+	// another registry's trust on loopback is not ours to remove
+	other := filepath.Join(p.certsDBase, "127.0.0.1:6000")
+	require.NoError(t, os.MkdirAll(other, 0755))
+	require.NoError(t, os.WriteFile(filepath.Join(other, "ca.crt"), []byte("not ours"), 0644))
+
+	p.runner = portRunner("41234")
+	require.NoError(t, p.installHostTrust(m))
+	p.runner = portRunner("41999")
+	require.NoError(t, p.installHostTrust(m))
+
+	assert.NoDirExists(t, filepath.Join(p.certsDBase, "127.0.0.1:41234"))
+	assert.NoDirExists(t, filepath.Join(p.certsDBase, "localhost:41234"))
+	assert.FileExists(t, filepath.Join(p.certsDBase, "127.0.0.1:41999", "ca.crt"))
+	assert.FileExists(t, filepath.Join(p.certsDBase, "localhost:41999", "ca.crt"))
+	assert.FileExists(t, filepath.Join(other, "ca.crt"))
+}
+
+func TestInstallHostTrustFailsWithoutAPublishedPort(t *testing.T) {
+	p, _ := testProvider(t)
+	m, _, err := ensureMaterial(p.materialRoot)
+	require.NoError(t, err)
+	// fakeRunner answers `podman port` with nothing
+	assert.Error(t, p.installHostTrust(m))
+}
+
+func TestParseHostPort(t *testing.T) {
+	port, err := parseHostPort("127.0.0.1:41234\n")
+	require.NoError(t, err)
+	assert.Equal(t, 41234, port)
+	_, err = parseHostPort("")
+	assert.Error(t, err)
 }
 
 func TestStopFallsBackToPodmanWhenUnitInactive(t *testing.T) {

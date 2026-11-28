@@ -1,9 +1,13 @@
 package registry
 
 import (
+	"crypto/x509"
+	"encoding/pem"
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/amadeusitgroup/cds/internal/bo"
@@ -93,13 +97,6 @@ func (p *podmanProvider) Build(report ProgressReporter) error {
 		return cerr.AppendError("failed to install registry Quadlet unit", err)
 	}
 
-	if err := reportf(report, "trust", "Installing registry host trust"); err != nil {
-		return err
-	}
-	if err := p.installHostTrust(m); err != nil {
-		return err
-	}
-
 	if err := reportf(report, "registry", fmt.Sprintf("Starting registry %s", Name)); err != nil {
 		return err
 	}
@@ -115,6 +112,14 @@ func (p *podmanProvider) Build(report ProgressReporter) error {
 	if err := start(quadletService); err != nil {
 		return cerr.AppendError("failed to start registry", err)
 	}
+
+	// the host port is picked by podman at each start, so trust follows the start
+	if err := reportf(report, "trust", "Installing registry host trust"); err != nil {
+		return err
+	}
+	if err := p.installHostTrust(m); err != nil {
+		return err
+	}
 	return reportf(report, "registry", fmt.Sprintf("Registry %s started", Name))
 }
 
@@ -125,14 +130,15 @@ func (p *podmanProvider) quadletUnit(m material) []byte {
 	// Quadlet .container is an INI-like file read by podman's systemd generator.
 	// The host port is bound to loopback only: kind nodes and
 	// devcontainers reach the registry on the kind network through its alias, so
-	// nothing needs it on the host's external interfaces.
+	// nothing needs it on the host's external interfaces. podman picks a free
+	// host port, so each user's registry on a shared host gets its own (CDS-075).
 	return []byte(fmt.Sprintf(`[Unit]
 Description=CDS secure registry (User)
 
 [Container]
 ContainerName=%s
 Image=%s
-PublishPort=127.0.0.1:%d:5000
+PublishPort=127.0.0.1::%d
 Network=%s
 NetworkAlias=%s
 Volume=%s:/certs:Z
@@ -165,24 +171,90 @@ WantedBy=default.target
 }
 
 // installHostTrust copies the registry certificate into the podman per-registry
-// trust directory so the host (and kind nodes mounting it) trust the registry's
-// self-signed certificate: ~/.config/containers/certs.d/<host>:<port>/ca.crt.
+// trust directories for the published loopback port, so host podman/skopeo
+// trust the self-signed certificate: ~/.config/containers/certs.d/<addr>:<port>/ca.crt
+// for 127.0.0.1 and localhost. Kind nodes get it through TrustRegistryOnNodes.
+// The port changes at each start, so trust left for an earlier port is removed.
 func (p *podmanProvider) installHostTrust(m material) error {
-	certsD := filepath.Join(
-		p.certsDBase,
-		fmt.Sprintf("%s:%d", Hostname, p.port),
-	)
-	if err := os.MkdirAll(certsD, 0755); err != nil {
-		return cerr.AppendErrorFmt("failed to create certs.d dir %s", err, certsD)
+	port, err := p.hostPort()
+	if err != nil {
+		return err
 	}
 	cert, err := os.ReadFile(m.certFile())
 	if err != nil {
 		return cerr.AppendError("failed to read registry certificate for host trust", err)
 	}
-	if err := os.WriteFile(filepath.Join(certsD, "ca.crt"), cert, 0644); err != nil {
-		return cerr.AppendError("failed to write registry host trust", err)
+	p.removeStaleHostTrust()
+	for _, addr := range hostTrustAddrs {
+		certsD := filepath.Join(p.certsDBase, fmt.Sprintf("%s:%d", addr, port))
+		if err := os.MkdirAll(certsD, 0755); err != nil {
+			return cerr.AppendErrorFmt("failed to create certs.d dir %s", err, certsD)
+		}
+		if err := os.WriteFile(filepath.Join(certsD, "ca.crt"), cert, 0644); err != nil {
+			return cerr.AppendError("failed to write registry host trust", err)
+		}
 	}
 	return nil
+}
+
+// hostTrustAddrs are the loopback names the registry certificate covers and
+// host trust is installed for.
+var hostTrustAddrs = []string{"127.0.0.1", "localhost"}
+
+// removeStaleHostTrust removes loopback certs.d entries holding a CDS registry
+// certificate (issued for Hostname), so trust for old ports does not pile up.
+// Entries of other registries are left alone. Best effort.
+func (p *podmanProvider) removeStaleHostTrust() {
+	entries, err := os.ReadDir(p.certsDBase)
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		addr, _, ok := strings.Cut(e.Name(), ":")
+		if !ok || !slices.Contains(hostTrustAddrs, addr) {
+			continue
+		}
+		dir := filepath.Join(p.certsDBase, e.Name())
+		if isRegistryCert(filepath.Join(dir, "ca.crt")) {
+			_ = os.RemoveAll(dir)
+		}
+	}
+}
+
+// isRegistryCert reports whether path holds a certificate issued for Hostname.
+func isRegistryCert(path string) bool {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	block, _ := pem.Decode(data)
+	if block == nil {
+		return false
+	}
+	cert, err := x509.ParseCertificate(block.Bytes)
+	return err == nil && slices.Contains(cert.DNSNames, Hostname)
+}
+
+// hostPort returns the loopback host port podman published for the
+// registry's container port.
+func (p *podmanProvider) hostPort() (int, error) {
+	out, err := p.runner(fmt.Sprintf("podman port %s %d/tcp", Name, p.port))
+	if err != nil {
+		return 0, cerr.AppendErrorFmt("failed to read registry host port: %s", err, out)
+	}
+	return parseHostPort(out)
+}
+
+// parseHostPort reads the port from `podman port` output such as
+// "127.0.0.1:41234".
+func parseHostPort(out string) (int, error) {
+	line, _, _ := strings.Cut(strings.TrimSpace(out), "\n")
+	i := strings.LastIndex(line, ":")
+	port, err := strconv.Atoi(strings.TrimSpace(line[i+1:]))
+	if err != nil || port <= 0 {
+		return 0, cerr.NewError(fmt.Sprintf("registry %s publishes no host port: %q", Name, out))
+	}
+	return port, nil
 }
 
 func (p *podmanProvider) Start() error {
@@ -202,7 +274,8 @@ func (p *podmanProvider) Start() error {
 	if err := p.units.Start(quadletService); err != nil {
 		return cerr.AppendError("failed to start registry", err)
 	}
-	return nil
+	// a new start may publish a new host port: move host trust to it
+	return p.installHostTrust(material{root: p.materialRoot})
 }
 
 func (p *podmanProvider) Stop() error {
@@ -263,12 +336,17 @@ func (p *podmanProvider) Status() (Registry, error) {
 	if err != nil {
 		return Registry{}, cerr.AppendErrorFmt("failed to get registry status %s", err, Name)
 	}
-	return Registry{
+	r := Registry{
 		Name:     Name,
 		Status:   bo.FContainerStatus(p.unitAwareStatus(status)),
 		Port:     p.port,
 		Hostname: Hostname,
-	}, nil
+	}
+	if status == bo.KContainerStatusRunning {
+		// best effort: a status read never fails on the port lookup
+		r.HostPort, _ = p.hostPort()
+	}
+	return r, nil
 }
 
 // unitAwareStatus reports a registry that was stopped as exited, not deleted.

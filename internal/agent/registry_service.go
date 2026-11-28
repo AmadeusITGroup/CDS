@@ -66,6 +66,7 @@ func (s *registryServiceServer) registryToProto(r registry.Registry) *cdspb.Regi
 		Name:     r.Name,
 		Status:   r.Status,
 		Port:     int32(r.Port),
+		HostPort: int32(r.HostPort),
 		Hostname: r.Hostname,
 		Host:     s.core.hostname(),
 	}

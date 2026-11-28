@@ -8,6 +8,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/pem"
 	"math/big"
+	"net"
 	"os"
 	"strings"
 	"testing"
@@ -104,14 +105,17 @@ func TestEnsureMaterialReissuesCertForOldHostname(t *testing.T) {
 	require.NotNil(t, block)
 	cert, err := x509.ParseCertificate(block.Bytes)
 	require.NoError(t, err)
-	assert.Equal(t, []string{Hostname}, cert.DNSNames)
+	assert.Equal(t, []string{Hostname, "localhost"}, cert.DNSNames)
+	require.Len(t, cert.IPAddresses, 1)
+	assert.Equal(t, "127.0.0.1", cert.IPAddresses[0].String())
 	assert.Equal(t, first.username, second.username)
 	assert.Equal(t, first.password, second.password)
 }
 
 // writeTestCert overwrites the stored certificate with a self-signed one for
-// Hostname, with the given expiry and CA flag.
-func writeTestCert(t *testing.T, m material, notAfter time.Time, isCA bool) {
+// Hostname, with the given expiry and CA flag, and the loopback SANs unless
+// noLoopback.
+func writeTestCert(t *testing.T, m material, notAfter time.Time, isCA, noLoopback bool) {
 	t.Helper()
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
@@ -124,6 +128,10 @@ func writeTestCert(t *testing.T, m material, notAfter time.Time, isCA bool) {
 		BasicConstraintsValid: true,
 		IsCA:                  isCA,
 	}
+	if !noLoopback {
+		tmpl.DNSNames = append(tmpl.DNSNames, "localhost")
+		tmpl.IPAddresses = []net.IP{net.IPv4(127, 0, 0, 1)}
+	}
 	der, err := x509.CreateCertificate(rand.Reader, &tmpl, &tmpl, &key.PublicKey, key)
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(m.certFile(), pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), 0644))
@@ -134,30 +142,45 @@ func writeTestCert(t *testing.T, m material, notAfter time.Time, isCA bool) {
 // and the change is reported so the registry restarts.
 func TestEnsureMaterialReissuesUnusableCert(t *testing.T) {
 	for name, tc := range map[string]struct {
-		notAfter time.Time
-		isCA     bool
+		notAfter   time.Time
+		isCA       bool
+		noLoopback bool
 	}{
-		"expired":             {notAfter: time.Now().Add(-time.Hour)},
-		"expires soon":        {notAfter: time.Now().Add(certRenewBefore / 2)},
-		"CA (older versions)": {notAfter: time.Now().Add(certValidity), isCA: true},
+		"expired":                           {notAfter: time.Now().Add(-time.Hour)},
+		"expires soon":                      {notAfter: time.Now().Add(certRenewBefore / 2)},
+		"CA (older versions)":               {notAfter: time.Now().Add(certValidity), isCA: true},
+		"no loopback SANs (before CDS-075)": {notAfter: time.Now().Add(certValidity), noLoopback: true},
 	} {
 		t.Run(name, func(t *testing.T) {
 			root := t.TempDir()
 			first, changed, err := ensureMaterial(root)
 			require.NoError(t, err)
 			require.True(t, changed, "new material is a change")
-			writeTestCert(t, first, tc.notAfter, tc.isCA)
+			writeTestCert(t, first, tc.notAfter, tc.isCA, tc.noLoopback)
 
 			second, changed, err := ensureMaterial(root)
 			require.NoError(t, err)
 			assert.True(t, changed, "reissue is reported")
 			cert := readTestCert(t, second)
 			assert.False(t, cert.IsCA)
+			assert.NoError(t, cert.VerifyHostname("127.0.0.1"))
+			assert.NoError(t, cert.VerifyHostname("localhost"))
 			assert.True(t, cert.NotAfter.After(time.Now().Add(certRenewBefore)))
 			assert.Equal(t, first.username, second.username)
 			assert.Equal(t, first.password, second.password)
 		})
 	}
+}
+
+// TestEnsureMaterialReusesAGoodCert: a valid leaf with every SAN is kept.
+func TestEnsureMaterialReusesAGoodCert(t *testing.T) {
+	root := t.TempDir()
+	first, _, err := ensureMaterial(root)
+	require.NoError(t, err)
+	writeTestCert(t, first, time.Now().Add(certValidity), false, false)
+	_, changed, err := ensureMaterial(root)
+	require.NoError(t, err)
+	assert.False(t, changed)
 }
 
 func TestEnsureMaterialReportsNoChangeOnReuse(t *testing.T) {

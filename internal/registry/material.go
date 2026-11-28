@@ -9,6 +9,7 @@ import (
 	"encoding/pem"
 	"fmt"
 	"math/big"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -94,7 +95,7 @@ func ensureMaterial(root string) (m material, changed bool, err error) {
 }
 
 // certReusable reports whether the stored certificate is a plain leaf issued
-// for hostname that stays valid past now+certRenewBefore. An unreadable
+// for hostname and the loopback names (older ones lack them, CDS-075) that stays valid past now+certRenewBefore. An unreadable
 // certificate is not reusable, so it gets reissued.
 func (m material) certReusable(hostname string, now time.Time) bool {
 	certPEM, err := os.ReadFile(m.certFile())
@@ -109,7 +110,12 @@ func (m material) certReusable(hostname string, now time.Time) bool {
 	if err != nil {
 		return false
 	}
-	return cert.VerifyHostname(hostname) == nil && !cert.IsCA && now.Add(certRenewBefore).Before(cert.NotAfter)
+	for _, name := range append([]string{hostname}, hostTrustAddrs...) {
+		if cert.VerifyHostname(name) != nil {
+			return false
+		}
+	}
+	return !cert.IsCA && now.Add(certRenewBefore).Before(cert.NotAfter)
 }
 
 // generateCertificate writes a self-signed ECDSA certificate and key for
@@ -124,9 +130,11 @@ func (m *material) generateCertificate(hostname string) error {
 		return cerr.AppendError("failed to generate certificate serial", err)
 	}
 	template := x509.Certificate{
-		SerialNumber:          serial,
-		Subject:               pkix.Name{CommonName: hostname},
-		DNSNames:              []string{hostname},
+		SerialNumber: serial,
+		Subject:      pkix.Name{CommonName: hostname},
+		// loopback SANs let the host push/pull through the published port
+		DNSNames:              []string{hostname, "localhost"},
+		IPAddresses:           []net.IP{net.IPv4(127, 0, 0, 1)},
 		NotBefore:             time.Now().Add(-time.Hour),
 		NotAfter:              time.Now().Add(certValidity),
 		KeyUsage:              x509.KeyUsageDigitalSignature,

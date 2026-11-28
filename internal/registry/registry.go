@@ -17,7 +17,8 @@ const (
 	// and the name containers use to reach it. It is under the reserved
 	// .internal TLD so public DNS can never answer for it.
 	Hostname = "registry.cds.internal"
-	// DefaultPort is the host port the registry publishes.
+	// DefaultPort is the container port the registry listens on, reached on the
+	// kind network as Hostname:DefaultPort. The host port is picked by podman.
 	DefaultPort = 5000
 	// Image is the registry server image, pinned by version and digest
 	// so every build pulls the same bytes. The digest is the
@@ -36,8 +37,12 @@ type Registry struct {
 	// Status is the live status of the registry container, derived from the
 	// engine (podman inspect).
 	Status string
-	// Port is the host port the registry publishes.
+	// Port is the registry's container port (DefaultPort), reached on the kind
+	// network through Hostname.
 	Port int
+	// HostPort is the loopback port podman published on the host; 0 when the
+	// registry is not running.
+	HostPort int
 	// Hostname is the TLS server name of the registry.
 	Hostname string
 }

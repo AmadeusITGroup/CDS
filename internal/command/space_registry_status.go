@@ -39,12 +39,18 @@ type spaceRegistryStatusResult struct {
 	Name     string `json:"name"`
 	Status   string `json:"status"`
 	Port     int32  `json:"port"`
+	HostPort int32  `json:"host_port"`
 	Hostname string `json:"hostname"`
 	Host     string `json:"host"`
 }
 
 func (r spaceRegistryStatusResult) HumanReadable(output.OutputOptions) string {
-	return fmt.Sprintf("Registry: %s\nStatus:   %s\nEndpoint: %s:%d\nHost:     %s\n", r.Name, r.Status, r.Hostname, r.Port, r.Host)
+	s := fmt.Sprintf("Registry: %s\nStatus:   %s\nEndpoint: %s:%d\nHost:     %s\n", r.Name, r.Status, r.Hostname, r.Port, r.Host)
+	if r.HostPort != 0 {
+		// the endpoint above is for the kind network; this one is on the host itself
+		s += fmt.Sprintf("Host endpoint: 127.0.0.1:%d\n", r.HostPort)
+	}
+	return s
 }
 
 func (r spaceRegistryStatusResult) MachineReadable() any { return r }
@@ -66,6 +72,7 @@ func (s *spcRegistryStatus) runE(cmd *cobra.Command, _ []string) error {
 			Name:     reg.GetName(),
 			Status:   reg.GetStatus(),
 			Port:     reg.GetPort(),
+			HostPort: reg.GetHostPort(),
 			Hostname: reg.GetHostname(),
 			Host:     reg.GetHost(),
 		})

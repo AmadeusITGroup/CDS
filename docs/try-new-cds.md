@@ -132,6 +132,12 @@ cds space registry start  -t <HOST>
 cds space registry delete -t <HOST>   # removes the service; image data is kept
 ```
 
+On the host itself, the registry listens on a loopback port podman picks at each
+start, so several users on one host each get their own. `registry status` shows it
+as `Host endpoint: 127.0.0.1:<port>`; host trust is installed for that port, so
+`podman login/push/pull 127.0.0.1:<port>` works with the user and password in
+`~/.cds-agent/registry/auth/creds`.
+
 ---
 
 ## 6. The full development workspace (the real test)
