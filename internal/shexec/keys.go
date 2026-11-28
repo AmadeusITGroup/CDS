@@ -8,6 +8,7 @@ import (
 	"crypto/rand"
 	"crypto/x509"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"io/fs"
 	"net"
@@ -72,9 +73,32 @@ func KeyPairPaths(suffix string) KeyPair {
 	}
 }
 
+// EnsureKeyPair returns the $HOME/.ssh/id_rsa_SUFFIX key pair. A complete pair
+// already on disk is reused as is; otherwise a new pair is generated. An existing
+// key file is never overwritten (a half pair is refused), even through a symlink.
+// A suffix that is empty or holds a path separator or ".." is refused, so the
+// pair cannot land outside $HOME/.ssh.
+func EnsureKeyPair(suffix string) (KeyPair, error) {
+	if suffix == "" || strings.ContainsAny(suffix, `/\`) || strings.Contains(suffix, "..") {
+		return KeyPair{}, cerr.NewError(fmt.Sprintf("Invalid key pair name %q: it must not be empty or hold '/', '\\' or '..'", suffix))
+	}
+	keyPairPath := KeyPairPaths(suffix)
+	if isRegularFile(keyPairPath.PathToPrv) && isRegularFile(keyPairPath.PathToPub) {
+		clog.Debug(fmt.Sprintf("Key pair %s exists. Use it!", keyPairPath.PathToPrv))
+		return keyPairPath, nil
+	}
+	return generateKeyPair(suffix)
+}
+
+func isRegularFile(path string) bool {
+	info, err := cos.Fs.Stat(path)
+	return err == nil && info.Mode().IsRegular()
+}
+
 // generate a ssh key pair using the given suffix,
-// will result in the creation of $HOME/.ssh/id_rsa_SUFFIX key pair
-func GenerateKeyPair(suffix string) (KeyPair, error) {
+// will result in the creation of $HOME/.ssh/id_rsa_SUFFIX key pair.
+// Fails, writing nothing, when either file already exists.
+func generateKeyPair(suffix string) (KeyPair, error) {
 	// generate key pair using ecdsa-sha2-nistp384 algo
 	privateKey, _ := ecdsa.GenerateKey(elliptic.P384(), rand.Reader)
 	publicKey := &privateKey.PublicKey
@@ -85,7 +109,7 @@ func GenerateKeyPair(suffix string) (KeyPair, error) {
 	publicBytes := ssh.MarshalAuthorizedKey(pub)
 	// write keys to destination files $HOME/.ssh
 	keyPairPath := KeyPairPaths(suffix)
-	if err := writeKeyTofile(privateBytes, keyPairPath.PathToPrv); err != nil {
+	if err := writeNewKeyFile(privateBytes, keyPairPath.PathToPrv); err != nil {
 		return KeyPair{}, cerr.AppendError(fmt.Sprintf("Failed to write private key to file (%s)", keyPairPath.PathToPrv), err)
 	}
 
@@ -94,10 +118,38 @@ func GenerateKeyPair(suffix string) (KeyPair, error) {
 		publicBytes = newPub
 	}
 
-	if err := writeKeyTofile(publicBytes, keyPairPath.PathToPub); err != nil {
+	if err := writeNewKeyFile(publicBytes, keyPairPath.PathToPub); err != nil {
+		// the private key is ours (just created): do not leave a half pair behind
+		_ = cos.Fs.Remove(keyPairPath.PathToPrv)
 		return KeyPair{}, cerr.AppendError(fmt.Sprintf("Failed to write public key to file (%s)", keyPairPath.PathToPub), err)
 	}
 	return keyPairPath, nil
+}
+
+func refuseOverwrite(path string) error {
+	return cerr.NewError(fmt.Sprintf("Refusing to overwrite existing %s: the key pair is incomplete; move or complete it", path))
+}
+
+// writeNewKeyFile creates path exclusively: an existing file (or symlink, even
+// dangling) is left untouched and reported.
+func writeNewKeyFile(key []byte, path string) error {
+	file, err := cos.Fs.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	if err != nil {
+		if errors.Is(err, fs.ErrExist) {
+			return refuseOverwrite(path)
+		}
+		return cerr.AppendError(fmt.Sprintf("Failed to create key file (%s)", path), err)
+	}
+	if _, err := file.Write(key); err != nil {
+		_ = file.Close()
+		_ = cos.Fs.Remove(path)
+		return cerr.AppendError(fmt.Sprintf("Failed to write key to file (%s)", path), err)
+	}
+	if err := file.Close(); err != nil {
+		_ = cos.Fs.Remove(path)
+		return cerr.AppendError(fmt.Sprintf("Failed to write key to file (%s)", path), err)
+	}
+	return nil
 }
 
 // Generate public key from private key specified in pathToPrv.

@@ -158,9 +158,9 @@ func (h *host) Build() (returnErr error) {
 		return cerr.AppendError("Failed to ensure SSH directory existence", err)
 	}
 
-	keys, errGen := shexec.GenerateKeyPair(h.name)
+	keys, errGen := shexec.EnsureKeyPair(h.name)
 	if errGen != nil {
-		return cerr.AppendError(fmt.Sprintf("Unable to generate key pair for %v", h.name), errGen)
+		return cerr.AppendError(fmt.Sprintf("Unable to get a key pair for %v", h.name), errGen)
 	}
 
 	h.keyPair = keyPair{pathToPub: keys.PathToPub, pathToPrv: keys.PathToPrv}
@@ -214,6 +214,20 @@ func (h *host) Execute(name string, args ...string) (string, error) {
 	runner := shexec.RunCmd(h)
 	return runner([]shexec.ExecuteEvent{
 		&shexec.DefaultShEvent{ExeCmd: cmd},
+	})
+}
+
+// Probe runs a command whose non-zero exit is an expected answer (e.g.
+// `systemctl is-active` on an inactive unit): like Execute, but a failure is
+// logged at debug, not shown to the user as a warning.
+func (h *host) Probe(name string, args ...string) (string, error) {
+	if shexec.IsLocalHost(h.name) {
+		return h.Execute(name, args...)
+	}
+	cmd := fmt.Sprintf("%s %s", name, strings.Join(args, " "))
+	runner := shexec.RunCmd(h)
+	return runner([]shexec.ExecuteEvent{
+		&shexec.ProbeShEvent{DefaultShEvent: shexec.DefaultShEvent{ExeCmd: cmd}},
 	})
 }
 

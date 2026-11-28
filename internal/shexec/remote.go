@@ -150,8 +150,27 @@ func UsingKey(h target) RemoteExecute {
 
 type passwordExecuteCallback func() (target, error)
 
+// rejectStdin fails, before any connection or command runs, when a command
+// needs stdin input: the ssh session handler only takes the command line, so
+// the input would be dropped and `sh -s` would succeed doing nothing.
+// shortcut: no stdin over ssh; set session.Stdin in runSession if a remote
+// stdin command is ever needed.
+func rejectStdin(cmds []any) error {
+	for _, cmd := range cmds {
+		if ev, ok := cmd.(ExecuteEvent); ok {
+			if _, has := StdinOf(ev); has {
+				return errStdinUnsupported(ev)
+			}
+		}
+	}
+	return nil
+}
+
 // TODO: Fix/refactor calls to event and com.Trace
 func (rec passwordExecuteCallback) execute(cmds []any, sh sessionHandler) ([]string, []error) {
+	if err := rejectStdin(cmds); err != nil {
+		return nil, []error{err}
+	}
 	host, _ := rec()
 	client, err := connectSSHPassword(host)
 	if err != nil {
@@ -162,7 +181,7 @@ func (rec passwordExecuteCallback) execute(cmds []any, sh sessionHandler) ([]str
 	}
 
 	secretValidated = true
-	validationOnShexecPassword(true)
+	notifySecretValidation(true)
 
 	outputs := []string{}
 	errors := []error{}
@@ -185,7 +204,9 @@ func (rec passwordExecuteCallback) execute(cmds []any, sh sessionHandler) ([]str
 				// 	event.KNotifTypeError)
 				return nil, errors
 			}
-			if !cmdEvent.Recoverable() {
+			if isProbe(cmdEvent) {
+				clog.Debug(fmt.Sprintf("probe (%s) answered no: %v", cmdEvent.Cmd(), errExec))
+			} else if !cmdEvent.Recoverable() {
 				clog.Warn("Couldn't recover error:", errExec)
 				// event.NotifyChan <- cmdEvent.Notify(fmt.Sprintf(`No recover found for '%v'`, cmdEvent.Cmd()),
 				// 	event.KNotifTypeWarn)
@@ -211,6 +232,9 @@ func (rec passwordExecuteCallback) execute(cmds []any, sh sessionHandler) ([]str
 type keyExecuteCallback func() (target, error)
 
 func (kec keyExecuteCallback) execute(cmds []any, sh sessionHandler) ([]string, []error) {
+	if err := rejectStdin(cmds); err != nil {
+		return nil, []error{err}
+	}
 	host, _ := kec()
 
 	client, connectErr := connectSSHKey(host)
@@ -234,7 +258,11 @@ func (kec keyExecuteCallback) execute(cmds []any, sh sessionHandler) ([]string, 
 		// event.NotifyChan <- cmdEvent.Notify(fmt.Sprintf(`Executing '%v' - command: '%v'`, cmdEvent.Description(), cmdEvent.Cmd()),
 		// 	event.KNotifTypeInfo)
 		// we don't defer tpExitCallback() since it fail when there are multiple cmds
-		tpExitCallback := tp.Printer(cmdEvent.Description())
+		// a probe shows no spinner: its "no" must not print "Action failed"
+		tpExitCallback := func() {}
+		if !isProbe(cmdEvent) {
+			tpExitCallback = tp.Printer(cmdEvent.Description())
+		}
 		out, errExec := sh(client, cmdEvent.Cmd())
 		if errExec != nil {
 			tp.Status = termprint.KFail
@@ -245,7 +273,9 @@ func (kec keyExecuteCallback) execute(cmds []any, sh sessionHandler) ([]string, 
 				tpExitCallback()
 				return nil, errors
 			}
-			if !cmdEvent.Recoverable() {
+			if isProbe(cmdEvent) {
+				clog.Debug(fmt.Sprintf("probe (%s) answered no: %v", cmdEvent.Cmd(), errExec))
+			} else if !cmdEvent.Recoverable() {
 				clog.Warn("Couldn't recover error:", errExec)
 				// event.NotifyChan <- cmdEvent.Notify(fmt.Sprintf(`No recover found for '%v'`, cmdEvent.Cmd()),
 				// 	event.KNotifTypeWarn)
@@ -571,15 +601,25 @@ func DownloadFile(method RemoteExecute, src, dst string) error {
 	return nil
 }
 
-func ForwardPort(host target, local string, remote string, timeout time.Duration) error {
+func ForwardPort(host target, local string, remote string, timeout time.Duration, opts ...ForwardOption) error {
+	var o forwardOptions
+	for _, opt := range opts {
+		opt(&o)
+	}
 	localListener, err := net.Listen("tcp", local)
 	if err != nil {
 		return err
 	}
+	defer func() { _ = localListener.Close() }()
 	client, connectErr := connectSSHKey(host)
 
 	if connectErr != nil {
 		return connectErr
+	}
+	if o.onReady != nil {
+		if err := o.onReady(); err != nil {
+			return err
+		}
 	}
 	localConn := make(chan ListenerResult, 1)
 	keepAlive := true
@@ -604,6 +644,21 @@ func ForwardPort(host target, local string, remote string, timeout time.Duration
 		}
 	}
 	return nil
+}
+
+// ForwardOption configures ForwardPort.
+type ForwardOption func(*forwardOptions)
+
+type forwardOptions struct {
+	onReady func() error
+}
+
+// WithOnReady runs fn once the local listener is up and the ssh connection is
+// made, before any connection is served. An error from fn stops the forward.
+func WithOnReady(fn func() error) ForwardOption {
+	return func(o *forwardOptions) {
+		o.onReady = fn
+	}
 }
 
 // TODO:Analyse: this is started from a goroutine -> should use an error channel instead of returning an error that is never going to be used

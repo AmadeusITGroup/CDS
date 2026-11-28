@@ -1,0 +1,15 @@
+syntax = "proto3";
+
+package api.v1.registry;
+option go_package = "github.com/amadeusitgroup/cds/cdspb";
+
+import "internal/api/v1/registry/build_registry_progress.proto";
+import "internal/api/v1/registry/build_registry_response.proto";
+
+// BuildRegistryEvent is the streamed envelope returned by BuildRegistry.
+message BuildRegistryEvent {
+  oneof payload {
+    BuildRegistryProgress progress = 1;
+    BuildRegistryResponse response = 2;
+  }
+}

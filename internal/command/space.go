@@ -15,9 +15,9 @@ func (s *spc) initSubCommands() {
 	s.subCmds = append(s.subCmds,
 		&spcInit{},
 		&spcHost{},
-		//&spcRegistry{},
+		&spcRegistry{},
 		//&spcProfile{},
-		//&spcOrc{},
+		&spcOrc{},
 	)
 }
 

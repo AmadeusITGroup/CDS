@@ -14,7 +14,9 @@ import (
 
 	"github.com/amadeusitgroup/cds/internal/bo"
 	"github.com/amadeusitgroup/cds/internal/containerconf"
+	"github.com/amadeusitgroup/cds/internal/engine"
 	cg "github.com/amadeusitgroup/cds/internal/global"
+	"github.com/amadeusitgroup/cds/internal/shexec"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -130,6 +132,9 @@ func TestKillByEnvTokenScriptMatchesEnvironNotCmdlineAndSkipsSelf(t *testing.T) 
 	assert.Contains(t, s, "kill -STOP")
 	assert.Contains(t, s, "kill -KILL")
 	assert.Less(t, strings.Index(s, "kill -STOP"), strings.Index(s, "kill -KILL"), "STOP comes before KILL")
+	// each match is STOPped inside the scan, not after it: a full /proc scan
+	// can take seconds on a loaded host, and the tree must not run meanwhile
+	assert.Less(t, strings.Index(s, "kill -STOP"), strings.Index(s, `echo "$pid"`), "a match is STOPped as the scan finds it")
 }
 
 // TestKillByEnvTokenScriptAgainstRealProcesses runs the kill script against real
@@ -150,9 +155,11 @@ func TestKillByEnvTokenScriptAgainstRealProcesses(t *testing.T) {
 		token := fmt.Sprintf("cds-exec-real-%d", i)
 
 		// a tagged workload: a shell that re-exec's into a child which, after a
-		// short sleep, would touch the marker — i.e. its next command runs only
-		// if the kill fails to freeze it in time
-		tagged := exec.Command("/bin/sh", "-c", "exec sh -c 'sleep 1; touch "+marker+"'")
+		// sleep, would touch the marker — i.e. its next command runs only if the
+		// kill fails to freeze it. The 10 s sleep leaves slack for a slow /proc
+		// scan (~2.7 s on a busy real host), so this checks ordering, not scan
+		// speed; it costs no test time since the workload is killed.
+		tagged := exec.Command("/bin/sh", "-c", "exec sh -c 'sleep 10; touch "+marker+"'")
 		tagged.Env = append(os.Environ(), "CDS_EXEC_TOKEN="+token)
 		require.NoError(t, tagged.Start())
 		taggedProc := tagged.Process
@@ -564,4 +571,98 @@ esac`)
 
 	require.Error(t, err)
 	assert.NotContains(t, readLog(t, logPath), "rm -f dev-collision", "a pre-existing container must not be removed on a creation failure")
+}
+
+// fakePodmanRunsShell is a podman stub that logs its arguments, then runs the
+// in-container command (`exec -u <user> -i <name> <cmd...>`) with the real
+// local shell, so stdin really flows through the same shell layers.
+func fakePodmanRunsShell(t *testing.T) string {
+	t.Helper()
+	return fakePodman(t, `shift 5; exec "$@"`)
+}
+
+func TestExecuteScriptInContainerFeedsScriptOnStdin(t *testing.T) {
+	logPath := fakePodmanRunsShell(t)
+	const secret = "pw-SECRET-123"
+
+	output, code, err := defaultContainerOps{}.ExecuteScriptInContainer(context.Background(), "dev-1", "x="+secret+"\necho \"got $x\"", "root")
+
+	require.NoError(t, err)
+	assert.Equal(t, 0, code)
+	assert.Equal(t, "got "+secret+"\n", output, "the script ran from stdin in a real shell")
+	assert.NotContains(t, readLog(t, logPath), secret, "the script must not be on the podman command line")
+}
+
+func TestBuildDecorationCommandsKeepSecretsOffCommandLine(t *testing.T) {
+	const kubeSecret, regSecret = "KUBE-SECRET-TOKEN", "REG-SECRET-PW"
+	spec := deploySpecForTest(t, "dev-1", `{"image":"ubuntu:24.04"}`)
+	spec.orchestration = containerconf.KindOrchestrationConfig{Requested: true}
+	spec.orchestration.Registry.Requested = true
+	spec.kubeconfig = "users:\n- user:\n    token: " + kubeSecret
+	spec.registryUser = "cdsu"
+	spec.registryPassword = regSecret
+
+	events, err := buildDecorationCommands(spec)
+	require.NoError(t, err)
+
+	require.Len(t, events, 3, "kubeconfig + legacy registry env cleanup + registry env")
+	var inputs string
+	for _, e := range events {
+		assert.NotContains(t, e.Cmd(), kubeSecret)
+		assert.NotContains(t, e.Cmd(), regSecret)
+		in, ok := e.(*shexec.StdinShEvent)
+		require.True(t, ok, "decoration script is fed on stdin")
+		inputs += string(in.Input)
+	}
+	assert.Contains(t, inputs, kubeSecret)
+	assert.Contains(t, inputs, "CDS_REGISTRY_PWD="+regSecret)
+
+	// the built command really runs the stdin script through a real shell
+	logPath := fakePodmanRunsShell(t)
+	out, err := shexec.RunLocalCmdWithOutput([]shexec.ExecuteEvent{
+		&shexec.StdinShEvent{ExecuteEvent: events[0].(*shexec.StdinShEvent).ExecuteEvent, Input: []byte("echo ok-" + regSecret)},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "ok-"+regSecret+"\n", out)
+	assert.NotContains(t, readLog(t, logPath), regSecret)
+}
+
+// TestBuildDecorationCommandsWritesUserHomeAsRemoteUser: with a remoteUser,
+// the steps that write into its home run as that user, the others as root.
+func TestBuildDecorationCommandsWritesUserHomeAsRemoteUser(t *testing.T) {
+	spec := deploySpecForTest(t, "dev-1", `{"image":"ubuntu:24.04","remoteUser":"dev"}`)
+	spec.orchestration = containerconf.KindOrchestrationConfig{Requested: true}
+	spec.orchestration.Registry.Requested = true
+	spec.kubeconfig = "apiVersion: v1"
+	spec.registryUser, spec.registryPassword = "cdsu", "pw"
+
+	events, err := buildDecorationCommands(spec)
+	require.NoError(t, err)
+
+	// root kubeconfig, user kubeconfig, legacy cleanup, registry env
+	require.Len(t, events, 4)
+	for i, want := range []string{"root", "dev", "root", "dev"} {
+		assert.Contains(t, events[i].Cmd(), "exec -u "+want+" ", i)
+	}
+}
+
+// a decoration step that cannot be built fails the deploy instead of being
+// skipped: the container would otherwise lack its kubeconfig/CA/registry env
+// while the deploy reports success.
+func TestDecorationEventsFailsWhenAStepCannotBeBuilt(t *testing.T) {
+	spec := deploySpecForTest(t, "dev-1", `{"image":"ubuntu:24.04"}`)
+	spec.orchestration = containerconf.KindOrchestrationConfig{Requested: true}
+	spec.kubeconfig = "apiVersion: v1"
+	calls := 0
+	failing := func(*engine.ContainersEngine) ([]shexec.ExecuteEvent, error) {
+		calls++
+		return nil, errors.New("build boom")
+	}
+
+	events, err := decorationEvents(spec, failing)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "build boom")
+	assert.Nil(t, events)
+	assert.Equal(t, 1, calls, "stops at the first step that cannot be built")
 }

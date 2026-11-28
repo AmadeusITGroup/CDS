@@ -1,0 +1,7 @@
+syntax = "proto3";
+
+package api.v1.orchestration;
+option go_package = "github.com/amadeusitgroup/cds/cdspb";
+
+// GetClusterRequest asks for the current cluster summary.
+message GetClusterRequest {}

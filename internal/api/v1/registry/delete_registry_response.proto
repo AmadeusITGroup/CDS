@@ -1,0 +1,8 @@
+syntax = "proto3";
+
+package api.v1.registry;
+option go_package = "github.com/amadeusitgroup/cds/cdspb";
+
+message DeleteRegistryResponse {
+  string output = 1;
+}

@@ -1,0 +1,10 @@
+syntax = "proto3";
+
+package api.v1.orchestration;
+option go_package = "github.com/amadeusitgroup/cds/cdspb";
+
+// DeleteClusterRequest removes the cluster.
+message DeleteClusterRequest {
+  // force tears the cluster down even when it is considered in use.
+  bool force = 1;
+}

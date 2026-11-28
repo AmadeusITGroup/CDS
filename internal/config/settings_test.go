@@ -17,15 +17,18 @@ func TestAgentPort(t *testing.T) {
 		"not a number": {env: "abc", want: 8087},
 	} {
 		t.Run(name, func(t *testing.T) {
-			if tc.env != "" {
-				t.Setenv("CDS_AGENT_PORT", tc.env)
-			}
+			// always set it: an empty value is ignored by viper, so the
+			// "default" case does not read the caller's CDS_AGENT_PORT.
+			t.Setenv("CDS_AGENT_PORT", tc.env)
 			assert.Equal(t, tc.want, AgentPort())
 		})
 	}
 }
 
 func TestAgentBinaryTemplates(t *testing.T) {
+	// clear the caller's env (docs/try-new-cds.md exports CDS_AGENT_BINARY).
+	t.Setenv("CDS_AGENT_BINARY", "")
+	t.Setenv("CDS_AGENT_DOWNLOAD_URL", "")
 	assert.Empty(t, AgentBinary("linux", "amd64", "1.0.0"))
 	assert.Empty(t, AgentDownloadURL("linux", "amd64", "1.0.0"))
 

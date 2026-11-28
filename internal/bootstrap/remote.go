@@ -1,6 +1,7 @@
 package bootstrap
 
 import (
+	"crypto/rand"
 	"crypto/sha256"
 	"fmt"
 	"io"
@@ -20,11 +21,14 @@ import (
 )
 
 const (
-	kRemoteAgentDir    = ".xcds-agent"
+	kRemoteAgentDir    = ".cds-agent"
 	kRemoteUploadExt   = ".upload"
 	kRemoteDirPerm     = "700"
 	kRemoteBinaryPerm  = "700"
 	kRemoteSecretsPerm = "600"
+	// kStaleUploadMinutes is the age past which a staging upload is treated
+	// as left behind by an interrupted run.
+	kStaleUploadMinutes = 60
 )
 
 // remoteHost is a host reachable through SSH, see internal/host.
@@ -35,7 +39,7 @@ type remoteHost interface {
 
 // remoteBootstrap installs and starts an agent on a remote host, in the
 // spirit of the VS Code server: the agent binary matching the CLI version is
-// uploaded under ~/.xcds-agent/bin/<version> when missing or different, along
+// uploaded under ~/.cds-agent/bin/<version> when missing or different, along
 // with a server certificate issued for the host, then run as a systemd user
 // service.
 type remoteBootstrap struct {
@@ -186,14 +190,56 @@ func (rb remoteBootstrap) ensureBinary(p platform, binDir string) (string, error
 	if err := rb.ensureDir(binDir); err != nil {
 		return cg.EmptyStr, err
 	}
-	// upload aside then rename, the binary may be in use by a running agent
-	if _, err := rb.upload(local, remote+kRemoteUploadExt, kRemoteBinaryPerm); err != nil {
+	// upload aside then rename, the binary may be in use by a running agent.
+	// The staging name is unique per run: concurrent clients installing the
+	// same version must not chmod/rename each other's staging file;
+	// the rename is atomic, so the last one wins with a complete binary.
+	staging, err := uploadStagingPath(remote)
+	if err != nil {
 		return cg.EmptyStr, err
 	}
-	if _, err := rb.h.Execute("mv", "-f", remote+kRemoteUploadExt, remote); err != nil {
+	if _, err := rb.upload(local, staging, kRemoteBinaryPerm); err != nil {
+		rb.removeQuietly(staging)
+		return cg.EmptyStr, err
+	}
+	if _, err := rb.h.Execute("mv", "-f", staging, remote); err != nil {
+		rb.removeQuietly(staging)
 		return cg.EmptyStr, cerr.AppendErrorFmt("Failed to install %s on %s", err, remote, rb.hostname)
 	}
+	rb.removeStaleStaging(remote)
 	return remote, nil
+}
+
+// removeStaleStaging deletes, best effort, the staging files an interrupted
+// run left next to remote. Only files older than
+// kStaleUploadMinutes go: a younger one may be a concurrent client's upload
+// still in flight.
+func (rb remoteBootstrap) removeStaleStaging(remote string) {
+	if _, err := rb.h.Execute("sh", "-c", cg.ShellSingleQuote(staleStagingScript(remote))); err != nil {
+		clog.Debug(fmt.Sprintf("Failed to remove stale uploads next to %s on %s: %v", remote, rb.hostname, err))
+	}
+}
+
+// staleStagingScript returns the sh script deleting the stale staging files of remote.
+func staleStagingScript(remote string) string {
+	return fmt.Sprintf("find %s -maxdepth 1 -type f -name %s -mmin +%d -exec rm -f {} +",
+		cg.ShellSingleQuote(path.Dir(remote)), cg.ShellSingleQuote(path.Base(remote)+kRemoteUploadExt+".*"), kStaleUploadMinutes)
+}
+
+// uploadStagingPath returns a staging path next to remote, unique to this run.
+func uploadStagingPath(remote string) (string, error) {
+	token := make([]byte, 8)
+	if _, err := rand.Read(token); err != nil {
+		return cg.EmptyStr, cerr.AppendError("Failed to generate upload staging name", err)
+	}
+	return fmt.Sprintf("%s%s.%x", remote, kRemoteUploadExt, token), nil
+}
+
+// removeQuietly deletes a leftover remote file, best effort.
+func (rb remoteBootstrap) removeQuietly(remote string) {
+	if _, err := rb.h.Execute("rm", "-f", remote); err != nil {
+		clog.Debug(fmt.Sprintf("Failed to remove %s on %s: %v", remote, rb.hostname, err))
+	}
 }
 
 // ensureCerts installs the CA and the server certificate of the host in certsDir.

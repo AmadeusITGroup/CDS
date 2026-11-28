@@ -42,18 +42,18 @@ func WithKey(key string) func(*tlssecret) {
 // agents:
 //   - targetServer: https://localhost:8087
 //     tls:
-//       ca: /Users/me/.xcds/certs/ca.pem
-//       certificate: /Users/me/.xcds/certs/client.pem
-//       key: /Users/me/.xcds/certs/client-key.pem
+//       ca: /Users/me/.cds/certs/ca.pem
+//       certificate: /Users/me/.cds/certs/client.pem
+//       key: /Users/me/.cds/certs/client-key.pem
 //   - targetServer: localhost:1337
 //     ssh-tunnel: true
 
-// aconfig.yaml example (owned by the agent, under .xcds-agent):
+// aconfig.yaml example (owned by the agent, under .cds-agent):
 // apiVersion: v1
 // clients:
 //   - name: my-laptop
 //     tls:
-//       ca: /Users/me/.xcds-agent/certs/ca.pem
+//       ca: /Users/me/.cds-agent/certs/ca.pem
 //       certificate: /path/to/registered-client.pem
 //       key: /path/to/registered-client-key.pem
 

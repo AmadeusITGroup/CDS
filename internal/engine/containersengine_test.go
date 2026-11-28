@@ -140,6 +140,37 @@ func TestDevcontainerRunCommandRunsDetached(t *testing.T) {
 	assert.Contains(t, runCmd, " --detach ")
 }
 
+func TestDevcontainerRunUsesDefaultPodmanNetwork(t *testing.T) {
+	config := containerconf.NewConfig()
+	config.Set(containerconf.KImage, "alpine:3.19")
+	ce := NewContainerEngine(WithContainerConfig(config))
+	ce.SetAction(K_ACTION_RUN)
+	ce.SetRunType(K_RUN_DEV_CONTAINER)
+	ce.SetContainerName("sample-container")
+
+	cmds, err := ce.BuildCommands()
+
+	assert.NoError(t, err)
+	runCmd := findCommandWithPrefix(cmds, "podman run ")
+	assert.Contains(t, runCmd, "--network=podman", "default network is the podman network when WithNetwork is unset")
+}
+
+func TestDevcontainerRunAttachesToConfiguredNetwork(t *testing.T) {
+	config := containerconf.NewConfig()
+	config.Set(containerconf.KImage, "alpine:3.19")
+	ce := NewContainerEngine(WithContainerConfig(config), WithNetwork("kind"))
+	ce.SetAction(K_ACTION_RUN)
+	ce.SetRunType(K_RUN_DEV_CONTAINER)
+	ce.SetContainerName("sample-container")
+
+	cmds, err := ce.BuildCommands()
+
+	assert.NoError(t, err)
+	runCmd := findCommandWithPrefix(cmds, "podman run ")
+	assert.Contains(t, runCmd, "--network=kind", "WithNetwork attaches the run to the given network")
+	assert.NotContains(t, runCmd, "--network=podman")
+}
+
 func TestDevcontainerRunPublishesSSHPortByDefault(t *testing.T) {
 	config := containerconf.NewConfig()
 	config.Set(containerconf.KImage, "alpine:3.19")

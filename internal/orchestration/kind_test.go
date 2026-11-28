@@ -1,0 +1,807 @@
+package orchestration
+
+import (
+	"context"
+	"encoding/base64"
+	"encoding/json"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/amadeusitgroup/cds/internal/bo"
+	cg "github.com/amadeusitgroup/cds/internal/global"
+	"github.com/amadeusitgroup/cds/internal/systemd"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+// fakeRunner records the shell commands issued and replies from a scripted map
+// (prefix match), defaulting to empty output / no error.
+type fakeRunner struct {
+	ran     []string
+	stdins  []string
+	replies map[string]string
+	fail    map[string]bool
+}
+
+func newFakeRunner() *fakeRunner {
+	return &fakeRunner{replies: map[string]string{}, fail: map[string]bool{}}
+}
+
+func (f *fakeRunner) run(command string) (string, error) {
+	f.ran = append(f.ran, command)
+	for prefix, out := range f.replies {
+		if strings.Contains(command, prefix) {
+			if f.fail[prefix] {
+				return out, assertErr(prefix)
+			}
+			return out, nil
+		}
+	}
+	return "", nil
+}
+
+// runIn records the command and its stdin, then replies like run.
+func (f *fakeRunner) runIn(command string, stdin []byte) (string, error) {
+	f.stdins = append(f.stdins, string(stdin))
+	return f.run(command)
+}
+
+type cmdErr string
+
+func (e cmdErr) Error() string { return string(e) }
+func assertErr(s string) error { return cmdErr("command failed: " + s) }
+
+func (f *fakeRunner) ranContaining(sub string) bool {
+	for _, c := range f.ran {
+		if strings.Contains(c, sub) {
+			return true
+		}
+	}
+	return false
+}
+
+// kindProviderWithRunner builds a provider whose shell is the fake runner and
+// whose supervision unit path is pre-resolved (so tests never touch podman on
+// disk). units is left nil: tests here exercise only runner-driven methods.
+func kindProviderWithRunner(r *fakeRunner) *kindProvider {
+	return &kindProvider{runner: r.run, runnerIn: r.runIn, runnerCtx: r.runCtx, podmanPath: "/usr/bin/podman"}
+}
+
+// runCtx records the command, then fails with ctx.Err when ctx is already
+// done (what the real runner returns once it has killed the command).
+func (f *fakeRunner) runCtx(ctx context.Context, command string) (string, error) {
+	if err := ctx.Err(); err != nil {
+		f.ran = append(f.ran, command)
+		return "", err
+	}
+	return f.run(command)
+}
+
+func TestKindCreateClusterCancelledRemovesPartialCluster(t *testing.T) {
+	t.Setenv("INVOCATION_ID", "") // not under systemd -> unscoped create
+	r := newFakeRunner()
+	k := kindProviderWithRunner(r)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	err := k.createCluster(ctx, "")
+
+	require.Error(t, err)
+	require.Len(t, r.ran, 2)
+	assert.Contains(t, r.ran[0], "kind create cluster --name=cds-kind")
+	assert.Contains(t, r.ran[1], "kind delete cluster --name=cds-kind",
+		"a killed create must not leave nodes the next Build takes for a cluster")
+}
+
+// TestKindCreateClusterCancelledStopsScope: under systemd a cancelled create
+// stops its whole scope (kind's podman children too) before the delete, so
+// they do not race it. It SIGKILLs the scope first: the node's conmon ignores
+// SIGTERM, so a plain stop waited out the 90 s stop timeout under the lock.
+func TestKindCreateClusterCancelledStopsScope(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("needs a POSIX systemd-run stub")
+	}
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "systemd-run"), []byte("#!/bin/sh\nexit 0\n"), 0755))
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("INVOCATION_ID", "test")
+	r := newFakeRunner()
+	k := kindProviderWithRunner(r)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	require.Error(t, k.createCluster(ctx, ""))
+
+	require.Len(t, r.ran, 4)
+	assert.Contains(t, r.ran[0], "--unit=cds-kind-create.scope")
+	assert.Equal(t, "systemctl --user kill --signal=SIGKILL cds-kind-create.scope", r.ran[1])
+	assert.Equal(t, "systemctl --user stop cds-kind-create.scope", r.ran[2])
+	assert.Contains(t, r.ran[3], "kind delete cluster --name=cds-kind")
+}
+
+// TestKindBoundedWaitsHonourCancel: the API server, ingress webhook and
+// service-account waits run under the request ctx, so a cancelled request
+// does not hold the cluster lock for up to 3 min.
+func TestKindBoundedWaitsHonourCancel(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	err := kindProviderWithRunner(newFakeRunner()).waitAPIServer(ctx)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "context canceled")
+
+	err = kindProviderWithRunner(newFakeRunner()).DeployIngress(ctx)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "context canceled")
+
+	r := newFakeRunner()
+	err = kindProviderWithRunner(r).CreateRegistrySecret(ctx, "registry.cds.internal", 5000, "u", "p")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "context canceled")
+	assert.False(t, r.ranContaining("patch serviceaccount"), "nothing runs after a cancelled wait")
+}
+
+// TestKindCreateClusterRunsInDelegatedScope: under systemd, kind create runs in
+// its own transient scope with Delegate=yes, so the node's conmon does not land
+// in cds.service and an agent stop does not hang 90 s on it.
+func TestKindCreateClusterRunsInDelegatedScope(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("needs a POSIX systemd-run stub")
+	}
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "systemd-run"), []byte("#!/bin/sh\nexit 0\n"), 0755))
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("INVOCATION_ID", "test")
+	r := newFakeRunner()
+	k := kindProviderWithRunner(r)
+
+	require.NoError(t, k.createCluster(context.Background(), ""))
+
+	require.Len(t, r.ran, 1)
+	assert.Equal(t,
+		"systemd-run --user --scope --collect --quiet --unit=cds-kind-create.scope -p Delegate=yes -- bash -c 'KIND_EXPERIMENTAL_PROVIDER=podman kind create cluster --name=cds-kind'",
+		r.ran[0])
+}
+
+func TestKindCreateClusterFailureKeepsClusterForDiagnosis(t *testing.T) {
+	r := newFakeRunner()
+	r.replies["kind create cluster"] = "boom"
+	r.fail["kind create cluster"] = true
+	k := kindProviderWithRunner(r)
+
+	err := k.createCluster(context.Background(), "")
+
+	require.Error(t, err)
+	assert.False(t, r.ranContaining("kind delete cluster"), "only a cancelled create is cleaned up")
+}
+
+// TestRunLocalContextKillsCommand runs a real shell: a cancelled ctx must
+// stop a long command promptly instead of letting it run to the end.
+func TestRunLocalContextKillsCommand(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("needs a POSIX shell")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+
+	_, err := runLocalContext(ctx, "sleep 30")
+
+	require.Error(t, err)
+	assert.Less(t, time.Since(start), 10*time.Second)
+}
+
+func TestKindClusterExistsDetectsCluster(t *testing.T) {
+	r := newFakeRunner()
+	r.replies["kind get clusters"] = "foo\ncds-kind\nbar\n"
+	k := kindProviderWithRunner(r)
+
+	exists, err := k.clusterExists()
+	require.NoError(t, err)
+	assert.True(t, exists)
+	assert.True(t, r.ranContaining("KIND_EXPERIMENTAL_PROVIDER=podman kind get clusters"))
+}
+
+// TestKindStartFailsWithoutCluster: start on a missing cluster fails with a
+// clear message and installs/starts nothing (CDS-099). units is nil, so any
+// unit call would panic.
+func TestKindStartFailsWithoutCluster(t *testing.T) {
+	r := newFakeRunner()
+	r.replies["kind get clusters"] = "other\n"
+	k := kindProviderWithRunner(r)
+
+	err := k.Start()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "cluster cds-kind does not exist")
+	assert.Contains(t, err.Error(), "orc run")
+	assert.Equal(t, []string{"KIND_EXPERIMENTAL_PROVIDER=podman kind get clusters"}, r.ran)
+}
+
+func TestKindKubeconfigReadsFromControlPlane(t *testing.T) {
+	r := newFakeRunner()
+	r.replies["kubectl config view"] = "apiVersion: v1\nkind: Config\n"
+	k := kindProviderWithRunner(r)
+
+	cfg, err := k.Kubeconfig()
+	require.NoError(t, err)
+	assert.Contains(t, cfg, "kind: Config")
+	assert.True(t, r.ranContaining("podman exec -u root cds-kind-control-plane kubectl config view --minify --flatten"))
+}
+
+func TestStatusActionTable(t *testing.T) {
+	assert.Equal(t, "none", statusAction(bo.KContainerStatusRunning))
+	assert.Equal(t, "start", statusAction(bo.KContainerStatusExited))
+	assert.Equal(t, "build", statusAction(bo.KContainerStatusDeleted))
+	assert.Equal(t, "build", statusAction(bo.KContainerStatusUnknown))
+}
+
+// a Build on an existing but stopped cluster starts it instead of only
+// reporting "already exists"; a started or running one is waited on
+// until its API server is ready; an unreadable one is left alone.
+func TestBringUpExistingClusterStartsAStoppedCluster(t *testing.T) {
+	cases := []struct {
+		status  bo.ContainerStatus
+		started bool
+		waited  bool
+		last    string
+	}{
+		{bo.KContainerStatusExited, true, true, "Cluster cds-kind started"},
+		{bo.KContainerStatusRunning, false, true, "Cluster cds-kind already exists"},
+		{bo.KContainerStatusUnknown, false, false, "Cluster cds-kind already exists"},
+	}
+	for _, c := range cases {
+		var order []string
+		var lines []string
+		err := bringUpExistingCluster(c.status,
+			func() error { order = append(order, "start"); return nil },
+			func() error { order = append(order, "ready"); return nil },
+			func(_, message string) error { lines = append(lines, message); return nil })
+		require.NoError(t, err)
+		var want []string
+		if c.started {
+			want = append(want, "start")
+		}
+		if c.waited {
+			want = append(want, "ready")
+		}
+		assert.Equal(t, want, order, "status %v", c.status)
+		assert.Equal(t, c.last, lines[len(lines)-1], "status %v", c.status)
+	}
+}
+
+func TestBringUpExistingClusterReportsStartFailure(t *testing.T) {
+	err := bringUpExistingCluster(bo.KContainerStatusExited,
+		func() error { return cmdErr("no systemd user session") }, func() error { return nil }, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "no systemd user session")
+}
+
+// an API server that never gets ready fails the Build instead of letting the
+// re-apply run against it
+func TestBringUpExistingClusterReportsAPIServerNotReady(t *testing.T) {
+	err := bringUpExistingCluster(bo.KContainerStatusExited,
+		func() error { return nil }, func() error { return cmdErr("no answer from /readyz") }, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "API server is not ready")
+}
+
+// the wait loop polls /readyz through the control-plane node until it answers,
+// run by a real shell against a stub podman that fails twice
+func TestAPIServerWaitCommandRetriesInARealShell(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("needs /bin/sh")
+	}
+	dir := t.TempDir()
+	stub := "#!/bin/sh\necho \"$@\" >> " + dir + "/calls\nn=$(wc -l < " + dir + "/calls)\n[ \"$n\" -ge 3 ]\n"
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "podman"), []byte(stub), 0o755))
+
+	run := func(tries int) error {
+		cmd := exec.Command("/bin/sh", "-c", apiServerWaitCommand(tries, 0))
+		cmd.Env = append(os.Environ(), "PATH="+dir+":"+os.Getenv("PATH"))
+		return cmd.Run()
+	}
+
+	require.NoError(t, run(5))
+	calls, err := os.ReadFile(filepath.Join(dir, "calls"))
+	require.NoError(t, err)
+	lines := strings.Split(strings.TrimSpace(string(calls)), "\n")
+	assert.Len(t, lines, 3, "stops polling once /readyz answers")
+	assert.Equal(t, "exec cds-kind-control-plane kubectl --kubeconfig /etc/kubernetes/admin.conf get --raw /readyz", lines[0])
+
+	require.NoError(t, os.Remove(filepath.Join(dir, "calls")))
+	assert.Error(t, run(2), "gives up after the bounded tries")
+}
+
+func TestProviderSelectsKind(t *testing.T) {
+	p, err := Provider("")
+	require.NoError(t, err)
+	assert.Equal(t, "kind", p.Name())
+
+	p, err = Provider("kind")
+	require.NoError(t, err)
+	assert.Equal(t, "kind", p.Name())
+
+	_, err = Provider("k3s")
+	assert.Error(t, err)
+}
+
+// fakeHostOps is a systemd.HostOps whose systemctl is-active always reports
+// inactive, exercising the Stop fallback that stops the node directly.
+type fakeHostOps struct{}
+
+func (fakeHostOps) Execute(name string, args ...string) (string, error) {
+	// is-active -> "inactive" so UnitManager.IsActive returns false
+	return "inactive", nil
+}
+func (fakeHostOps) Copy(localPath, remotePath string) error { return nil }
+
+// activeHostOps reports every unit active, like a cluster the supervision
+// unit already runs.
+type activeHostOps struct{ fakeHostOps }
+
+func (activeHostOps) Execute(name string, args ...string) (string, error) { return "active", nil }
+
+// TestKindStartLeavesActiveUnitRunning: start on a cluster the unit already
+// runs does not stop (bounce) the node, and waits for it to run (CDS-103).
+func TestKindStartLeavesActiveUnitRunning(t *testing.T) {
+	r := newFakeRunner()
+	r.replies["kind get clusters"] = "cds-kind\n"
+	k := kindProviderWithRunner(r)
+	k.units = systemd.NewUnitManager(activeHostOps{})
+
+	require.NoError(t, k.Start())
+	assert.False(t, r.ranContaining("podman stop"), "a node the unit owns is not bounced")
+	assert.True(t, r.ranContaining(".State.Status"), "start waits for the node to run")
+}
+
+// TestKindStartFailsWhenNodeDoesNotRun: start fails with a clear message when
+// the node is not running within the wait (CDS-103: rc 0 on an exited node).
+func TestKindStartFailsWhenNodeDoesNotRun(t *testing.T) {
+	r := newFakeRunner()
+	r.replies["kind get clusters"] = "cds-kind\n"
+	r.replies[".State.Status"] = ""
+	r.fail[".State.Status"] = true
+	k := kindProviderWithRunner(r)
+	k.units = systemd.NewUnitManager(activeHostOps{})
+
+	err := k.Start()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "cluster node cds-kind-control-plane is not running after start")
+}
+
+// the node wait polls podman in a real shell until the node is running, and
+// gives up after the bounded tries
+func TestNodeRunningWaitCommandRetriesInARealShell(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("needs /bin/sh")
+	}
+	dir := t.TempDir()
+	stub := "#!/bin/sh\necho \"$@\" >> " + dir + "/calls\nn=$(wc -l < " + dir + "/calls)\nif [ \"$n\" -ge 3 ]; then echo running; else echo exited; fi\n"
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "podman"), []byte(stub), 0o755))
+
+	run := func(tries int) error {
+		cmd := exec.Command("/bin/sh", "-c", nodeRunningWaitCommand(tries, 0))
+		cmd.Env = append(os.Environ(), "PATH="+dir+":"+os.Getenv("PATH"))
+		return cmd.Run()
+	}
+
+	require.NoError(t, run(5))
+	calls, err := os.ReadFile(filepath.Join(dir, "calls"))
+	require.NoError(t, err)
+	lines := strings.Split(strings.TrimSpace(string(calls)), "\n")
+	assert.Len(t, lines, 3, "stops polling once the node runs")
+	assert.Equal(t, "container inspect -f {{.State.Status}} cds-kind-control-plane", lines[0])
+
+	require.NoError(t, os.Remove(filepath.Join(dir, "calls")))
+	assert.Error(t, run(2), "gives up after the bounded tries")
+}
+
+func TestKindStopFallsBackToPodmanWhenUnitInactive(t *testing.T) {
+	r := newFakeRunner()
+	k := kindProviderWithRunner(r)
+	k.units = systemd.NewUnitManager(fakeHostOps{})
+
+	err := k.Stop()
+	require.NoError(t, err)
+	assert.True(t, r.ranContaining("podman stop cds-kind-control-plane"),
+		"when the supervision unit is inactive, Stop stops the node directly")
+}
+
+func TestKindDeployIngressAppliesVendoredManifestOnStdin(t *testing.T) {
+	r := newFakeRunner()
+	k := kindProviderWithRunner(r)
+
+	require.NoError(t, k.DeployIngress(context.Background()))
+
+	// the immutable one-shot admission Jobs are removed before the apply, so an
+	// older install upgrades in place
+	require.GreaterOrEqual(t, len(r.ran), 2)
+	assert.Contains(t, r.ran[0], "-n ingress-nginx delete job ingress-nginx-admission-create ingress-nginx-admission-patch --ignore-not-found")
+	assert.Contains(t, r.ran[1], "apply -f -")
+
+	// the vendored manifest goes on stdin; nothing is downloaded
+	require.Len(t, r.stdins, 1)
+	assert.Equal(t, string(ingressManifest), r.stdins[0])
+	assert.True(t, r.ranContaining("podman exec -i cds-kind-control-plane kubectl --kubeconfig /etc/kubernetes/admin.conf apply -f -"))
+	for _, c := range r.ran {
+		assert.NotContains(t, c, "http", "no runtime manifest fetch")
+	}
+	// patched for CVE-2025-1974 (fixed in v1.11.5 / v1.12.1), images pinned by digest
+	assert.Contains(t, r.stdins[0], "registry.k8s.io/ingress-nginx/controller:v1.15.1@sha256:")
+	assert.NotContains(t, r.stdins[0], "controller:v1.10.1")
+	assert.True(t, r.ranContaining("patch deployment ingress-nginx-controller"),
+		"the node is still prepared after apply")
+}
+
+// DeployIngress returns only once the admission webhook answers, so
+// the next documented step (create an Ingress) does not fail with
+// "failed calling webhook ... connection refused".
+func TestKindDeployIngressWaitsForAdmissionWebhook(t *testing.T) {
+	r := newFakeRunner()
+	k := kindProviderWithRunner(r)
+
+	require.NoError(t, k.DeployIngress(context.Background()))
+
+	last := r.ran[len(r.ran)-1]
+	assert.Contains(t, last, "podman exec cds-kind-control-plane sh -c")
+	assert.Contains(t, last, "create ingress cds-ready-probe")
+	assert.Contains(t, last, "--dry-run=server", "the probe goes through the webhook but creates nothing")
+	assert.Contains(t, last, "seq 1 90", "the wait is bounded")
+}
+
+func TestKindDeployIngressFailsWhenWebhookNeverAnswers(t *testing.T) {
+	r := newFakeRunner()
+	r.replies["create ingress cds-ready-probe"] = "connection refused"
+	r.fail["create ingress cds-ready-probe"] = true
+	k := kindProviderWithRunner(r)
+
+	err := k.DeployIngress(context.Background())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "ingress controller is not ready")
+}
+
+func TestIngressWaitCommandRunsInRealShell(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("needs /bin/sh")
+	}
+	// fake podman runs `exec <node> <cmd...>` locally; fake kubectl fails
+	// twice (webhook not up), then succeeds
+	dir := t.TempDir()
+	count := filepath.Join(dir, "count")
+	podman := "#!/bin/sh\nshift 2\nexec \"$@\"\n"
+	kubectl := "#!/bin/sh\necho \"$*\" >> " + filepath.Join(dir, "args") + "\nn=$(cat " + count + " 2>/dev/null || echo 0); n=$((n+1)); echo $n > " + count + "\n[ $n -ge 3 ]\n"
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "podman"), []byte(podman), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "kubectl"), []byte(kubectl), 0o755))
+	path := "PATH=" + dir + ":" + os.Getenv("PATH")
+
+	cmd := exec.Command("/bin/sh", "-c", ingressWaitCommand(5, 0))
+	cmd.Env = append(os.Environ(), path)
+	out, err := cmd.CombinedOutput()
+	require.NoError(t, err, string(out))
+	n, err := os.ReadFile(count)
+	require.NoError(t, err)
+	assert.Equal(t, "3\n", string(n), "retried until the probe passed")
+	args, err := os.ReadFile(filepath.Join(dir, "args"))
+	require.NoError(t, err)
+	assert.Contains(t, string(args), "--dry-run=server")
+
+	// never ready: bounded, exits non-zero
+	require.NoError(t, os.WriteFile(count, []byte("-100\n"), 0o644))
+	cmd = exec.Command("/bin/sh", "-c", ingressWaitCommand(3, 0))
+	cmd.Env = append(os.Environ(), path)
+	require.Error(t, cmd.Run())
+}
+
+func TestKindPrepareNodeForIngress(t *testing.T) {
+	r := newFakeRunner()
+	k := kindProviderWithRunner(r)
+
+	require.NoError(t, k.prepareNodeForIngress())
+
+	// the node is labelled ingress-ready and the controller is made to tolerate
+	// the control-plane taints, so the stock kind manifest schedules on a
+	// default single-node cluster.
+	assert.True(t, r.ranContaining("label node cds-kind-control-plane ingress-ready=true"),
+		"node is labelled ingress-ready")
+	assert.True(t, r.ranContaining("patch deployment ingress-nginx-controller"),
+		"controller is patched to tolerate taints")
+}
+
+func TestKindApplyMirrorsWritesHostsToml(t *testing.T) {
+	r := newFakeRunner()
+	r.replies["kind get nodes"] = "cds-kind-control-plane\n"
+	k := kindProviderWithRunner(r)
+
+	err := k.ApplyMirrors([]Mirror{{Registry: "docker.io", Endpoint: "https://mirror/docker"}})
+	require.NoError(t, err)
+	assert.True(t, r.ranContaining("certs.d/docker.io"))
+	assert.True(t, r.ranContaining("hosts.toml"))
+	assert.True(t, r.ranContaining("podman exec cds-kind-control-plane"))
+}
+
+// override_path makes containerd skip the /v2 prefix, so it must only
+// be set when the endpoint carries its own API path; docker.io's server is
+// registry-1.docker.io, not docker.io.
+func TestMirrorHostsToml(t *testing.T) {
+	cases := []struct {
+		name string
+		m    Mirror
+		want string
+	}{
+		{
+			name: "docker hub, endpoint without path",
+			m:    Mirror{Registry: "docker.io", Endpoint: "https://registry-1.docker.io"},
+			want: "# managed by cds\nserver = \"https://registry-1.docker.io\"\n\n[host.\"https://registry-1.docker.io\"]\n  capabilities = [\"pull\", \"resolve\"]\n",
+		},
+		{
+			name: "trailing slash is no path",
+			m:    Mirror{Registry: "quay.io", Endpoint: "https://mirror.local/"},
+			want: "# managed by cds\nserver = \"https://quay.io\"\n\n[host.\"https://mirror.local/\"]\n  capabilities = [\"pull\", \"resolve\"]\n",
+		},
+		{
+			name: "endpoint with API path",
+			m:    Mirror{Registry: "reg.local:5000", Endpoint: "http://10.0.0.1:5000/v2/proxy"},
+			want: "# managed by cds\nserver = \"https://reg.local:5000\"\n\n[host.\"http://10.0.0.1:5000/v2/proxy\"]\n  capabilities = [\"pull\", \"resolve\"]\n  override_path = true\n",
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			assert.Equal(t, c.want, mirrorHostsToml(c.m))
+		})
+	}
+}
+
+func TestKindApplyMirrorsNoOverridePathForBareEndpoint(t *testing.T) {
+	r := newFakeRunner()
+	r.replies["kind get nodes"] = "cds-kind-control-plane\n"
+	k := kindProviderWithRunner(r)
+
+	require.NoError(t, k.ApplyMirrors([]Mirror{{Registry: "docker.io", Endpoint: "https://registry-1.docker.io"}}))
+	assert.False(t, r.ranContaining("override_path"), "a bare endpoint keeps containerd's /v2 prefix")
+}
+
+func TestKindApplyMirrorsRejectsHostile(t *testing.T) {
+	bad := []Mirror{
+		{Registry: "docker.io; touch /pwned", Endpoint: "https://m"},
+		{Registry: "docker.io/../x", Endpoint: "https://m"},
+		{Registry: "docker.io", Endpoint: "file:///etc/passwd"},
+		{Registry: "docker.io", Endpoint: "https://"},
+		{Registry: "docker.io", Endpoint: "not a url"},
+	}
+	for _, m := range bad {
+		r := newFakeRunner()
+		k := kindProviderWithRunner(r)
+		require.Error(t, k.ApplyMirrors([]Mirror{m}), "%+v", m)
+		assert.Empty(t, r.ran, "nothing runs for %+v", m)
+	}
+	r := newFakeRunner()
+	r.replies["kind get nodes"] = "n\n"
+	require.NoError(t, kindProviderWithRunner(r).ApplyMirrors(
+		[]Mirror{{Registry: "reg.local:5000", Endpoint: "http://10.0.0.1:5000/v2"}}))
+}
+
+func TestKindApplyMirrorsNoopWhenEmpty(t *testing.T) {
+	r := newFakeRunner()
+	k := kindProviderWithRunner(r)
+	require.NoError(t, k.ApplyMirrors(nil))
+	assert.Empty(t, r.ran, "no commands run when there are no mirrors")
+}
+
+func TestKindCreateRegistrySecretKeepsPasswordOffCommandLine(t *testing.T) {
+	r := newFakeRunner()
+	k := kindProviderWithRunner(r)
+	const password = "s3cr3t-Pw"
+
+	require.NoError(t, k.CreateRegistrySecret(context.Background(), "registry.cds.internal", 5000, "cdsu", password))
+
+	// the password must not appear in any command line (ps, /proc, error text)
+	for _, c := range r.ran {
+		assert.NotContains(t, c, password, "password leaked into command: %s", c)
+	}
+	assert.True(t, r.ranContaining("podman exec -i cds-kind-control-plane kubectl --kubeconfig /etc/kubernetes/admin.conf apply -f -"))
+	assert.True(t, r.ranContaining("patch serviceaccount default"))
+
+	// it goes on stdin, as a dockerconfigjson Secret
+	require.Len(t, r.stdins, 1)
+	var secret struct {
+		Kind     string            `json:"kind"`
+		Type     string            `json:"type"`
+		Metadata map[string]string `json:"metadata"`
+		Data     map[string]string `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(r.stdins[0]), &secret))
+	assert.Equal(t, "Secret", secret.Kind)
+	assert.Equal(t, "kubernetes.io/dockerconfigjson", secret.Type)
+	assert.Equal(t, "cdsregistrycred", secret.Metadata["name"])
+	raw, err := base64.StdEncoding.DecodeString(secret.Data[".dockerconfigjson"])
+	require.NoError(t, err)
+	var cfg struct {
+		Auths map[string]map[string]string `json:"auths"`
+	}
+	require.NoError(t, json.Unmarshal(raw, &cfg))
+	entry := cfg.Auths["registry.cds.internal:5000"]
+	assert.Equal(t, "cdsu", entry["username"])
+	assert.Equal(t, password, entry["password"])
+	assert.Equal(t, base64.StdEncoding.EncodeToString([]byte("cdsu:"+password)), entry["auth"])
+}
+
+func TestKindTrustRegistryOnNodesWritesCA(t *testing.T) {
+	r := newFakeRunner()
+	r.replies["kind get nodes"] = "cds-kind-control-plane\n"
+	k := kindProviderWithRunner(r)
+
+	require.NoError(t, k.TrustRegistryOnNodes("registry.cds.internal", 5000, "-----BEGIN CERTIFICATE-----\nx\n-----END CERTIFICATE-----"))
+	assert.True(t, r.ranContaining("/etc/containerd/certs.d/registry.cds.internal:5000/ca.crt"))
+}
+
+func TestKindTrustRegistryNoopWhenNoCA(t *testing.T) {
+	r := newFakeRunner()
+	k := kindProviderWithRunner(r)
+	require.NoError(t, k.TrustRegistryOnNodes("registry.cds.internal", 5000, ""))
+	assert.Empty(t, r.ran)
+}
+
+func TestKindCreateCommandQuotesConfigFile(t *testing.T) {
+	assert.NotContains(t, kindCreateCommand(""), "--config")
+	assert.Equal(t,
+		"KIND_EXPERIMENTAL_PROVIDER=podman kind create cluster --name=cds-kind --config='x; touch pwned'",
+		kindCreateCommand("x; touch pwned"))
+	assert.Contains(t, kindCreateCommand("a'b"), `--config='a'\''b'`)
+}
+
+// TestKindCheckConfigFile: configFile is read on the agent host, so a relative
+// or missing path fails before anything runs. Real shell runner.
+func TestKindCheckConfigFile(t *testing.T) {
+	dir := t.TempDir()
+	present := filepath.Join(dir, "kind it's.yaml")
+	require.NoError(t, os.WriteFile(present, []byte("kind: Cluster\n"), 0600))
+	k := &kindProvider{runner: runLocal}
+
+	require.NoError(t, k.checkConfigFile(""))
+	require.NoError(t, k.checkConfigFile(present))
+	for _, bad := range []string{"kind.yaml", "./kind.yaml", filepath.Join(dir, "missing.yaml"), dir, filepath.Join(dir, "x'; touch pwned; '")} {
+		err := k.checkConfigFile(bad)
+		require.Error(t, err, bad)
+		assert.Contains(t, err.Error(), "agent host", bad)
+		assert.Contains(t, err.Error(), "not sent from the client", bad)
+	}
+	assert.NoFileExists(t, "pwned")
+}
+
+func TestKindBuildRejectsRelativeConfigFileBeforeRunning(t *testing.T) {
+	r := newFakeRunner()
+	k := kindProviderWithRunner(r)
+	err := k.Build(context.Background(), "kind.yaml", nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "must be an absolute path on the agent host")
+	assert.Empty(t, r.ran)
+}
+
+// the supervision unit must not be enable-able at boot: an [Install] section
+// would let `systemctl --user enable` start the cluster at login.
+func TestKindSupervisionUnitHasNoInstallSection(t *testing.T) {
+	data, err := kindProviderWithRunner(newFakeRunner()).supervisionUnit()
+	require.NoError(t, err)
+	unitText := string(data)
+	assert.Contains(t, unitText, "ExecStart=/usr/bin/podman start --attach "+ControlPlaneNode)
+	assert.NotContains(t, unitText, "[Install]")
+	assert.NotContains(t, unitText, "WantedBy")
+	// a stop SIGKILLs the node, so podman start --attach exits 137: that must
+	// leave the unit inactive, not failed
+	assert.Contains(t, unitText, "SuccessExitStatus=137 143")
+}
+
+// failingHostOps fails the systemd commands whose "name args" line starts with
+// one of failPrefixes and answers every other one like a healthy host.
+type failingHostOps struct{ failPrefixes []string }
+
+func (f failingHostOps) Execute(name string, args ...string) (string, error) {
+	line := name + " " + strings.Join(args, " ")
+	for _, p := range f.failPrefixes {
+		if strings.HasPrefix(line, p) {
+			return "boom", assertErr(line)
+		}
+	}
+	if name == "systemd-path" {
+		return "/home/u/.config", nil
+	}
+	return cg.EmptyStr, nil
+}
+func (failingHostOps) Copy(string, string) error { return nil }
+
+// TestKindDeleteReturnsTeardownFailures: a unit dir or unit removal failure is
+// returned, and the cluster delete is still attempted (like the registry delete).
+func TestKindDeleteReturnsTeardownFailures(t *testing.T) {
+	cases := map[string]struct {
+		failPrefixes []string
+		kindFails    bool
+		want         []string
+	}{
+		"unit dir fails":     {failPrefixes: []string{"systemd-path"}, want: []string{"failed to remove kind supervision unit", "systemd user configuration directory"}},
+		"unit file rm fails": {failPrefixes: []string{"rm -f "}, want: []string{"failed to remove kind supervision unit"}},
+		"kind delete fails":  {kindFails: true, want: []string{"failed to delete kind cluster"}},
+		"all fail":           {failPrefixes: []string{"rm -f "}, kindFails: true, want: []string{"failed to remove kind supervision unit", "failed to delete kind cluster"}},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			r := newFakeRunner()
+			if tc.kindFails {
+				r.replies["kind delete cluster"] = "boom"
+				r.fail["kind delete cluster"] = true
+			}
+			k := kindProviderWithRunner(r)
+			k.units = systemd.NewUnitManager(failingHostOps{failPrefixes: tc.failPrefixes})
+
+			err := k.Delete(true)
+			require.Error(t, err)
+			for _, w := range tc.want {
+				assert.Contains(t, err.Error(), w)
+			}
+			assert.True(t, r.ranContaining("kind delete cluster --name="+ClusterName), "cluster delete is still attempted")
+		})
+	}
+}
+
+func TestKindDeleteSucceedsWhenTeardownSucceeds(t *testing.T) {
+	r := newFakeRunner()
+	k := kindProviderWithRunner(r)
+	k.units = systemd.NewUnitManager(failingHostOps{})
+	require.NoError(t, k.Delete(true))
+	assert.True(t, r.ranContaining("kind delete cluster --name="+ClusterName))
+}
+
+// TestKindPruneMirrorsRunsOnEveryNode: the keep set reaches each node's prune
+// script, and a hostile keep entry runs nothing.
+func TestKindPruneMirrorsRunsOnEveryNode(t *testing.T) {
+	r := newFakeRunner()
+	r.replies["kind get nodes"] = "n1\nn2\n"
+	k := kindProviderWithRunner(r)
+
+	require.NoError(t, k.PruneMirrors([]Mirror{{Registry: "docker.io", Endpoint: "https://m"}, {Registry: "quay.io", Endpoint: "https://q"}}))
+	assert.True(t, r.ranContaining("podman exec n1 sh -c"))
+	assert.True(t, r.ranContaining("podman exec n2 sh -c"))
+	assert.True(t, r.ranContaining(" docker.io quay.io "), "keep set is in the script")
+
+	r = newFakeRunner()
+	require.Error(t, kindProviderWithRunner(r).PruneMirrors([]Mirror{{Registry: "x; touch /pwned", Endpoint: "https://m"}}))
+	assert.Empty(t, r.ran)
+}
+
+// TestPruneMirrorsScriptRealShell runs the prune script with /bin/sh: a CDS
+// hosts.toml not kept is removed with its dir, a kept one and one CDS did not
+// write stay.
+func TestPruneMirrorsScriptRealShell(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("needs /bin/sh")
+	}
+	dir := t.TempDir()
+	write := func(registry, content string) {
+		require.NoError(t, os.MkdirAll(filepath.Join(dir, registry), 0o755))
+		require.NoError(t, os.WriteFile(filepath.Join(dir, registry, "hosts.toml"), []byte(content), 0o644))
+	}
+	write("docker.io", mirrorHostsToml(Mirror{Registry: "docker.io", Endpoint: "https://m"}))
+	write("quay.io", mirrorHostsToml(Mirror{Registry: "quay.io", Endpoint: "https://q"}))
+	write("reg.local:5000", mirrorHostsToml(Mirror{Registry: "reg.local:5000", Endpoint: "https://r"}))
+	write("ghcr.io", "server = \"https://ghcr.io\"\n")
+	// the CDS registry's CA dir holds no hosts.toml and is never touched
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "cds-registry:5000"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "cds-registry:5000", "ca.crt"), []byte("CA"), 0o644))
+
+	out, err := exec.Command("/bin/sh", "-c", pruneMirrorsScript(dir, []string{"docker.io"})).CombinedOutput()
+	require.NoError(t, err, string(out))
+
+	assert.FileExists(t, filepath.Join(dir, "docker.io", "hosts.toml"), "kept")
+	assert.NoDirExists(t, filepath.Join(dir, "quay.io"), "dropped CDS mirror removed")
+	assert.NoDirExists(t, filepath.Join(dir, "reg.local:5000"), "dropped CDS mirror with a port removed")
+	assert.FileExists(t, filepath.Join(dir, "ghcr.io", "hosts.toml"), "a file CDS did not write stays")
+	assert.FileExists(t, filepath.Join(dir, "cds-registry:5000", "ca.crt"))
+
+	// nothing to prune and an empty keep set both succeed
+	out, err = exec.Command("/bin/sh", "-c", pruneMirrorsScript(filepath.Join(dir, "none"), nil)).CombinedOutput()
+	require.NoError(t, err, string(out))
+}

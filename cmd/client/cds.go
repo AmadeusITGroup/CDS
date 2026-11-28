@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"os"
 
+	"github.com/amadeusitgroup/cds/internal/authmgr"
 	"github.com/amadeusitgroup/cds/internal/cenv"
 	"github.com/amadeusitgroup/cds/internal/cerr"
 	"github.com/amadeusitgroup/cds/internal/clog"
@@ -38,14 +39,23 @@ func init() {
 		return
 	}
 
+	// Wire interactive SSH password prompting so that connecting to a host that
+	// authenticates by LDAP password prompts the user instead of panicking on
+	// unregistered credential callbacks.
+	authmgr.WireShexecPasswordPrompt()
+
 	// Agents are started on demand, by the commands calling them.
 
-	// Init profile from config-resolved reader
+	// Init profile from config-resolved reader. A profile is optional: on a
+	// fresh install none has been configured yet (ProfileReader returns a nil
+	// reader with no error), so skip silently rather than warning.
 	r, profileErr := config.ProfileReader()
 	if profileErr != nil {
 		clog.Warn("Failed to read profile source, skipping", profileErr)
-	} else {
+	} else if r != nil {
 		profile.New(profile.WithReader(r))
+	} else {
+		clog.Debug("No profile configured, skipping profile initialization")
 	}
 }
 
@@ -54,29 +64,35 @@ type cmd interface {
 }
 
 func main() {
+	os.Exit(run(root))
+}
+
+// run executes c and returns the process exit code. The db is saved even when
+// c fails: os.Exit skips deferred calls, so exiting inside run would drop every
+// state change the command made before failing (CDS-102).
+func run(c cmd) (code int) {
 	dbSrc, err := config.DBSource()
 	if err != nil {
 		clog.Error("Failed to resolve state database source", err)
-		os.Exit(1)
+		return 1
 	}
 
 	if err := db.Load(dbSrc); err != nil {
 		clog.Error("Failed to load state from database", err)
-		os.Exit(1)
+		return 1
 	}
-	var saveConfigErr error
 	defer func() {
-		saveConfigErr = db.Save()
-		if saveConfigErr != nil {
-			clog.Error("Failed to save state to database", saveConfigErr)
-			os.Exit(1)
+		if saveErr := db.Save(); saveErr != nil {
+			clog.Error("Failed to save state to database", saveErr)
+			code = 1
 		}
 	}()
 
-	if err := root.Execute(); err != nil {
+	if err := c.Execute(); err != nil {
 		clog.Error(fmt.Sprintf("Failed to execute command: %v", err))
-		os.Exit(1)
+		return 1
 	}
+	return 0
 }
 
 // TODO:BK: refactor - logging implementation details exposed into the wild
@@ -94,7 +110,7 @@ func setupLogger() {
 	}
 	customCLIHandler := clog.NewCliHandler(
 		os.Stdout,
-		clog.WithLevel(slog.LevelDebug),
+		clog.WithLevel(slog.LevelInfo), // debug goes to the log file; -v switches the logger to Debug
 		clog.WithNoColor(isNoColorSet() || !isColorable()),
 		clog.WithTimeFormat(cg.KLogTimeFormat),
 		clog.WithReplaceAttr(cerr.ReplaceAttrErr),

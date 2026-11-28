@@ -20,8 +20,8 @@ func TestDefaultDirsUseAgentCache(t *testing.T) {
 	srv, err := newgrpcServer(NewConfig())
 	require.NoError(t, err)
 
-	assert.Equal(t, filepath.Join(root, ".xcds-agent", "cache", "staging"), srv.stagingDir())
-	assert.Equal(t, filepath.Join(root, ".xcds-agent", "cache", "deployments"), srv.deployments().dir)
+	assert.Equal(t, filepath.Join(root, ".cds-agent", "cache", "staging"), srv.stagingDir())
+	assert.Equal(t, filepath.Join(root, ".cds-agent", "cache", "deployments"), srv.deployments().dir)
 	assert.NotEmpty(t, srv.hostname())
 }
 

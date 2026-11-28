@@ -28,6 +28,8 @@ type bom struct {
 	stagingDir   string
 	stateDir     string
 	containerOps containerOps
+	clusterOps   clusterOps
+	registryOps  registryOps
 	hostname     string
 }
 
@@ -67,6 +69,20 @@ func withContainerOps(ops containerOps) func(*bom) {
 	}
 }
 
+// withClusterOps overrides the orchestration (kind) operations.
+func withClusterOps(ops clusterOps) func(*bom) {
+	return func(b *bom) {
+		b.clusterOps = ops
+	}
+}
+
+// withRegistryOps overrides the registry operations.
+func withRegistryOps(ops registryOps) func(*bom) {
+	return func(b *bom) {
+		b.registryOps = ops
+	}
+}
+
 type commandManager interface {
 	Version() string
 	Space() map[string]core.Cmd
@@ -86,6 +102,8 @@ func NewAgent(config *bom, opts ...grpc.ServerOption) (*grpc.Server, error) {
 	cdspb.RegisterAgentInfoServiceServer(gsrv, newAgentInfoServiceServer(srv))
 	cdspb.RegisterContainerServiceServer(gsrv, newContainerServiceServer(srv))
 	cdspb.RegisterArtifactServiceServer(gsrv, newArtifactServiceServer(srv))
+	cdspb.RegisterClusterServiceServer(gsrv, newClusterServiceServer(srv))
+	cdspb.RegisterRegistryServiceServer(gsrv, newRegistryServiceServer(srv))
 	return gsrv, nil
 }
 
@@ -118,6 +136,12 @@ func newgrpcServer(b *bom) (srv *grpcServer, err error) {
 	if srv.b.containerOps == nil {
 		srv.b.containerOps = defaultContainerOps{}
 	}
+	if srv.b.clusterOps == nil {
+		srv.b.clusterOps = defaultClusterOps{}
+	}
+	if srv.b.registryOps == nil {
+		srv.b.registryOps = defaultRegistryOps{}
+	}
 	if srv.b.hostname == cg.EmptyStr {
 		hostname, errHostname := os.Hostname()
 		if errHostname != nil {
@@ -135,6 +159,14 @@ func (s *grpcServer) manager() commandManager {
 
 func (s *grpcServer) containerOps() containerOps {
 	return s.b.containerOps
+}
+
+func (s *grpcServer) clusterOps() clusterOps {
+	return s.b.clusterOps
+}
+
+func (s *grpcServer) registryOps() registryOps {
+	return s.b.registryOps
 }
 
 func (s *grpcServer) stagingDir() string {
@@ -174,4 +206,22 @@ type artifactServiceServer struct {
 
 func newArtifactServiceServer(core *grpcServer) *artifactServiceServer {
 	return &artifactServiceServer{core: core}
+}
+
+type clusterServiceServer struct {
+	cdspb.UnimplementedClusterServiceServer
+	core *grpcServer
+}
+
+func newClusterServiceServer(core *grpcServer) *clusterServiceServer {
+	return &clusterServiceServer{core: core}
+}
+
+type registryServiceServer struct {
+	cdspb.UnimplementedRegistryServiceServer
+	core *grpcServer
+}
+
+func newRegistryServiceServer(core *grpcServer) *registryServiceServer {
+	return &registryServiceServer{core: core}
 }

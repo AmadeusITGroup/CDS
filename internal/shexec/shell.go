@@ -24,6 +24,7 @@ func RunLocalCmds(cmds []ExecuteEvent) error {
 		stderr := bytes.Buffer{}
 
 		exeCmd := exec.Command(shellToUse, "-c", cmd.Cmd())
+		setStdin(exeCmd, cmd)
 		exeCmd.Stdout = &stdout
 		exeCmd.Stderr = &stderr
 
@@ -56,6 +57,7 @@ func RunLocalCmdWithOutputContext(ctx context.Context, cmd []ExecuteEvent) (stri
 	stderr := newCappedBuffer(defaultCapBytes)
 
 	exeCmd := localShellCmdContext(ctx, cmd[0].Cmd())
+	setStdin(exeCmd, cmd[0])
 	exeCmd.Stdout = stdout
 	exeCmd.Stderr = stderr
 
@@ -88,6 +90,7 @@ func RunLocalCmdWithExitCode(cmd ExecuteEvent) (string, int, error) {
 func RunLocalCmdWithExitCodeContext(ctx context.Context, cmd ExecuteEvent) (string, int, error) {
 	output := newCappedBuffer(defaultCapBytes)
 	exeCmd := localShellCmdContext(ctx, cmd.Cmd())
+	setStdin(exeCmd, cmd)
 	exeCmd.Stdout = output
 	exeCmd.Stderr = output
 
@@ -103,6 +106,39 @@ func RunLocalCmdWithExitCodeContext(ctx context.Context, cmd ExecuteEvent) (stri
 	default:
 		return output.String(), -1, cerr.AppendErrorFmt("Failed to execute command locally (%v)", err, cmd.Cmd())
 	}
+}
+
+// setStdin feeds the input of a stdin event (StdinOf) to the command.
+func setStdin(exeCmd *exec.Cmd, cmd ExecuteEvent) {
+	if in, ok := StdinOf(cmd); ok {
+		exeCmd.Stdin = bytes.NewReader(in)
+	}
+}
+
+// StdinOf returns the input cmd must be fed on its stdin, if it has one: any
+// event with a Stdin method, not only a bare *StdinShEvent.
+func StdinOf(cmd ExecuteEvent) ([]byte, bool) {
+	in, ok := cmd.(interface{ Stdin() []byte })
+	if !ok {
+		return nil, false
+	}
+	return in.Stdin(), true
+}
+
+// KeepStdin returns to fed the stdin input of from, if from has one. Use it
+// in a wrapper that rebuilds a command, so the input is not lost.
+func KeepStdin(from, to ExecuteEvent) ExecuteEvent {
+	if in, ok := StdinOf(from); ok {
+		return &StdinShEvent{ExecuteEvent: to, Input: in}
+	}
+	return to
+}
+
+// errStdinUnsupported is returned by a runner that cannot feed stdin, so a
+// stdin command fails instead of running with no input. It names the
+// command, never the input, which may be a secret.
+func errStdinUnsupported(cmd ExecuteEvent) error {
+	return cerr.NewError(fmt.Sprintf("command (%s) needs stdin input, but this runner cannot feed stdin", cmd.Cmd()))
 }
 
 func localShellCmdContext(ctx context.Context, command string) *exec.Cmd {
@@ -245,6 +281,10 @@ func getTermSize() (int, int, error) {
 // attach the terminal to a ssh session, the assumption here is that
 // cds is started with a TTY !
 func AttachProcessUsingKey(h target, cmd ExecuteEvent) error {
+	// the attached session's stdin is the terminal
+	if _, ok := StdinOf(cmd); ok {
+		return errStdinUnsupported(cmd)
+	}
 	client, connectErr := connectSSHKey(h)
 
 	if connectErr != nil {
@@ -363,6 +403,24 @@ func (se *DefaultShEvent) Fallback() error {
 	return nil
 }
 
+// ProbeShEvent is a command whose non-zero exit is a normal answer (a probe):
+// it shows no spinner and its failure is logged at debug, not as a warning.
+// The error is still returned to the caller.
+type ProbeShEvent struct {
+	DefaultShEvent
+}
+
+// Probe marks the event as a probe.
+func (se *ProbeShEvent) Probe() bool {
+	return true
+}
+
+// isProbe reports whether a non-zero exit of cmd is an expected answer.
+func isProbe(cmd ExecuteEvent) bool {
+	p, ok := cmd.(interface{ Probe() bool })
+	return ok && p.Probe()
+}
+
 // func (se *DefaultShEvent) Notify(m string, t event.NotifType) event.Notification {
 // 	sn := &event.DefaultNotification{
 // 		NotifName:    "",
@@ -372,6 +430,20 @@ func (se *DefaultShEvent) Fallback() error {
 // 	}
 // 	return sn
 // }
+
+// StdinShEvent is a shell command fed Input on its stdin. Use it to hand a
+// secret to a command instead of putting it in the command line, where any
+// local user can read it via ps or /proc, and where a failed command echoes it
+// into the returned error.
+type StdinShEvent struct {
+	ExecuteEvent
+	Input []byte
+}
+
+// Stdin returns the input fed to the command's stdin.
+func (se *StdinShEvent) Stdin() []byte {
+	return se.Input
+}
 
 var _ ExecuteEvent = (*CopyFileEvent)(nil)
 

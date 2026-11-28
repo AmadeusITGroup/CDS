@@ -5,8 +5,6 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
-	"os"
-	"os/exec"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -18,6 +16,7 @@ import (
 	"github.com/amadeusitgroup/cds/internal/engine"
 	cg "github.com/amadeusitgroup/cds/internal/global"
 	"github.com/amadeusitgroup/cds/internal/shexec"
+	"github.com/amadeusitgroup/cds/internal/systemd"
 )
 
 // containerOps abstracts the container engine so that the gRPC layer can be
@@ -30,6 +29,9 @@ type containerOps interface {
 	DeleteContainer(name string) error
 	RenameContainer(name, newName string) error
 	ExecuteInContainer(ctx context.Context, containerName, command, user string) (output string, exitCode int, err error)
+	// ExecuteScriptInContainer runs script by feeding it to `sh -s` on stdin, so
+	// secrets inside it never reach a command line.
+	ExecuteScriptInContainer(ctx context.Context, containerName, script, user string) (output string, exitCode int, err error)
 	DeployContainer(ctx context.Context, spec deployContainerSpec, report deployProgressReporter) (deployContainerResult, error)
 }
 
@@ -44,6 +46,20 @@ type deployContainerSpec struct {
 	labels           map[string]string
 	config           *containerconf.Config
 	resourceProvider deployResourceProvider
+	// orchestration is the resolved orchestration configuration of the
+	// devcontainer. When Requested, the container joins the kind network and is
+	// decorated with the cluster kubeconfig and registry trust.
+	orchestration containerconf.KindOrchestrationConfig
+	// kubeconfig is the cluster kubeconfig installed into the container when
+	// orchestration is requested (resolved by the service before deploy).
+	kubeconfig string
+	// registryCA is the registry CA PEM installed into the container's trust
+	// store when a registry is requested.
+	registryCA string
+	// registryUser/registryPassword are the registry credentials injected into
+	// the container (docker login) when a registry is requested.
+	registryUser     string
+	registryPassword string
 }
 
 type deployProgress struct {
@@ -52,6 +68,10 @@ type deployProgress struct {
 }
 
 type deployProgressReporter func(deployProgress) error
+
+// kProgressPhaseWarning marks a progress message the client shows as a
+// warning.
+const kProgressPhaseWarning = "warning"
 
 type deployContainerResult struct {
 	containerName string
@@ -148,6 +168,22 @@ func (defaultContainerOps) RenameContainer(name, newName string) error {
 // matches that token and kills the workload so it cannot complete its effect
 // after the deadline.
 func (defaultContainerOps) ExecuteInContainer(ctx context.Context, containerName, command, user string) (string, int, error) {
+	return executeInContainer(ctx, containerName, command, user, nil)
+}
+
+func (defaultContainerOps) ExecuteScriptInContainer(ctx context.Context, containerName, script, user string) (string, int, error) {
+	return executeInContainer(ctx, containerName, kScriptOnStdin, user, []byte(script))
+}
+
+// kScriptOnStdin is the in-container command that runs a script read from
+// stdin. A script carrying secrets (kubeconfig, registry password) is fed this
+// way: as an argument of `podman exec ... sh -c`, it would be readable by any
+// local user via ps or /proc and echoed into the error of a failed command.
+const kScriptOnStdin = "sh -s"
+
+// executeInContainer runs command in the container, feeding it input on stdin
+// when input is not nil.
+func executeInContainer(ctx context.Context, containerName, command, user string, input []byte) (string, int, error) {
 	token := execToken()
 	tagged := execWrapper(token, command)
 
@@ -172,7 +208,11 @@ func (defaultContainerOps) ExecuteInContainer(ctx context.Context, containerName
 	stop := watchAndKillInContainer(ctx, containerName, token)
 	defer stop()
 
-	return shexec.RunLocalCmdWithExitCodeContext(ctx, cmds[0])
+	cmd := cmds[0]
+	if input != nil {
+		cmd = &shexec.StdinShEvent{ExecuteEvent: cmd, Input: input}
+	}
+	return shexec.RunLocalCmdWithExitCodeContext(ctx, cmd)
 }
 
 // execWrapper builds the shell snippet run inside the container for an
@@ -266,8 +306,10 @@ func killInContainer(containerName, token string) {
 // before its parent's the child is signalled first and the (still-alive) parent
 // shell sees it exit and runs its next command before its own signal arrives.
 // A stopped process cannot exit, so no parent can advance while the tree is
-// frozen. The STOP scan repeats until it finds no new pids (children spawned
-// between scans), then every match is KILLed.
+// frozen. Each match is STOPped the moment the scan finds it, not after the
+// whole scan: a full /proc scan forks per pid and can take seconds on a loaded
+// host, and the tree must not run meanwhile. The STOP scan repeats until it
+// finds no new pids (children spawned between scans), then every match is KILLed.
 func killByEnvTokenScript(token string) string {
 	return fmt.Sprintf(`self=$$
 match() {
@@ -275,17 +317,18 @@ match() {
 		pid=${d#/proc/}
 		[ "$pid" = "$self" ] && continue
 		if tr '\0' '\n' < "$d/environ" 2>/dev/null | grep -qx 'CDS_EXEC_TOKEN=%s'; then
+			kill -STOP "$pid" 2>/dev/null || true
 			echo "$pid"
 		fi
 	done
 }
-# freeze the tree: STOP every match, repeating until no new pid appears, so a
-# child cannot exit and let its parent run the next command while we work
+# freeze the tree: every scan STOPs each match as it finds it, repeating until
+# no new pid appears, so a child cannot exit and let its parent run the next
+# command while we work
 prev=""
 i=0
 while [ "$i" -lt 100 ]; do
 	cur=$(match)
-	for p in $cur; do kill -STOP "$p" 2>/dev/null || true; done
 	[ "$cur" = "$prev" ] && break
 	prev="$cur"
 	i=$((i + 1))
@@ -298,10 +341,16 @@ true`, token)
 func (defaultContainerOps) DeployContainer(ctx context.Context, spec deployContainerSpec, report deployProgressReporter) (deployContainerResult, error) {
 	result := deployContainerResult{containerName: spec.containerName}
 
-	ce := engine.NewContainerEngine(
+	opts := []engine.ContainerEngineOption{
 		engine.WithContainerConfig(spec.config),
 		engine.WithResourceProvider(spec.resourceProvider),
-	)
+	}
+	if spec.orchestration.Requested {
+		// attach the devcontainer to the kind cluster network so it can reach the
+		// in-cluster API server and the registry.
+		opts = append(opts, engine.WithNetwork(engine.KindNetworkName))
+	}
+	ce := engine.NewContainerEngine(opts...)
 	ce.SetAction(engine.K_ACTION_RUN)
 	ce.SetRunType(engine.K_RUN_DEV_CONTAINER)
 	ce.SetContainerName(spec.containerName)
@@ -316,6 +365,19 @@ func (defaultContainerOps) DeployContainer(ctx context.Context, spec deployConta
 		return result, cerr.AppendError("failed to build SSH key install commands", err)
 	}
 	cmds = append(cmds, sshKeyCommands...)
+	// the commands from here on are decoration scripts, whose skip warnings
+	// are sent to the client
+	firstDecoration := len(cmds)
+
+	// decorate the devcontainer with cluster/registry access when orchestration
+	// is requested (kubeconfig + registry trust installed inside the container).
+	if spec.orchestration.Requested {
+		decorationCommands, err := buildDecorationCommands(spec)
+		if err != nil {
+			return result, cerr.AppendError("failed to build container decoration commands", err)
+		}
+		cmds = append(cmds, decorationCommands...)
+	}
 
 	// retain only a bounded tail of the combined command output; the full output
 	// is streamed as progress, so the accumulator need not grow with the command
@@ -325,7 +387,7 @@ func (defaultContainerOps) DeployContainer(ctx context.Context, spec deployConta
 	// so a create failure never removes a pre-existing container (only the one
 	// this run actually created, which has a different id)
 	preexistingID := containerIDByName(spec.containerName)
-	for _, cmd := range cmds {
+	for i, cmd := range cmds {
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			result.output = boundedOutput(output.String())
 			compensateFailedDeploy(created, spec.containerName)
@@ -369,6 +431,13 @@ func (defaultContainerOps) DeployContainer(ctx context.Context, spec deployConta
 			result.output = boundedOutput(output.String())
 			compensateFailedDeploy(created, spec.containerName)
 			return result, reportErr
+		}
+		if i >= firstDecoration {
+			if reportErr := reportDecorationWarnings(report, spec.containerName, stdout); reportErr != nil {
+				result.output = boundedOutput(output.String())
+				compensateFailedDeploy(created, spec.containerName)
+				return result, reportErr
+			}
 		}
 	}
 
@@ -513,7 +582,7 @@ func detachContainerHelpers(cmd shexec.ExecuteEvent) shexec.ExecuteEvent {
 	if !changed {
 		return cmd
 	}
-	return &shexec.DefaultShEvent{ExeCmd: wrapped, DescriptionCmd: cmd.Description()}
+	return shexec.KeepStdin(cmd, &shexec.DefaultShEvent{ExeCmd: wrapped, DescriptionCmd: cmd.Description()})
 }
 
 // scopeWrap returns cmd wrapped to run in a transient systemd scope, for any
@@ -524,36 +593,16 @@ func scopeWrap(cmd shexec.ExecuteEvent) shexec.ExecuteEvent {
 	if !changed {
 		return cmd
 	}
-	return &shexec.DefaultShEvent{ExeCmd: wrapped, DescriptionCmd: cmd.Description()}
+	return shexec.KeepStdin(cmd, &shexec.DefaultShEvent{ExeCmd: wrapped, DescriptionCmd: cmd.Description()})
 }
 
 // transientScopeCommand wraps command so it runs in its own transient systemd
-// user scope (a sibling of cds.service), detaching any long-lived container
-// helpers it spawns from the agent's service cgroup. It returns the command
-// unchanged (changed=false) when the agent is not under systemd or systemd-run
-// is unavailable. This must wrap every operation that (re)spawns a container's
-// helpers — both `podman run` (deploy) and `podman start` — otherwise a
-// stop/start would place fresh helpers back in cds.service and an agent restart
-// would kill them again.
+// user scope (systemd.TransientScope). This must wrap every operation that
+// (re)spawns a container's helpers — both `podman run` (deploy) and `podman
+// start` — otherwise a stop/start would place fresh helpers back in
+// cds.service and an agent restart would kill them again.
 func transientScopeCommand(command string) (string, bool) {
-	if !runningUnderSystemd() || !systemdRunAvailable() {
-		return command, false
-	}
-	// --scope runs the command in a transient scope unit; --collect reclaims it
-	// once it exits. The scope is a sibling of cds.service, so a restart of the
-	// service no longer tears down the container helpers placed in this scope.
-	return fmt.Sprintf("systemd-run --user --scope --collect --quiet -- bash -c %s", cg.ShellSingleQuote(command)), true
-}
-
-// runningUnderSystemd reports whether this process runs inside a systemd unit.
-// systemd exports INVOCATION_ID to the processes of the units it starts.
-func runningUnderSystemd() bool {
-	return os.Getenv("INVOCATION_ID") != cg.EmptyStr
-}
-
-func systemdRunAvailable() bool {
-	_, err := exec.LookPath("systemd-run")
-	return err == nil
+	return systemd.TransientScope(command)
 }
 
 // compensateFailedDeploy removes a container created earlier in a deployment
@@ -601,6 +650,43 @@ func compensateOrphanedCreate(containerName, preexistingID string) {
 	if err := engine.DeleteContainer(containerName); err != nil {
 		clog.Warn(fmt.Sprintf("Failed to remove orphaned container %s after a failed create, it may need manual cleanup", containerName), err)
 	}
+}
+
+// buildDecorationCommands builds the exec commands that decorate a running
+// devcontainer with cluster/registry access: the cluster kubeconfig and the
+// registry CA are installed inside the container. Each decoration step runs in
+// the container via a custom command, as root or, for writes into the
+// container user's home, as that user.
+func buildDecorationCommands(spec deployContainerSpec) ([]shexec.ExecuteEvent, error) {
+	return decorationEvents(spec, (*engine.ContainersEngine).BuildCommands)
+}
+
+// decorationEvents builds the decoration steps with build. A step that cannot
+// be built fails the whole build: skipping it would deploy a container missing
+// its kubeconfig, CA or registry env while reporting success.
+func decorationEvents(spec deployContainerSpec, build func(*engine.ContainersEngine) ([]shexec.ExecuteEvent, error)) ([]shexec.ExecuteEvent, error) {
+	var events []shexec.ExecuteEvent
+	reg := registryEnv{}
+	owner := engine.ResolveRemoteUserFromConfig(spec.config)
+	if spec.orchestration.Registry.Requested {
+		reg = newRegistryEnv(spec.registryUser, spec.registryPassword, owner)
+	}
+	for _, dc := range containerDecorationCommands(spec.kubeconfig, spec.registryCA, owner, reg) {
+		ce := engine.NewContainerEngine(engine.WithContainerConfig(spec.config))
+		ce.SetAction(engine.K_ACTION_EXE)
+		ce.SetExecuteCmd(engine.K_EXEC_CUSTOM_CMD)
+		ce.SetContainerName(spec.containerName)
+		ce.SetRemoteUser(dc.runAs())
+		ce.SetCustomCommand(kScriptOnStdin)
+		cmds, err := build(ce)
+		if err != nil {
+			return nil, cerr.AppendError(fmt.Sprintf("failed to build container decoration command (%s)", dc.info), err)
+		}
+		for _, cmd := range cmds {
+			events = append(events, &shexec.StdinShEvent{ExecuteEvent: cmd, Input: []byte(dc.script)})
+		}
+	}
+	return events, nil
 }
 
 // buildSSHKeyInstallCommands installs the staged public key, if any, for the

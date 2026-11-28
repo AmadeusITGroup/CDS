@@ -75,6 +75,8 @@ type ContainersEngine struct {
 	azureDomainName     string
 	networkCmd          Network_t
 	networkName         string
+	networkCreateArgs   []string
+	runNetwork          string
 	containerLabels     map[string]string
 	config              *containerconf.Config
 	resourceProvider    resourceProvider
@@ -140,6 +142,17 @@ func WithContainerConfig(config *containerconf.Config) ContainerEngineOption {
 func WithResolvedFeatures(rf []features.ResolvedFeature) ContainerEngineOption {
 	return func(ce *ContainersEngine) {
 		ce.resolvedFeatures = rf
+	}
+}
+
+// WithNetwork sets the container network the devcontainer run attaches to
+// (podman `--network`). It defaults to the default podman network when unset,
+// preserving the previous hardcoded behaviour. The orchestration deploy path
+// uses it to attach a devcontainer to the `kind` cluster network so the
+// container can reach the in-cluster API server and services.
+func WithNetwork(network string) ContainerEngineOption {
+	return func(ce *ContainersEngine) {
+		ce.runNetwork = network
 	}
 }
 
@@ -458,22 +471,16 @@ func (ce *ContainersEngine) execute() error {
 		rEvent, err = ce.attachContainerHandler()
 	case K_EXEC_CMD_GIT_CONFIG:
 		rEvent, err = ce.gitConfigHandler()
-	case K_EXEC_CMD_SECURE_REGISTRY:
-		rEvent, err = ce.kubeRegistrySecretHandler()
 	case K_EXEC_CMD_CHECK_PATH_EXISTS:
 		rEvent, err = ce.checkPathExistsHandler()
 	case K_EXEC_CMD_CHECK_SECRET_EXISTS:
 		rEvent, err = ce.checkSecretExistsHandler()
-	case K_EXEC_CMD_CREATE_SECRET:
-		rEvent, err = ce.createSecretHandler()
 	case K_EXEC_CMD_CHECK_SERVICE_ACCOUNT_EXISTS:
 		rEvent, err = ce.checkServiceAccountExistsHandler()
 	case K_EXEC_CMD_PATCH_SERVICE_ACCOUNT:
 		rEvent, err = ce.patchServiceAccountHandler()
 	case K_EXEC_CMD_ENV:
 		rEvent, err = ce.envVariablesHandler()
-	case K_EXEC_CMD_APPLY_INGRESS:
-		rEvent, err = ce.applyIngressHandler()
 	case K_EXEC_CMD_CHMOD_DEST_FILE:
 		rEvent, err = ce.chmodHandler()
 	case K_EXEC_CMD_CHECK_ORC_REACHABLE_FROM_DEVCONTAINER:
@@ -639,23 +646,6 @@ func (ce *ContainersEngine) gitConfigHandler() (*RunEvent, error) {
 	return nil, nil
 }
 
-func (ce *ContainersEngine) kubeRegistrySecretHandler() (*RunEvent, error) {
-	rEvent := executeMap[K_EXEC_CMD_SECURE_REGISTRY]
-	cmd := fmt.Sprintf(
-		`%v %v -u %v -i %v %v`,
-		engineName(ce.name),
-		formatActionName(engineAction(K_ACTION_EXE)),
-		ce.getRemoteUser(),
-		ce.getContainerName(),
-		rEvent.cmd,
-	)
-	clog.Debug(fmt.Sprintf(kExecutingDebugMsg, cmd))
-
-	rEvent.cmd = cmd
-	rEvent.continueProcess = true
-	return &rEvent, nil
-}
-
 func (ce *ContainersEngine) checkPathExistsHandler() (*RunEvent, error) {
 	rEvent := executeMap[K_EXEC_CMD_CHECK_PATH_EXISTS]
 	pathToCheck := ce.getPathToCheck()
@@ -676,11 +666,6 @@ func (ce *ContainersEngine) checkPathExistsHandler() (*RunEvent, error) {
 
 func (ce *ContainersEngine) checkSecretExistsHandler() (*RunEvent, error) {
 	rEvent := executeMap[K_EXEC_CMD_CHECK_SECRET_EXISTS]
-	return ce.executeRaw(&rEvent)
-}
-
-func (ce *ContainersEngine) createSecretHandler() (*RunEvent, error) {
-	rEvent := executeMap[K_EXEC_CMD_CREATE_SECRET]
 	return ce.executeRaw(&rEvent)
 }
 
@@ -874,25 +859,6 @@ func (ce *ContainersEngine) getKindClusterStatusHandler() (*RunEvent, error) {
 
 func (ce *ContainersEngine) attachContainerHandler() (*RunEvent, error) {
 	rEvent := executeMap[K_EXEC_CMD_RSH]
-	cmd := fmt.Sprintf(
-		`%v %v -u %v -it %v %v`,
-		engineName(ce.name),
-		formatActionName(engineAction(K_ACTION_EXE)),
-		ce.getRemoteUser(),
-		ce.getContainerName(),
-		rEvent.cmd,
-	)
-
-	clog.Debug(fmt.Sprintf(kExecutingDebugMsg, cmd))
-
-	rEvent.cmd = cmd
-	rEvent.continueProcess = true
-
-	return &rEvent, nil
-}
-
-func (ce *ContainersEngine) applyIngressHandler() (*RunEvent, error) {
-	rEvent := executeMap[K_EXEC_CMD_APPLY_INGRESS]
 	cmd := fmt.Sprintf(
 		`%v %v -u %v -it %v %v`,
 		engineName(ce.name),
@@ -1403,6 +1369,15 @@ func (ce *ContainersEngine) prepareImage() (string, error) {
 	return "", cerr.NewError("No image specified")
 }
 
+// runNetworkOrDefault returns the network the devcontainer run attaches to,
+// defaulting to the default podman network when WithNetwork was not set.
+func (ce *ContainersEngine) runNetworkOrDefault() string {
+	if ce.runNetwork == cg.EmptyStr {
+		return kPodmanNetwork
+	}
+	return ce.runNetwork
+}
+
 // handles:
 // 1 - main podman run command
 func (ce *ContainersEngine) containerRun() error {
@@ -1426,7 +1401,7 @@ func (ce *ContainersEngine) containerRun() error {
 	// Start as root so CDS can create configured users before post-create and SSH setup commands use them.
 	options = append(options, fmt.Sprintf("-u %v", KRootUsr))
 
-	options = append(options, fmt.Sprintf("--network=%v", kPodmanNetwork))
+	options = append(options, fmt.Sprintf("--network=%v", ce.runNetworkOrDefault()))
 
 	if ce.ContainerLabels() != nil {
 		for labelKey, labelValue := range ce.ContainerLabels() {
@@ -2393,11 +2368,10 @@ func (ce *ContainersEngine) connectNetwork() (*RunEvent, error) {
 }
 
 func (ce *ContainersEngine) createNetwork() (*RunEvent, error) {
-	cmd := cg.VariadicJoin(" ", engineName(ce.name),
-		engineAction(ce.action),
-		networkAction(ce.networkCmd),
-		ce.networkName,
-	)
+	parts := []string{engineName(ce.name), engineAction(ce.action), networkAction(ce.networkCmd)}
+	parts = append(parts, ce.networkCreateArgs...)
+	parts = append(parts, ce.networkName)
+	cmd := cg.VariadicJoin(" ", parts...)
 	rEvent := &RunEvent{
 		cmd: cmd,
 
@@ -2445,6 +2419,12 @@ func (ce *ContainersEngine) SetNetworkName(networkName string) {
 
 func (ce *ContainersEngine) SetNetworkCmd(cmd Network_t) {
 	ce.networkCmd = cmd
+}
+
+// SetNetworkCreateArgs sets extra flags passed to `network create`, e.g.
+// --ipv6=false or --subnet, before the network name.
+func (ce *ContainersEngine) SetNetworkCreateArgs(args ...string) {
+	ce.networkCreateArgs = args
 }
 
 // Returns the list of networks the container is connected to using inspect with K_FNetworks format
@@ -2498,6 +2478,54 @@ func CreateNetwork(engineName, networkName string) error {
 			fmt.Sprintf("Failed to create network %s. Output: %v", networkName, out),
 			exCmdErr,
 		)
+	}
+	return nil
+}
+
+// CreateNetworkWithArgs creates a network passing extra flags to
+// '$engine network create <args...> $network' (e.g. --ipv6=false, --subnet).
+func CreateNetworkWithArgs(engineName, networkName string, args ...string) error {
+	ce := NewContainerEngine()
+	SetEngineName(ce, engineName)
+	ce.SetAction(K_ACTION_NETWORK)
+	ce.SetNetworkCmd(K_NETWORK_CREATE)
+	ce.SetNetworkName(networkName)
+	ce.SetNetworkCreateArgs(args...)
+
+	if out, exCmdErr := ExecuteCommand(ce, shexec.RunLocalCmdWithOutput); exCmdErr != nil {
+		return cerr.AppendError(
+			fmt.Sprintf("Failed to create network %s. Output: %v", networkName, out),
+			exCmdErr,
+		)
+	}
+	return nil
+}
+
+// KindNetworkName is the podman network kind attaches its nodes to. CDS creates
+// it explicitly (IPv4-only) before kind does, because kind creates it
+// IPv6-enabled by default, which fails on hosts where IPv6 is disabled in the
+// kernel (netavark cannot set the ipv6 forwarding sysctl).
+const KindNetworkName = "kind"
+
+// EnsureKindNetwork makes sure the `kind` podman network exists and is
+// IPv4-only. It is idempotent and safe under concurrency: the orchestration
+// decoration ensures the cluster and registry concurrently, so two callers can
+// race to create the network. When the network already exists (either before
+// the check or created by a concurrent caller between the check and the create)
+// it is treated as success. The caller is responsible for removing a
+// wrongly-configured network first. It must run before `kind create cluster`.
+func EnsureKindNetwork(engineName string) error {
+	if NetworkExists(engineName, KindNetworkName) {
+		return nil
+	}
+	if err := CreateNetworkWithArgs(engineName, KindNetworkName, "--ipv6=false"); err != nil {
+		// A concurrent caller may have created the network between our existence
+		// check and our create attempt (podman returns "network already exists",
+		// exit 125). Re-check: if it now exists, the ensure goal is met.
+		if NetworkExists(engineName, KindNetworkName) {
+			return nil
+		}
+		return err
 	}
 	return nil
 }

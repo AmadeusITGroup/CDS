@@ -1,6 +1,7 @@
 package command
 
 import (
+	"github.com/amadeusitgroup/cds/internal/cerr"
 	"github.com/spf13/cobra"
 )
 
@@ -25,6 +26,9 @@ func (sci *spcInit) initSubCommands() {
 }
 
 func (sci *spcInit) runE(cmd *cobra.Command, args []string) error {
+	if sci.profile != "" {
+		return cerr.NewError("--use-profile is not implemented yet: `cds space init` does not apply a profile")
+	}
 	return nil
 }
 

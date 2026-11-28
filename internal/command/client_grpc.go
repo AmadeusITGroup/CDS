@@ -3,6 +3,7 @@ package command
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/amadeusitgroup/cds/internal/api/v1/cdspb"
@@ -12,7 +13,9 @@ import (
 	cg "github.com/amadeusitgroup/cds/internal/global"
 	cdstls "github.com/amadeusitgroup/cds/internal/tls"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/status"
 )
 
 const (
@@ -26,6 +29,8 @@ type agentServices struct {
 	info      cdspb.AgentInfoServiceClient
 	container cdspb.ContainerServiceClient
 	artifact  cdspb.ArtifactServiceClient
+	cluster   cdspb.ClusterServiceClient
+	registry  cdspb.RegistryServiceClient
 }
 
 type stubCallback func(c agentServices, ctx context.Context) error
@@ -74,10 +79,34 @@ func (s stubCallback) executeOn(hostname string, options ...func(*callOptions)) 
 		info:      cdspb.NewAgentInfoServiceClient(conn),
 		container: cdspb.NewContainerServiceClient(conn),
 		artifact:  cdspb.NewArtifactServiceClient(conn),
+		cluster:   cdspb.NewClusterServiceClient(conn),
+		registry:  cdspb.NewRegistryServiceClient(conn),
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), opts.timeout)
 	defer cancel()
-	return s(c, ctx)
+	err = s(c, ctx)
+	var rpcErr interface{ GRPCStatus() *status.Status }
+	if !errors.As(err, &rpcErr) {
+		return err
+	}
+	switch rpcStatus := rpcErr.GRPCStatus(); rpcStatus.Code() {
+	case codes.OK:
+		return err
+	case codes.Unavailable:
+		// a TLS handshake failure is also Unavailable, but the agent does run
+		if strings.Contains(err.Error(), "expired certificate") {
+			return cerr.AppendErrorFmt("Client certificate for %s expired; run a command that starts the agent (e.g. `cds space orc run`) to renew it", err, hostname)
+		}
+		return cerr.AppendErrorFmt("Agent of %s is not running; run a command that starts it, or `cds space host add %s`", err, hostname, hostname)
+	case codes.DeadlineExceeded, codes.Canceled:
+		return err
+	default:
+		// the agent answered (e.g. rejected the request): its own words are the error
+		if rpcStatus.Message() == cg.EmptyStr {
+			return err
+		}
+		return cerr.NewError(strings.TrimSuffix(rpcStatus.Message(), "."))
+	}
 }
 
 // sStartedAgents tracks the agents ensured by the current command.

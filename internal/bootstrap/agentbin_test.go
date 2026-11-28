@@ -75,7 +75,7 @@ func TestResolveAgentBinaryFromSetting(t *testing.T) {
 func TestResolveAgentBinaryFromCache(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("CDS_CONFIG_PATH", root)
-	cached := filepath.Join(root, ".xcds", "cache", "agents", cg.Version, "linux-riscv64", "cds-api-agent")
+	cached := filepath.Join(root, ".cds", "cache", "agents", cg.Version, "linux-riscv64", "cds-api-agent")
 	writeExecutable(t, cached, "agent")
 
 	path, err := resolveAgentBinary(remotePlatform)
@@ -101,7 +101,7 @@ func TestResolveAgentBinaryDownloadsIntoCache(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Equal(t, "/"+cg.Version+"/cds-api-agent-linux-riscv64", requested)
-	assert.Equal(t, filepath.Join(root, ".xcds", "cache", "agents", cg.Version, "linux-riscv64", "cds-api-agent"), path)
+	assert.Equal(t, filepath.Join(root, ".cds", "cache", "agents", cg.Version, "linux-riscv64", "cds-api-agent"), path)
 	content, err := os.ReadFile(path)
 	require.NoError(t, err)
 	assert.Equal(t, "downloaded agent", string(content))
@@ -127,10 +127,33 @@ func TestResolveAgentBinaryDownloadFailures(t *testing.T) {
 			_, err := resolveAgentBinary(remotePlatform)
 
 			require.Error(t, err)
-			entries, _ := os.ReadDir(filepath.Join(root, ".xcds", "cache", "agents", cg.Version, "linux-riscv64"))
+			entries, _ := os.ReadDir(filepath.Join(root, ".cds", "cache", "agents", cg.Version, "linux-riscv64"))
 			assert.Empty(t, entries, "nothing is left in the cache")
 		})
 	}
+}
+
+// TestResolveAgentBinaryNamesMissingConfiguredPath: when CDS_AGENT_BINARY is
+// set but resolves to a missing file, the error names that path instead of
+// telling the user to set the variable they already set; for the local
+// platform it also says how to build the local agent.
+func TestResolveAgentBinaryNamesMissingConfiguredPath(t *testing.T) {
+	t.Setenv("CDS_CONFIG_PATH", t.TempDir())
+	t.Setenv("PATH", t.TempDir()) // no stale cds-api-agent on PATH
+	dir := t.TempDir()
+	t.Setenv("CDS_AGENT_BINARY", filepath.Join(dir, "cds-api-agent-{{os}}-{{arch}}"))
+
+	_, err := resolveAgentBinary(remotePlatform)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), filepath.Join(dir, "cds-api-agent-linux-riscv64")+", which does not exist")
+	assert.NotContains(t, err.Error(), "set CDS_AGENT_BINARY")
+	assert.NotContains(t, err.Error(), "make build-api-agent", "the build hint is for the local platform only")
+
+	local := localPlatform()
+	_, err = resolveAgentBinary(local)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), filepath.Join(dir, "cds-api-agent-"+local.os+"-"+local.arch))
+	assert.Contains(t, err.Error(), "make build-api-agent")
 }
 
 func TestResolveAgentBinaryNotAvailable(t *testing.T) {

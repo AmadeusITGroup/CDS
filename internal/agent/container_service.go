@@ -162,6 +162,19 @@ func (s *containerServiceServer) DeployContainer(req *cdspb.DeployContainerReque
 		return err
 	}
 
+	// When the devcontainer requests orchestration, ensure the cluster and
+	// registry (concurrently) and resolve the material decorated into the
+	// container, before deploying it.
+	if spec.orchestration.Requested {
+		decorated, decErr := s.ensureAndResolveDecoration(stream.Context(), spec, func(progress deployProgress) error {
+			return sendDeployProgress(stream, progress.phase, progress.message)
+		})
+		if decErr != nil {
+			return sendDeployResponse(stream, deployContainerResult{containerName: req.GetContainerName()}, decErr)
+		}
+		spec = decorated
+	}
+
 	result, err := s.core.containerOps().DeployContainer(stream.Context(), spec, func(progress deployProgress) error {
 		return sendDeployProgress(stream, progress.phase, progress.message)
 	})
@@ -200,6 +213,22 @@ func (s *containerServiceServer) RebuildContainer(ctx context.Context, req *cdsp
 	}
 
 	response := &cdspb.RebuildContainerResponse{ContainerName: req.GetContainerName()}
+
+	// Ensure the cluster/registry (and resolve the decoration material) before
+	// rebuilding, same as DeployContainer, so a rebuilt container is wired into
+	// orchestration too.
+	if spec.orchestration.Requested {
+		decorated, decErr := s.ensureAndResolveDecoration(ctx, spec, func(progress deployProgress) error {
+			clog.Debug(fmt.Sprintf("Rebuilding %s [%s]: %s", req.GetContainerName(), progress.phase, progress.message))
+			return nil
+		})
+		if decErr != nil {
+			response.Error = boundedHead(decErr.Error())
+			return response, nil
+		}
+		spec = decorated
+	}
+
 	if err := s.core.containerOps().DeleteContainer(req.GetContainerName()); err != nil {
 		response.Error = cerr.AppendErrorFmt("failed to delete container %s", err, req.GetContainerName()).Error()
 		return response, nil
@@ -248,6 +277,7 @@ func (s *containerServiceServer) deploySpec(req *cdspb.DeployContainerRequest) (
 		containerName: req.GetContainerName(),
 		labels:        labels,
 		config:        config,
+		orchestration: config.OrchestrationConfig(),
 		resourceProvider: stagingResourceProvider{
 			stagingDir:  s.core.stagingDir(),
 			projectName: req.GetProjectName(),
@@ -316,6 +346,9 @@ func validateConfigTypes(config *containerconf.Config) error {
 				return status.Errorf(codes.InvalidArgument, "%s must be a string, got %T", key, config.Get(key))
 			}
 		}
+	}
+	if err := config.ValidateOrchestrationSections(); err != nil {
+		return status.Errorf(codes.InvalidArgument, "%v", err)
 	}
 	return nil
 }

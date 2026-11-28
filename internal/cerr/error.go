@@ -22,6 +22,16 @@ type Err struct {
 	From    string
 	Message string
 	Cause   *Err
+	// builtin is the non-Err error a root Err was made from, kept for errors.As
+	builtin error
+}
+
+// Unwrap lets errors.Is/As (e.g. status.Code) reach the error a chain was built from.
+func (e *Err) Unwrap() error {
+	if e.Cause != nil {
+		return e.Cause
+	}
+	return e.builtin
 }
 
 func (e *Err) Error() string {
@@ -138,5 +148,6 @@ func fromBuiltinError(err error) *Err {
 		From:    getCodePosition(2),
 		Message: err.Error(),
 		Cause:   nil,
+		builtin: err,
 	}
 }

@@ -1,0 +1,11 @@
+syntax = "proto3";
+
+package api.v1.registry;
+option go_package = "github.com/amadeusitgroup/cds/cdspb";
+
+// BuildRegistryProgress is a display-oriented progress signal during registry
+// bring-up.
+message BuildRegistryProgress {
+  string phase = 1;
+  string message = 2;
+}

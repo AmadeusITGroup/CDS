@@ -64,7 +64,7 @@ func TestLoadManifest_Bootstrap(t *testing.T) {
 	assert.Len(t, m.Sources, 3)
 
 	// File should have been created
-	assert.True(t, cos.Exists("/tmp/testconfig/.xcds/"+kManifestFileName))
+	assert.True(t, cos.Exists("/tmp/testconfig/.cds/"+kManifestFileName))
 }
 
 func TestLoadManifest_ExistingFile(t *testing.T) {
@@ -85,8 +85,8 @@ sources:
     type: localfs
     ref: /custom/path/db.json
 `
-	manifestPath := "/tmp/testconfig/.xcds/" + kManifestFileName
-	err := cos.Fs.MkdirAll("/tmp/testconfig/.xcds", 0755)
+	manifestPath := "/tmp/testconfig/.cds/" + kManifestFileName
+	err := cos.Fs.MkdirAll("/tmp/testconfig/.cds", 0755)
 	require.NoError(t, err)
 	err = cos.WriteFile(manifestPath, []byte(content), 0600)
 	require.NoError(t, err)
@@ -204,9 +204,9 @@ func TestProfileReader_ResolvesWithoutInit(t *testing.T) {
 
 	t.Setenv("CDS_CONFIG_PATH", "/tmp/testconfig")
 
-	err := cos.Fs.MkdirAll("/tmp/testconfig/.xcds", 0755)
+	err := cos.Fs.MkdirAll("/tmp/testconfig/.cds", 0755)
 	require.NoError(t, err)
-	err = cos.WriteFile("/tmp/testconfig/.xcds/profile.json", []byte(`{"name":"default"}`), 0600)
+	err = cos.WriteFile("/tmp/testconfig/.cds/profile.json", []byte(`{"name":"default"}`), 0600)
 	require.NoError(t, err)
 
 	r, err := ProfileReader()

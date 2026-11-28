@@ -7,6 +7,7 @@ import (
 
 	"github.com/amadeusitgroup/cds/internal/api/v1/cdspb"
 	"github.com/amadeusitgroup/cds/internal/bo"
+	"github.com/amadeusitgroup/cds/internal/config"
 	"github.com/amadeusitgroup/cds/internal/containerconf"
 	"github.com/amadeusitgroup/cds/internal/db"
 	"github.com/amadeusitgroup/cds/internal/engine"
@@ -72,6 +73,43 @@ func TestDeployProject(t *testing.T) {
 	require.NoError(t, db.RemoveProjectContainers("p1", containerName))
 	deployTestProject(t, agent, "p1")
 	assert.NotContains(t, agent.calls, "upload "+pubKeyID)
+}
+
+const kTestOrchestrationDevcontainer = `{
+	"name": "dev",
+	"image": "alpine:3.20",
+	"remoteUser": "developer",
+	"orchestration": {
+		"engine": "kind",
+		"registry": {
+			"secure": true
+		}
+	}
+}`
+
+func TestDeployProjectRecordsOrchestrationUsage(t *testing.T) {
+	agent := setupTestAgent(t)
+	setupTestProject(t, "p1", kTestOrchestrationDevcontainer)
+
+	// before deploy, usage is not set
+	assert.False(t, db.IsOrchestrationUsed("p1"))
+	assert.False(t, db.IsRegistryUsed("p1"))
+
+	deployTestProject(t, agent, "p1")
+
+	// after deploy, db.json reflects what the devcontainer requested
+	assert.True(t, db.IsOrchestrationUsed("p1"), "cluster usage must be recorded")
+	assert.True(t, db.IsRegistryUsed("p1"), "registry usage must be recorded")
+}
+
+func TestDeployProjectWithoutOrchestrationLeavesUsageUnset(t *testing.T) {
+	agent := setupTestAgent(t)
+	setupTestProject(t, "p1", kTestDevcontainer)
+
+	deployTestProject(t, agent, "p1")
+
+	assert.False(t, db.IsOrchestrationUsed("p1"), "plain devcontainer must not record cluster usage")
+	assert.False(t, db.IsRegistryUsed("p1"), "plain devcontainer must not record registry usage")
 }
 
 func TestDeployProjectFailure(t *testing.T) {
@@ -217,7 +255,17 @@ func TestContainerSSHTarget(t *testing.T) {
 	assert.Equal(t, cg.KLocalhost, target.FQDN())
 	assert.Equal(t, 2222, target.Port())
 	assert.Equal(t, "developer", target.Username())
-	assert.True(t, strings.HasSuffix(target.PathToPrv(), "/.ssh/id_ed25519"))
+	// the container is accessed with the per-host key pair (id_rsa_<hostname>)
+	// recorded on the host, as host.Build creates during bootstrap
+	assert.True(t, strings.HasSuffix(target.PathToPrv(), "/.ssh/id_rsa_"+cg.KLocalhost),
+		"expected per-host key, got %q", target.PathToPrv())
+	assert.True(t, strings.HasSuffix(target.PathToPub(), "/.ssh/id_rsa_"+cg.KLocalhost+".pub"))
+
+	// the resolved key pair is recorded in cliconfig.yaml for the host
+	prv, pub, found := config.HostContainerSSHKey(cg.KLocalhost)
+	require.True(t, found, "the container key must be persisted in cliconfig.yaml")
+	assert.Equal(t, target.PathToPrv(), prv)
+	assert.Equal(t, target.PathToPub(), pub)
 
 	target, err = containerSSHTarget("p1", containerName, "root")
 	require.NoError(t, err)
@@ -225,4 +273,14 @@ func TestContainerSSHTarget(t *testing.T) {
 
 	_, err = containerSSHTarget("p1", "unknown", cg.EmptyStr)
 	assert.Error(t, err)
+}
+
+func TestSyncedProjectPrimaryContainerWithoutContainerFailsFast(t *testing.T) {
+	setupTestAgent(t)
+	setupTestProject(t, "p1", kTestDevcontainer) // registered but never deployed: no container
+
+	_, err := syncedProjectPrimaryContainer("p1")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `Project "p1" has no containers`)
+	assert.Contains(t, err.Error(), "cds project run", "should guide the user to deploy first")
 }

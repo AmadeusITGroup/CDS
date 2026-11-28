@@ -2,6 +2,7 @@ package command
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -171,12 +172,28 @@ func (pi *projectInit) handleImageTag() error {
 	return nil
 }
 
+// checkConfDirExists fails when the config dir is missing or not a directory, so nothing is registered.
+func checkConfDirExists(path string) error {
+	fi, err := os.Stat(path)
+	if err != nil {
+		return cerr.AppendError(fmt.Sprintf("Config directory '%s' does not exist or is not readable", path), err)
+	}
+	if !fi.IsDir() {
+		return cerr.NewError(fmt.Sprintf("Config path '%s' is not a directory", path))
+	}
+	return nil
+}
+
 func (pi *projectInit) runE(cmd *cobra.Command, args []string) error {
 	if len(pi.confDir) != 0 {
 		pathToConfDir := filepath.Join(pi.confDir, db.KCdsProjectDefaultDir)
 
 		// TODO: Leverage ContainerConf package once implemented — engine.InitConfigDir(pathToConfDir) to validate/prepare the config directory
 		clog.Debug(fmt.Sprintf("Using config directory: %s", pathToConfDir))
+
+		if err := checkConfDirExists(pathToConfDir); err != nil {
+			return err
+		}
 
 		if err := db.AddProjectUsingConfDir(pi.projectName, pathToConfDir); err != nil {
 			return cerr.AppendError(

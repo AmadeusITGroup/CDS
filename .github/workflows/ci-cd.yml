@@ -60,6 +60,9 @@ jobs:
         uses: arduino/setup-protoc@v3
         with:
           version: ${{ env.PROTOC_VERSION }}
+          # authenticated release lookup: the anonymous GitHub API limit
+          # (60 req/h per runner IP) fails shared runners
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
 
       # Install Go dependencies
       - name: Install Go dependencies
@@ -136,6 +139,9 @@ jobs:
         uses: arduino/setup-protoc@v3
         with:
           version: ${{ env.PROTOC_VERSION }}
+          # authenticated release lookup: the anonymous GitHub API limit
+          # (60 req/h per runner IP) fails shared runners
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
 
       # Tidy Go module dependencies
       - name: Go mod tidy

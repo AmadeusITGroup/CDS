@@ -20,6 +20,25 @@ func RegisterShexecCredentialCallbacks(
 	validationOnShexecPassword = validationCallback
 }
 
+// promptForSecret invokes the registered password getter. If no getter was
+// registered it returns an error instead of panicking, so a mis-wired build
+// fails cleanly rather than with a nil-pointer dereference.
+func promptForSecret(message string) (string, error) {
+	if getterOnShexecPassword == nil {
+		return "", cerr.NewError("no password prompt is registered; cannot read SSH credentials interactively")
+	}
+	return getterOnShexecPassword(message)
+}
+
+// notifySecretValidation reports password-validation state through the
+// registered validation callback, tolerating an unregistered callback.
+func notifySecretValidation(valid bool) bool {
+	if validationOnShexecPassword == nil {
+		return valid
+	}
+	return validationOnShexecPassword(valid)
+}
+
 func retryableGetSecret(hostname string) func() (string, error) {
 	authMethod := func() (string, error) {
 		if passwordTries == maxPasswordTries {
@@ -28,7 +47,7 @@ func retryableGetSecret(hostname string) func() (string, error) {
 
 		if passwordTries > 0 && !secretValidated {
 			clog.Error(fmt.Sprintf("Failed to connect with ssh to %v:22, , try re-entering your password (%v tries left)", hostname, maxPasswordTries-passwordTries))
-			canContinue := validationOnShexecPassword(false)
+			canContinue := notifySecretValidation(false)
 			if !canContinue {
 				return "", cerr.NewError("Password authentication cannot proceed further")
 			}
@@ -36,7 +55,7 @@ func retryableGetSecret(hostname string) func() (string, error) {
 
 		var err error = nil
 		if len(secret) == 0 || !secretValidated {
-			secret, err = getterOnShexecPassword("Enter your office LDAP user password (Hint: windows account password):")
+			secret, err = promptForSecret("Enter your office LDAP user password (Hint: windows account password):")
 
 			if err != nil {
 				err = cerr.AppendError("Unable to read password", err)

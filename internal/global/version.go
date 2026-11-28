@@ -2,8 +2,8 @@ package cg
 
 // Version is the version of the cds binaries (CLI and agent), shared so that
 // the CLI can check that an agent runs the same version. It also namespaces the
-// agent binary cache (~/.xcds/cache/agents/<version>) and the remote install
-// path (~/.xcds-agent/bin/<version>), so two different releases must report two
+// agent binary cache (~/.cds/cache/agents/<version>) and the remote install
+// path (~/.cds-agent/bin/<version>), so two different releases must report two
 // different versions for upgrades to be detected.
 //
 // Set at build time, e.g.

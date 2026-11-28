@@ -13,7 +13,7 @@ func TestInitAgentConfigCreatesClientsRegistry(t *testing.T) {
 
 	require.NoError(t, InitAgentConfig())
 
-	content, err := cos.ReadFile("/tmp/testconfig/.xcds/aconfig.yaml")
+	content, err := cos.ReadFile("/tmp/testconfig/.cds/aconfig.yaml")
 	require.NoError(t, err)
 	assert.Contains(t, string(content), "clients:")
 	assert.NotContains(t, string(content), "agents:")
@@ -41,8 +41,8 @@ func TestAddClientToConfigPersistsClientsWithoutInit(t *testing.T) {
 func TestRegisteredClientsLoadsClientsWithoutInit(t *testing.T) {
 	setupConfigTestFS(t)
 
-	require.NoError(t, cos.Fs.MkdirAll("/tmp/testconfig/.xcds", 0755))
-	require.NoError(t, cos.WriteFile("/tmp/testconfig/.xcds/aconfig.yaml", []byte(`apiVersion: v1
+	require.NoError(t, cos.Fs.MkdirAll("/tmp/testconfig/.cds", 0755))
+	require.NoError(t, cos.WriteFile("/tmp/testconfig/.cds/aconfig.yaml", []byte(`apiVersion: v1
 clients:
   - name: my-laptop
     tls:

@@ -91,7 +91,10 @@ func CreateAgentInConfig(a agent) error {
 	})
 }
 
-// UpsertAgentForHostInConfig creates, or replaces, the agent entry registered for hostname.
+// UpsertAgentForHostInConfig creates, or updates, the agent entry registered for
+// hostname. On update, the TLS secret and the container-access ssh-key keep their
+// recorded value when a is left unset, so re-registering an agent (bootstrap,
+// upgrade, certificate renewal) does not drop them.
 func UpsertAgentForHostInConfig(hostname string, a agent) error {
 	normalizedAgent, err := normalizeAgent(a)
 	if err != nil {
@@ -104,6 +107,13 @@ func UpsertAgentForHostInConfig(hostname string, a agent) error {
 			return targetServerHostname(existing.TargetSrv) == normalizedHostname
 		})
 		if index >= 0 {
+			existing := c.Agents[index]
+			if normalizedAgent.Certs == (tlssecret{}) {
+				normalizedAgent.Certs = existing.Certs
+			}
+			if normalizedAgent.SSHKey == (sshKeyRef{}) {
+				normalizedAgent.SSHKey = existing.SSHKey
+			}
 			c.Agents[index] = normalizedAgent
 			return nil
 		}
@@ -170,6 +180,49 @@ func AgentAddress(hostname string) (string, error) {
 	})
 }
 
+// SetHostContainerSSHKey records the container-access key pair paths for the
+// agent registered against hostname in cliconfig.yaml. Only the on-disk paths
+// are stored; the private key stays under ~/.ssh and never in the config. The
+// agent entry is created if it does not exist yet.
+func SetHostContainerSSHKey(hostname, pathToPrv, pathToPub string) error {
+	normalizedHostname := strings.TrimSpace(hostname)
+	return updateCLIAgentData(func(c *cliAgentData) error {
+		index := slices.IndexFunc(c.Agents, func(a agent) bool {
+			return targetServerHostname(a.TargetSrv) == normalizedHostname
+		})
+		if index < 0 {
+			c.Agents = append(c.Agents, agent{
+				TargetSrv: normalizedHostname,
+				SSHKey:    sshKeyRef{PathToPrv: pathToPrv, PathToPub: pathToPub},
+			})
+			return nil
+		}
+		c.Agents[index].SSHKey = sshKeyRef{PathToPrv: pathToPrv, PathToPub: pathToPub}
+		return nil
+	})
+}
+
+// HostContainerSSHKey returns the container-access key pair paths recorded for
+// hostname in cliconfig.yaml, and whether both paths are present.
+func HostContainerSSHKey(hostname string) (pathToPrv, pathToPub string, found bool) {
+	normalizedHostname := strings.TrimSpace(hostname)
+	data, err := readCLIAgentData()
+	if err != nil {
+		return cg.EmptyStr, cg.EmptyStr, false
+	}
+	index := slices.IndexFunc(data.Agents, func(a agent) bool {
+		return targetServerHostname(a.TargetSrv) == normalizedHostname
+	})
+	if index < 0 {
+		return cg.EmptyStr, cg.EmptyStr, false
+	}
+	key := data.Agents[index].SSHKey
+	if strings.TrimSpace(key.PathToPrv) == cg.EmptyStr || strings.TrimSpace(key.PathToPub) == cg.EmptyStr {
+		return cg.EmptyStr, cg.EmptyStr, false
+	}
+	return key.PathToPrv, key.PathToPub, true
+}
+
 // ErrAgentNotFound is returned by AgentAddress when no agent is registered for the given hostname.
 type ErrAgentNotFound struct {
 	Hostname string
@@ -226,6 +279,15 @@ type agent struct {
 	Certs     tlssecret `yaml:"tls"`
 	SshTunnel bool      `yaml:"ssh-tunnel"`   // special case of ssh tunnel
 	TargetSrv string    `yaml:"targetServer"` // server address
+	SSHKey    sshKeyRef `yaml:"ssh-key"`      // container-access key pair (paths only, private key stays in ~/.ssh)
+}
+
+// sshKeyRef references the client-side SSH key pair used to reach the host's
+// containers. Only the on-disk paths are persisted in cliconfig.yaml; the key
+// material itself lives under ~/.ssh and is never stored here or in the agent.
+type sshKeyRef struct {
+	PathToPrv string `yaml:"privateKey"`
+	PathToPub string `yaml:"publicKey"`
 }
 
 func NewAgent(options ...func(*agent)) agent {
@@ -251,6 +313,14 @@ func WithSSHTunnel(use bool) func(*agent) {
 func WithTargetAddress(addr string) func(*agent) {
 	return func(a *agent) {
 		a.TargetSrv = addr
+	}
+}
+
+// WithAgentSSHKey records the paths of the container-access key pair for the
+// agent's host in cliconfig.yaml.
+func WithAgentSSHKey(pathToPrv, pathToPub string) func(*agent) {
+	return func(a *agent) {
+		a.SSHKey = sshKeyRef{PathToPrv: pathToPrv, PathToPub: pathToPub}
 	}
 }
 

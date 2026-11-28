@@ -1,0 +1,37 @@
+syntax = "proto3";
+
+package api.v1.services;
+import "internal/api/v1/orchestration/build_cluster_request.proto";
+import "internal/api/v1/orchestration/build_cluster_event.proto";
+import "internal/api/v1/orchestration/start_cluster_request.proto";
+import "internal/api/v1/orchestration/start_cluster_response.proto";
+import "internal/api/v1/orchestration/stop_cluster_request.proto";
+import "internal/api/v1/orchestration/stop_cluster_response.proto";
+import "internal/api/v1/orchestration/delete_cluster_request.proto";
+import "internal/api/v1/orchestration/delete_cluster_response.proto";
+import "internal/api/v1/orchestration/get_cluster_request.proto";
+import "internal/api/v1/orchestration/get_cluster_response.proto";
+import "internal/api/v1/orchestration/get_kubeconfig_request.proto";
+import "internal/api/v1/orchestration/get_kubeconfig_response.proto";
+option go_package = "github.com/amadeusitgroup/cds/cdspb";
+
+// ClusterService manages the local kind orchestration cluster on an agent host.
+service ClusterService {
+  // BuildCluster creates the cluster if absent, streaming progress.
+  rpc BuildCluster(api.v1.orchestration.BuildClusterRequest) returns (stream api.v1.orchestration.BuildClusterEvent);
+
+  // StartCluster starts an existing, stopped cluster.
+  rpc StartCluster(api.v1.orchestration.StartClusterRequest) returns (api.v1.orchestration.StartClusterResponse);
+
+  // StopCluster stops a running cluster without deleting it.
+  rpc StopCluster(api.v1.orchestration.StopClusterRequest) returns (api.v1.orchestration.StopClusterResponse);
+
+  // DeleteCluster removes the cluster (force tears it down even when in use).
+  rpc DeleteCluster(api.v1.orchestration.DeleteClusterRequest) returns (api.v1.orchestration.DeleteClusterResponse);
+
+  // GetCluster returns the current cluster summary.
+  rpc GetCluster(api.v1.orchestration.GetClusterRequest) returns (api.v1.orchestration.GetClusterResponse);
+
+  // GetKubeconfig returns the cluster kubeconfig.
+  rpc GetKubeconfig(api.v1.orchestration.GetKubeconfigRequest) returns (api.v1.orchestration.GetKubeconfigResponse);
+}

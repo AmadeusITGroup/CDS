@@ -44,6 +44,23 @@ type RequiredArtifact struct {
 type collectContext struct {
 	Config    *Config
 	ConfigDir string
+	// AuthorizedKey, when set, is the public key line the caller resolved for
+	// container access (the project host key pair, per the id_rsa_<host>
+	// convention). The SSH public-key collector installs it verbatim instead of
+	// discovering a key by filename. The private key never leaves the client.
+	AuthorizedKey []byte
+}
+
+// CollectOption customizes artifact collection.
+type CollectOption func(*collectContext)
+
+// WithAuthorizedKey sets the public key line to install into the container's
+// authorized_keys, letting the caller supply the project host key pair's public
+// key rather than relying on filename discovery under ~/.ssh.
+func WithAuthorizedKey(publicKey []byte) CollectOption {
+	return func(ctx *collectContext) {
+		ctx.AuthorizedKey = publicKey
+	}
 }
 
 // artifactCollector produces zero or more RequiredArtifact values for a single
@@ -68,12 +85,15 @@ var defaultCollectors = []artifactCollector{
 // CollectArtifacts returns the client-side artifacts required by the provided
 // container configuration and CDS default resources. It only includes files that
 // must be transferred to the agent for deployment.
-func CollectArtifacts(config *Config, configDir string) ([]RequiredArtifact, error) {
+func CollectArtifacts(config *Config, configDir string, opts ...CollectOption) ([]RequiredArtifact, error) {
 	if config == nil {
 		return nil, fmt.Errorf("container configuration is required")
 	}
 
 	ctx := collectContext{Config: config, ConfigDir: configDir}
+	for _, opt := range opts {
+		opt(&ctx)
+	}
 	return runCollectors(ctx, defaultCollectors)
 }
 

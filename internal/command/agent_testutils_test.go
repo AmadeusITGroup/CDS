@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/amadeusitgroup/cds/internal/api/v1/cdspb"
+	"github.com/amadeusitgroup/cds/internal/bo"
 	"github.com/amadeusitgroup/cds/internal/config"
 	"github.com/amadeusitgroup/cds/internal/db"
 	cg "github.com/amadeusitgroup/cds/internal/global"
@@ -229,20 +230,29 @@ func setupTestAgent(t *testing.T, certHosts ...string) *fakeAgent {
 }
 
 // setupTestProject registers a project deployed on localhost whose
-// devcontainer.json is config, and the user default SSH key pair.
+// devcontainer.json is config, and seeds the per-host container-access key pair
+// (id_rsa_<host>) the way host.Build would during bootstrap.
 func setupTestProject(t *testing.T, projectName, devcontainer string) {
 	t.Helper()
 	home := os.Getenv("HOME")
 	configDir := filepath.Join(t.TempDir(), ".devcontainer")
 	require.NoError(t, os.MkdirAll(configDir, 0700))
 	require.NoError(t, os.WriteFile(filepath.Join(configDir, "devcontainer.json"), []byte(devcontainer), 0600))
-	require.NoError(t, os.MkdirAll(filepath.Join(home, ".ssh"), 0700))
-	require.NoError(t, os.WriteFile(filepath.Join(home, ".ssh", "id_ed25519"), []byte("private"), 0600))
-	require.NoError(t, os.WriteFile(filepath.Join(home, ".ssh", "id_ed25519.pub"), []byte("ssh-ed25519 AAAATEST user@test\n"), 0600))
+
+	// seed the per-host container-access key pair (id_rsa_localhost), as
+	// host.Build() does during bootstrap, and record it on the db host entry.
+	sshDir := filepath.Join(home, ".ssh")
+	require.NoError(t, os.MkdirAll(sshDir, 0700))
+	prv := filepath.Join(sshDir, "id_rsa_"+cg.KLocalhost)
+	pub := prv + ".pub"
+	require.NoError(t, os.WriteFile(prv, []byte("private"), 0600))
+	require.NoError(t, os.WriteFile(pub, []byte("ssh-ed25519 AAAATEST user@test\n"), 0600))
 
 	// the db is only used in memory
 	require.NoError(t, db.AddProjectUsingConfDir(projectName, configDir))
 	require.NoError(t, db.SetProjectHost(projectName, cg.KLocalhost))
+	db.AddHost(cg.KLocalhost, "user")
+	require.NoError(t, db.UpdateHostKey(bo.Host{Name: cg.KLocalhost, KeyPair: bo.KeyPair{PathToPrv: prv, PathToPub: pub}}))
 	t.Cleanup(func() { _, _ = db.DeleteProject(projectName) })
 }
 

@@ -99,6 +99,35 @@ func (d deploymentStore) remove(containerName string) error {
 	return nil
 }
 
+// list returns all recorded deployments. It is used to re-decorate running
+// containers after a cluster or registry rebuild. A missing deployments
+// directory yields an empty list, not an error.
+func (d deploymentStore) list() ([]*cdspb.DeployContainerRequest, error) {
+	entries, err := os.ReadDir(d.dir)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, cerr.AppendErrorFmt("failed to list deployments in %s", err, d.dir)
+	}
+	var reqs []*cdspb.DeployContainerRequest
+	for _, entry := range entries {
+		if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
+			continue
+		}
+		name := entry.Name()[:len(entry.Name())-len(".json")]
+		req, err := d.load(name)
+		if errors.Is(err, errDeploymentNotFound) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		reqs = append(reqs, req)
+	}
+	return reqs, nil
+}
+
 // rename moves the deployment of containerName, if any, to newContainerName.
 func (d deploymentStore) rename(containerName, newContainerName string) error {
 	req, err := d.load(containerName)

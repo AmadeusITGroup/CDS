@@ -89,3 +89,26 @@ func agentVersionOn(hostname string, options ...func(*callOptions)) (string, err
 	}).executeOn(hostname, options...)
 	return version, err
 }
+
+// warnOnVersionMismatch logs a warning when the connected agent runs another
+// version than this client. It is read-only and never fails the caller.
+func warnOnVersionMismatch(ctx context.Context, c agentServices, hostname string) {
+	reply, err := c.info.GetVersion(ctx, &cdspb.GetVersionRequest{})
+	if err != nil {
+		clog.Debug("Failed to get agent version", err)
+		return
+	}
+	if reply.GetCurrent() != cg.Version {
+		clog.Warn(versionMismatchHint(hostname, reply.GetCurrent()))
+	}
+}
+
+// versionMismatchHint tells how to update an agent of hostname that runs
+// version: `orc run` re-bootstraps a remote agent, but only warns for a local
+// one, which must be restarted.
+func versionMismatchHint(hostname, version string) string {
+	if hostname == cg.KLocalhost {
+		return fmt.Sprintf("Local agent runs version %s instead of %s, restart it to update it", version, cg.Version)
+	}
+	return fmt.Sprintf("Agent runs version %s instead of %s, run 'cds space orc run' to update it", version, cg.Version)
+}

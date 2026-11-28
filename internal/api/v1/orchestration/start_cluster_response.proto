@@ -1,0 +1,9 @@
+syntax = "proto3";
+
+package api.v1.orchestration;
+option go_package = "github.com/amadeusitgroup/cds/cdspb";
+
+// StartClusterResponse reports the result of starting the cluster.
+message StartClusterResponse {
+  string output = 1;
+}

@@ -65,7 +65,7 @@ func TestEnsureCertsRenewsExpiredLeaf(t *testing.T) {
 	requireCfssl(t)
 	root := t.TempDir()
 	t.Setenv("CDS_CONFIG_PATH", root)
-	clientDir := filepath.Join(root, ".xcds", "certs")
+	clientDir := filepath.Join(root, ".cds", "certs")
 
 	require.NoError(t, EnsureCerts())
 	caBefore, err := os.ReadFile(filepath.Join(clientDir, "ca.pem"))
@@ -110,7 +110,7 @@ func TestAgentCertsDirReissuesAfterCARegeneration(t *testing.T) {
 	assert.NoError(t, certMatchesCAAndKey(
 		filepath.Join(dir, "agent-srv.pem"),
 		filepath.Join(dir, "agent-srv-key.pem"),
-		filepath.Join(root, ".xcds", "certs", "ca.pem"),
+		filepath.Join(root, ".cds", "certs", "ca.pem"),
 	))
 }
 
@@ -120,7 +120,7 @@ func TestEnsureCertsReissuesOnKeyMismatch(t *testing.T) {
 	requireCfssl(t)
 	root := t.TempDir()
 	t.Setenv("CDS_CONFIG_PATH", root)
-	clientDir := filepath.Join(root, ".xcds", "certs")
+	clientDir := filepath.Join(root, ".cds", "certs")
 
 	require.NoError(t, EnsureCerts())
 	clientKey := filepath.Join(clientDir, "client-key.pem")

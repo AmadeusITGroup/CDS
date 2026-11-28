@@ -53,7 +53,7 @@ const kRemoteUnitDir = "/home/remote-user/.config/systemd/user"
 
 func TestUserUnitDirIsResolvedOnTarget(t *testing.T) {
 	h := newFakeHost()
-	dir, err := New(WithTarget(h)).userUnitDir()
+	dir, err := newUnitManager(h).userUnitDir()
 
 	require.NoError(t, err)
 	assert.Equal(t, kRemoteUnitDir, dir)
@@ -63,7 +63,7 @@ func TestUserUnitDirFailsOnEmptyOutput(t *testing.T) {
 	h := newFakeHost()
 	h.outputs["systemd-path user-configuration"] = "  \n"
 
-	_, err := New(WithTarget(h)).userUnitDir()
+	_, err := newUnitManager(h).userUnitDir()
 
 	assert.Error(t, err)
 }

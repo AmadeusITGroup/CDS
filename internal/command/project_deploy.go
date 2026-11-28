@@ -33,6 +33,10 @@ type projectDeployPlan struct {
 	remoteUser    string
 	labels        map[string]string
 	artifacts     []artifactCandidate
+	// orchestration usage requested by the devcontainer config, recorded on the
+	// project after a successful deploy so db.json reflects what was deployed.
+	clusterRequested  bool
+	registryRequested bool
 }
 
 type artifactCandidate struct {
@@ -56,7 +60,7 @@ func buildProjectDeployPlan(projectName string) (projectDeployPlan, error) {
 		return projectDeployPlan{}, cerr.AppendErrorFmt("Failed to parse devcontainer configuration %s", err, configFile)
 	}
 
-	artifacts, err := collectArtifactCandidates(config, configDir)
+	artifacts, err := collectArtifactCandidates(projectName, config, configDir)
 	if err != nil {
 		return projectDeployPlan{}, cerr.AppendError("Failed to collect deployment artifacts", err)
 	}
@@ -67,13 +71,21 @@ func buildProjectDeployPlan(projectName string) (projectDeployPlan, error) {
 		containerName = existing[0]
 	}
 
+	orchestration := config.OrchestrationConfig()
+	if config.RegistryPortIgnored() {
+		// the registry is one per host on a fixed port
+		clog.Warn(fmt.Sprintf("%s: orchestration.registry.port is no longer supported and is ignored; the registry always uses its default port", configFile))
+	}
+
 	return projectDeployPlan{
-		projectName:   projectName,
-		configBytes:   configBytes,
-		containerName: containerName,
-		remoteUser:    engine.ResolveRemoteUserFromConfig(config),
-		labels:        projectContainerLabels(projectName),
-		artifacts:     artifacts,
+		projectName:       projectName,
+		configBytes:       configBytes,
+		containerName:     containerName,
+		remoteUser:        engine.ResolveRemoteUserFromConfig(config),
+		labels:            projectContainerLabels(projectName),
+		artifacts:         artifacts,
+		clusterRequested:  orchestration.Requested,
+		registryRequested: orchestration.Requested && orchestration.Registry.Requested,
 	}, nil
 }
 
@@ -86,8 +98,20 @@ func projectContainerLabels(projectName string) map[string]string {
 	return labels
 }
 
-func collectArtifactCandidates(config *containerconf.Config, configDir string) ([]artifactCandidate, error) {
-	requiredArtifacts, err := containerconf.CollectArtifacts(config, configDir)
+func collectArtifactCandidates(projectName string, config *containerconf.Config, configDir string) ([]artifactCandidate, error) {
+	var opts []containerconf.CollectOption
+	// Install the project host key pair's public key (id_rsa_<host>) into the
+	// container, generating/recording it as needed. Only the public key is
+	// shipped to the agent; the private key stays under ~/.ssh.
+	if _, pubPath, err := ensureProjectContainerKeyPair(projectName); err != nil {
+		return nil, cerr.AppendError("Failed to resolve container-access SSH key", err)
+	} else if pubData, readErr := cos.ReadFile(pubPath); readErr != nil {
+		return nil, cerr.AppendErrorFmt("Failed to read container-access public key %s", readErr, pubPath)
+	} else {
+		opts = append(opts, containerconf.WithAuthorizedKey(pubData))
+	}
+
+	requiredArtifacts, err := containerconf.CollectArtifacts(config, configDir, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -231,7 +255,27 @@ func deployProject(ctx context.Context, services agentServices, plan projectDepl
 	if err := recordProjectContainer(ctx, services.container, plan.projectName, containerName, plan.remoteUser, bo.KContainerStatusRunning); err != nil {
 		return cg.EmptyStr, cerr.AppendError("Failed to record the deployed container", err)
 	}
+	if err := recordProjectOrchestrationUsage(plan); err != nil {
+		return cg.EmptyStr, err
+	}
 	return containerName, nil
+}
+
+// recordProjectOrchestrationUsage persists, on the project, whether the deploy
+// used an orchestration cluster and/or registry, so db.json reflects what the
+// devcontainer requested and what was actually deployed.
+func recordProjectOrchestrationUsage(plan projectDeployPlan) error {
+	if plan.clusterRequested {
+		if err := db.SetOrchestrationRequested(plan.projectName); err != nil {
+			return cerr.AppendError("Failed to record orchestration usage on the project", err)
+		}
+	}
+	if plan.registryRequested {
+		if err := db.SetProjectRegistryUsage(plan.projectName); err != nil {
+			return cerr.AppendError("Failed to record registry usage on the project", err)
+		}
+	}
+	return nil
 }
 
 // rebuildProject stages the artifacts and has the agent rebuild the project
@@ -252,7 +296,10 @@ func rebuildProject(ctx context.Context, services agentServices, plan projectDep
 	if response.GetError() != cg.EmptyStr {
 		return cerr.NewError(response.GetError())
 	}
-	return recordProjectContainer(ctx, services.container, plan.projectName, plan.containerName, plan.remoteUser, bo.KContainerStatusRunning)
+	if err := recordProjectContainer(ctx, services.container, plan.projectName, plan.containerName, plan.remoteUser, bo.KContainerStatusRunning); err != nil {
+		return err
+	}
+	return recordProjectOrchestrationUsage(plan)
 }
 
 func receiveDeployResponse(stream grpc.ServerStreamingClient[cdspb.DeployContainerEvent]) (*cdspb.DeployContainerResponse, error) {
@@ -266,12 +313,7 @@ func receiveDeployResponse(stream grpc.ServerStreamingClient[cdspb.DeployContain
 			return nil, cerr.AppendError("Failed to receive deploy progress", err)
 		}
 		if progress := event.GetProgress(); progress != nil {
-			if progress.GetPhase() == "output" {
-				// raw command output streamed from the agent, print as is
-				clog.Debug(progress.GetMessage())
-			} else {
-				clog.Info(progress.GetMessage())
-			}
+			logAgentProgress(progress.GetPhase(), progress.GetMessage())
 		}
 		if eventResponse := event.GetResponse(); eventResponse != nil {
 			response = eventResponse
@@ -281,4 +323,18 @@ func receiveDeployResponse(stream grpc.ServerStreamingClient[cdspb.DeployContain
 		return nil, cerr.NewError("agent deploy finished without a final response")
 	}
 	return response, nil
+}
+
+// logAgentProgress prints an agent progress message: raw command output at
+// debug, a warning (e.g. a skipped registry env write) as a WARN line,
+// anything else at info.
+func logAgentProgress(phase, message string) {
+	switch phase {
+	case "output":
+		clog.Debug(message)
+	case "warning":
+		clog.Warn(message)
+	default:
+		clog.Info(message)
+	}
 }
