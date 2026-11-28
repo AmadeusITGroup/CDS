@@ -85,14 +85,28 @@ func (s stubCallback) executeOn(hostname string, options ...func(*callOptions)) 
 	ctx, cancel := context.WithTimeout(context.Background(), opts.timeout)
 	defer cancel()
 	err = s(c, ctx)
-	if status.Code(err) == codes.Unavailable {
+	var rpcErr interface{ GRPCStatus() *status.Status }
+	if !errors.As(err, &rpcErr) {
+		return err
+	}
+	switch rpcStatus := rpcErr.GRPCStatus(); rpcStatus.Code() {
+	case codes.OK:
+		return err
+	case codes.Unavailable:
 		// a TLS handshake failure is also Unavailable, but the agent does run
 		if strings.Contains(err.Error(), "expired certificate") {
 			return cerr.AppendErrorFmt("Client certificate for %s expired; run a command that starts the agent (e.g. `cds space orc run`) to renew it", err, hostname)
 		}
 		return cerr.AppendErrorFmt("Agent of %s is not running; run a command that starts it, or `cds space host add %s`", err, hostname, hostname)
+	case codes.DeadlineExceeded, codes.Canceled:
+		return err
+	default:
+		// the agent answered (e.g. rejected the request): its own words are the error
+		if rpcStatus.Message() == cg.EmptyStr {
+			return err
+		}
+		return cerr.NewError(strings.TrimSuffix(rpcStatus.Message(), "."))
 	}
-	return err
 }
 
 // sStartedAgents tracks the agents ensured by the current command.
